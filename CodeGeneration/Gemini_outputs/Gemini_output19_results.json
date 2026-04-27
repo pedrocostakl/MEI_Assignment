@@ -1,0 +1,14 @@
+{
+  "complexity": {
+    "avg_complexity": 1.391304347826087,
+    "maintainability_index": 52.82710094957287,
+    "lines_of_code": 246
+  },
+  "functional": {
+    "success": true,
+    "latency": 0.09419512748718262
+  },
+  "execution_time": 1.6665146350860596,
+  "input_file": "C:\\Users\\Cardoso\\Desktop\\Mestrado\\MEI\\MEI_Assignment\\CodeGeneration\\Gemini_outputs\\Gemini_output19.py",
+  "run_directory": "C:\\Users\\Cardoso\\Desktop\\Mestrado\\MEI\\MEI_Assignment\\CodeGeneration\\generated_api_runs\\Gemini_output19_1777319231948"
+}
