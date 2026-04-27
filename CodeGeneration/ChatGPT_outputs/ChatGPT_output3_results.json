@@ -1,0 +1,14 @@
+{
+  "complexity": {
+    "avg_complexity": 1.7647058823529411,
+    "maintainability_index": 56.60186494859042,
+    "lines_of_code": 216
+  },
+  "functional": {
+    "success": true,
+    "latency": 0.06294679641723633
+  },
+  "execution_time": 1.612992286682129,
+  "input_file": "C:\\Users\\Cardoso\\Desktop\\Mestrado\\MEI\\MEI_Assignment\\CodeGeneration\\ChatGPT_outputs\\Chatgpt_output3.py",
+  "run_directory": "C:\\Users\\Cardoso\\Desktop\\Mestrado\\MEI\\MEI_Assignment\\CodeGeneration\\generated_api_runs\\Chatgpt_output3_1777313661508"
+}
