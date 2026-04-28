@@ -1,0 +1,5 @@
+# git diff <buggy_version> <patched_version>
+# git diff --name-only a7a92bc63768ccee3f3afc2b73b2c581928dfe75 c5817912d2be25bb310bf9da517882f57bbe7bb5
+# change from buggy → fixed.
+fastapi/dependencies/utils.py
+tests/test_request_body_parameters_media_type.py

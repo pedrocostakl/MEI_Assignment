@@ -1,0 +1,9 @@
+# git diff <buggy_version> <patched_version>
+# git diff --name-only 766157bfb4e7dfccba09ab398e8ec444d14e947c 3397d4d69a9c2d64c1219fcbf291ea5697a4abb8
+# change from buggy → fixed.
+fastapi/applications.py
+fastapi/encoders.py
+fastapi/openapi/utils.py
+fastapi/routing.py
+tests/test_jsonable_encoder.py
+tests/test_skip_defaults.py
