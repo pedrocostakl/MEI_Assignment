@@ -1,0 +1,862 @@
+You are given buggy source files and failing test files.
+
+Your task is BUG LOCALIZATION ONLY.
+
+Return only valid JSON using this exact format:
+
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "relative/path.py",
+      "line_start": 1,
+      "line_end": 1,
+      "confidence": "low|medium|high",
+      "reason": "Max 2 sentences."
+    }
+  ]
+}
+
+Rules:
+- Do not propose fixes.
+- Do not rewrite code.
+- Do not explain outside JSON.
+- Line numbers must refer to the numbered buggy source file.
+- Include at most 3 suspected locations.
+- Prefer the smallest line range that identifies the origin of the bug.
+
+
+SOURCE FILES:
+
+[file_1] BugsInPy/workspace/fastapi/fastapi/dependencies/utils.py
+```python
+  1 | import asyncio
+  2 | import inspect
+  3 | from contextlib import contextmanager
+  4 | from copy import deepcopy
+  5 | from typing import (
+  6 |     Any,
+  7 |     Callable,
+  8 |     Dict,
+  9 |     List,
+ 10 |     Mapping,
+ 11 |     Optional,
+ 12 |     Sequence,
+ 13 |     Tuple,
+ 14 |     Type,
+ 15 |     Union,
+ 16 |     cast,
+ 17 | )
+ 18 | 
+ 19 | from fastapi import params
+ 20 | from fastapi.concurrency import (
+ 21 |     AsyncExitStack,
+ 22 |     _fake_asynccontextmanager,
+ 23 |     asynccontextmanager,
+ 24 |     contextmanager_in_threadpool,
+ 25 | )
+ 26 | from fastapi.dependencies.models import Dependant, SecurityRequirement
+ 27 | from fastapi.security.base import SecurityBase
+ 28 | from fastapi.security.oauth2 import OAuth2, SecurityScopes
+ 29 | from fastapi.security.open_id_connect_url import OpenIdConnect
+ 30 | from fastapi.utils import PYDANTIC_1, get_field_info, get_path_param_names
+ 31 | from pydantic import BaseConfig, BaseModel, create_model
+ 32 | from pydantic.error_wrappers import ErrorWrapper
+ 33 | from pydantic.errors import MissingError
+ 34 | from pydantic.utils import lenient_issubclass
+ 35 | from starlette.background import BackgroundTasks
+ 36 | from starlette.concurrency import run_in_threadpool
+ 37 | from starlette.datastructures import FormData, Headers, QueryParams, UploadFile
+ 38 | from starlette.requests import Request
+ 39 | from starlette.responses import Response
+ 40 | from starlette.websockets import WebSocket
+ 41 | 
+ 42 | try:
+ 43 |     from pydantic.fields import (
+ 44 |         SHAPE_LIST,
+ 45 |         SHAPE_SEQUENCE,
+ 46 |         SHAPE_SET,
+ 47 |         SHAPE_SINGLETON,
+ 48 |         SHAPE_TUPLE,
+ 49 |         SHAPE_TUPLE_ELLIPSIS,
+ 50 |         FieldInfo,
+ 51 |         ModelField,
+ 52 |         Required,
+ 53 |     )
+ 54 |     from pydantic.schema import get_annotation_from_field_info
+ 55 |     from pydantic.typing import ForwardRef, evaluate_forwardref
+ 56 | except ImportError:  # pragma: nocover
+ 57 |     # TODO: remove when removing support for Pydantic < 1.0.0
+ 58 |     from pydantic.fields import Field as ModelField  # type: ignore
+ 59 |     from pydantic.fields import Required, Shape  # type: ignore
+ 60 |     from pydantic import Schema as FieldInfo  # type: ignore
+ 61 |     from pydantic.schema import get_annotation_from_schema  # type: ignore
+ 62 |     from pydantic.utils import ForwardRef, evaluate_forwardref  # type: ignore
+ 63 | 
+ 64 |     SHAPE_LIST = Shape.LIST
+ 65 |     SHAPE_SEQUENCE = Shape.SEQUENCE
+ 66 |     SHAPE_SET = Shape.SET
+ 67 |     SHAPE_SINGLETON = Shape.SINGLETON
+ 68 |     SHAPE_TUPLE = Shape.TUPLE
+ 69 |     SHAPE_TUPLE_ELLIPSIS = Shape.TUPLE_ELLIPS
+ 70 | 
+ 71 |     def get_annotation_from_field_info(
+ 72 |         annotation: Any, field_info: FieldInfo, field_name: str
+ 73 |     ) -> Type[Any]:
+ 74 |         return get_annotation_from_schema(annotation, field_info)
+ 75 | 
+ 76 | 
+ 77 | sequence_shapes = {
+ 78 |     SHAPE_LIST,
+ 79 |     SHAPE_SET,
+ 80 |     SHAPE_TUPLE,
+ 81 |     SHAPE_SEQUENCE,
+ 82 |     SHAPE_TUPLE_ELLIPSIS,
+ 83 | }
+ 84 | sequence_types = (list, set, tuple)
+ 85 | sequence_shape_to_type = {
+ 86 |     SHAPE_LIST: list,
+ 87 |     SHAPE_SET: set,
+ 88 |     SHAPE_TUPLE: tuple,
+ 89 |     SHAPE_SEQUENCE: list,
+ 90 |     SHAPE_TUPLE_ELLIPSIS: list,
+ 91 | }
+ 92 | 
+ 93 | 
+ 94 | def get_param_sub_dependant(
+ 95 |     *, param: inspect.Parameter, path: str, security_scopes: List[str] = None
+ 96 | ) -> Dependant:
+ 97 |     depends: params.Depends = param.default
+ 98 |     if depends.dependency:
+ 99 |         dependency = depends.dependency
+100 |     else:
+101 |         dependency = param.annotation
+102 |     return get_sub_dependant(
+103 |         depends=depends,
+104 |         dependency=dependency,
+105 |         path=path,
+106 |         name=param.name,
+107 |         security_scopes=security_scopes,
+108 |     )
+109 | 
+110 | 
+111 | def get_parameterless_sub_dependant(*, depends: params.Depends, path: str) -> Dependant:
+112 |     assert callable(
+113 |         depends.dependency
+114 |     ), "A parameter-less dependency must have a callable dependency"
+115 |     return get_sub_dependant(depends=depends, dependency=depends.dependency, path=path)
+116 | 
+117 | 
+118 | def get_sub_dependant(
+119 |     *,
+120 |     depends: params.Depends,
+121 |     dependency: Callable,
+122 |     path: str,
+123 |     name: str = None,
+124 |     security_scopes: List[str] = None,
+125 | ) -> Dependant:
+126 |     security_requirement = None
+127 |     security_scopes = security_scopes or []
+128 |     if isinstance(depends, params.Security):
+129 |         dependency_scopes = depends.scopes
+130 |         security_scopes.extend(dependency_scopes)
+131 |     if isinstance(dependency, SecurityBase):
+132 |         use_scopes: List[str] = []
+133 |         if isinstance(dependency, (OAuth2, OpenIdConnect)):
+134 |             use_scopes = security_scopes
+135 |         security_requirement = SecurityRequirement(
+136 |             security_scheme=dependency, scopes=use_scopes
+137 |         )
+138 |     sub_dependant = get_dependant(
+139 |         path=path,
+140 |         call=dependency,
+141 |         name=name,
+142 |         security_scopes=security_scopes,
+143 |         use_cache=depends.use_cache,
+144 |     )
+145 |     if security_requirement:
+146 |         sub_dependant.security_requirements.append(security_requirement)
+147 |     sub_dependant.security_scopes = security_scopes
+148 |     return sub_dependant
+149 | 
+150 | 
+151 | CacheKey = Tuple[Optional[Callable], Tuple[str, ...]]
+152 | 
+153 | 
+154 | def get_flat_dependant(
+155 |     dependant: Dependant, *, skip_repeats: bool = False, visited: List[CacheKey] = None
+156 | ) -> Dependant:
+157 |     if visited is None:
+158 |         visited = []
+159 |     visited.append(dependant.cache_key)
+160 | 
+161 |     flat_dependant = Dependant(
+162 |         path_params=dependant.path_params.copy(),
+163 |         query_params=dependant.query_params.copy(),
+164 |         header_params=dependant.header_params.copy(),
+165 |         cookie_params=dependant.cookie_params.copy(),
+166 |         body_params=dependant.body_params.copy(),
+167 |         security_schemes=dependant.security_requirements.copy(),
+168 |         use_cache=dependant.use_cache,
+169 |         path=dependant.path,
+170 |     )
+171 |     for sub_dependant in dependant.dependencies:
+172 |         if skip_repeats and sub_dependant.cache_key in visited:
+173 |             continue
+174 |         flat_sub = get_flat_dependant(
+175 |             sub_dependant, skip_repeats=skip_repeats, visited=visited
+176 |         )
+177 |         flat_dependant.path_params.extend(flat_sub.path_params)
+178 |         flat_dependant.query_params.extend(flat_sub.query_params)
+179 |         flat_dependant.header_params.extend(flat_sub.header_params)
+180 |         flat_dependant.cookie_params.extend(flat_sub.cookie_params)
+181 |         flat_dependant.body_params.extend(flat_sub.body_params)
+182 |         flat_dependant.security_requirements.extend(flat_sub.security_requirements)
+183 |     return flat_dependant
+184 | 
+185 | 
+186 | def is_scalar_field(field: ModelField) -> bool:
+187 |     field_info = get_field_info(field)
+188 |     if not (
+189 |         field.shape == SHAPE_SINGLETON
+190 |         and not lenient_issubclass(field.type_, BaseModel)
+191 |         and not lenient_issubclass(field.type_, sequence_types + (dict,))
+192 |         and not isinstance(field_info, params.Body)
+193 |     ):
+194 |         return False
+195 |     if field.sub_fields:
+196 |         if not all(is_scalar_field(f) for f in field.sub_fields):
+197 |             return False
+198 |     return True
+199 | 
+200 | 
+201 | def is_scalar_sequence_field(field: ModelField) -> bool:
+202 |     if (field.shape in sequence_shapes) and not lenient_issubclass(
+203 |         field.type_, BaseModel
+204 |     ):
+205 |         if field.sub_fields is not None:
+206 |             for sub_field in field.sub_fields:
+207 |                 if not is_scalar_field(sub_field):
+208 |                     return False
+209 |         return True
+210 |     if lenient_issubclass(field.type_, sequence_types):
+211 |         return True
+212 |     return False
+213 | 
+214 | 
+215 | def get_typed_signature(call: Callable) -> inspect.Signature:
+216 |     signature = inspect.signature(call)
+217 |     globalns = getattr(call, "__globals__", {})
+218 |     typed_params = [
+219 |         inspect.Parameter(
+220 |             name=param.name,
+221 |             kind=param.kind,
+222 |             default=param.default,
+223 |             annotation=get_typed_annotation(param, globalns),
+224 |         )
+225 |         for param in signature.parameters.values()
+226 |     ]
+227 |     typed_signature = inspect.Signature(typed_params)
+228 |     return typed_signature
+229 | 
+230 | 
+231 | def get_typed_annotation(param: inspect.Parameter, globalns: Dict[str, Any]) -> Any:
+232 |     annotation = param.annotation
+233 |     if isinstance(annotation, str):
+234 |         annotation = ForwardRef(annotation)
+235 |         annotation = evaluate_forwardref(annotation, globalns, globalns)
+236 |     return annotation
+237 | 
+238 | 
+239 | async_contextmanager_dependencies_error = """
+240 | FastAPI dependencies with yield require Python 3.7 or above,
+241 | or the backports for Python 3.6, installed with:
+242 |     pip install async-exit-stack async-generator
+243 | """
+244 | 
+245 | 
+246 | def check_dependency_contextmanagers() -> None:
+247 |     if AsyncExitStack is None or asynccontextmanager == _fake_asynccontextmanager:
+248 |         raise RuntimeError(async_contextmanager_dependencies_error)  # pragma: no cover
+249 | 
+250 | 
+251 | def get_dependant(
+252 |     *,
+253 |     path: str,
+254 |     call: Callable,
+255 |     name: str = None,
+256 |     security_scopes: List[str] = None,
+257 |     use_cache: bool = True,
+258 | ) -> Dependant:
+259 |     path_param_names = get_path_param_names(path)
+260 |     endpoint_signature = get_typed_signature(call)
+261 |     signature_params = endpoint_signature.parameters
+262 |     if inspect.isgeneratorfunction(call) or inspect.isasyncgenfunction(call):
+263 |         check_dependency_contextmanagers()
+264 |     dependant = Dependant(call=call, name=name, path=path, use_cache=use_cache)
+265 |     for param_name, param in signature_params.items():
+266 |         if isinstance(param.default, params.Depends):
+267 |             sub_dependant = get_param_sub_dependant(
+268 |                 param=param, path=path, security_scopes=security_scopes
+269 |             )
+270 |             dependant.dependencies.append(sub_dependant)
+271 |     for param_name, param in signature_params.items():
+272 |         if isinstance(param.default, params.Depends):
+273 |             continue
+274 |         if add_non_field_param_to_dependency(param=param, dependant=dependant):
+275 |             continue
+276 |         param_field = get_param_field(
+277 |             param=param, default_field_info=params.Query, param_name=param_name
+278 |         )
+279 |         if param_name in path_param_names:
+280 |             assert is_scalar_field(
+281 |                 field=param_field
+282 |             ), f"Path params must be of one of the supported types"
+283 |             if isinstance(param.default, params.Path):
+284 |                 ignore_default = False
+285 |             else:
+286 |                 ignore_default = True
+287 |             param_field = get_param_field(
+288 |                 param=param,
+289 |                 param_name=param_name,
+290 |                 default_field_info=params.Path,
+291 |                 force_type=params.ParamTypes.path,
+292 |                 ignore_default=ignore_default,
+293 |             )
+294 |             add_param_to_fields(field=param_field, dependant=dependant)
+295 |         elif is_scalar_field(field=param_field):
+296 |             add_param_to_fields(field=param_field, dependant=dependant)
+297 |         elif isinstance(
+298 |             param.default, (params.Query, params.Header)
+299 |         ) and is_scalar_sequence_field(param_field):
+300 |             add_param_to_fields(field=param_field, dependant=dependant)
+301 |         else:
+302 |             field_info = get_field_info(param_field)
+303 |             assert isinstance(
+304 |                 field_info, params.Body
+305 |             ), f"Param: {param_field.name} can only be a request body, using Body(...)"
+306 |             dependant.body_params.append(param_field)
+307 |     return dependant
+308 | 
+309 | 
+310 | def add_non_field_param_to_dependency(
+311 |     *, param: inspect.Parameter, dependant: Dependant
+312 | ) -> Optional[bool]:
+313 |     if lenient_issubclass(param.annotation, Request):
+314 |         dependant.request_param_name = param.name
+315 |         return True
+316 |     elif lenient_issubclass(param.annotation, WebSocket):
+317 |         dependant.websocket_param_name = param.name
+318 |         return True
+319 |     elif lenient_issubclass(param.annotation, Response):
+320 |         dependant.response_param_name = param.name
+321 |         return True
+322 |     elif lenient_issubclass(param.annotation, BackgroundTasks):
+323 |         dependant.background_tasks_param_name = param.name
+324 |         return True
+325 |     elif lenient_issubclass(param.annotation, SecurityScopes):
+326 |         dependant.security_scopes_param_name = param.name
+327 |         return True
+328 |     return None
+329 | 
+330 | 
+331 | def get_param_field(
+332 |     *,
+333 |     param: inspect.Parameter,
+334 |     param_name: str,
+335 |     default_field_info: Type[params.Param] = params.Param,
+336 |     force_type: params.ParamTypes = None,
+337 |     ignore_default: bool = False,
+338 | ) -> ModelField:
+339 |     default_value = Required
+340 |     had_schema = False
+341 |     if not param.default == param.empty and ignore_default is False:
+342 |         default_value = param.default
+343 |     if isinstance(default_value, FieldInfo):
+344 |         had_schema = True
+345 |         field_info = default_value
+346 |         default_value = field_info.default
+347 |         if (
+348 |             isinstance(field_info, params.Param)
+349 |             and getattr(field_info, "in_", None) is None
+350 |         ):
+351 |             field_info.in_ = default_field_info.in_
+352 |         if force_type:
+353 |             field_info.in_ = force_type  # type: ignore
+354 |     else:
+355 |         field_info = default_field_info(default_value)
+356 |     required = default_value == Required
+357 |     annotation: Any = Any
+358 |     if not param.annotation == param.empty:
+359 |         annotation = param.annotation
+360 |     annotation = get_annotation_from_field_info(annotation, field_info, param_name)
+361 |     if not field_info.alias and getattr(field_info, "convert_underscores", None):
+362 |         alias = param.name.replace("_", "-")
+363 |     else:
+364 |         alias = field_info.alias or param.name
+365 |     if PYDANTIC_1:
+366 |         field = ModelField(
+367 |             name=param.name,
+368 |             type_=annotation,
+369 |             default=None if required else default_value,
+370 |             alias=alias,
+371 |             required=required,
+372 |             model_config=BaseConfig,
+373 |             class_validators={},
+374 |             field_info=field_info,
+375 |         )
+376 |         # TODO: remove when removing support for Pydantic < 1.2.0
+377 |         field.required = required
+378 |     else:  # pragma: nocover
+379 |         field = ModelField(  # type: ignore
+380 |             name=param.name,
+381 |             type_=annotation,
+382 |             default=None if required else default_value,
+383 |             alias=alias,
+384 |             required=required,
+385 |             model_config=BaseConfig,
+386 |             class_validators={},
+387 |             schema=field_info,
+388 |         )
+389 |         field.required = required
+390 |     if not had_schema and not is_scalar_field(field=field):
+391 |         if PYDANTIC_1:
+392 |             field.field_info = params.Body(field_info.default)
+393 |         else:
+394 |             field.schema = params.Body(field_info.default)  # type: ignore  # pragma: nocover
+395 | 
+396 |     return field
+397 | 
+398 | 
+399 | def add_param_to_fields(*, field: ModelField, dependant: Dependant) -> None:
+400 |     field_info = cast(params.Param, get_field_info(field))
+401 |     if field_info.in_ == params.ParamTypes.path:
+402 |         dependant.path_params.append(field)
+403 |     elif field_info.in_ == params.ParamTypes.query:
+404 |         dependant.query_params.append(field)
+405 |     elif field_info.in_ == params.ParamTypes.header:
+406 |         dependant.header_params.append(field)
+407 |     else:
+408 |         assert (
+409 |             field_info.in_ == params.ParamTypes.cookie
+410 |         ), f"non-body parameters must be in path, query, header or cookie: {field.name}"
+411 |         dependant.cookie_params.append(field)
+412 | 
+413 | 
+414 | def is_coroutine_callable(call: Callable) -> bool:
+415 |     if inspect.isroutine(call):
+416 |         return asyncio.iscoroutinefunction(call)
+417 |     if inspect.isclass(call):
+418 |         return False
+419 |     call = getattr(call, "__call__", None)
+420 |     return asyncio.iscoroutinefunction(call)
+421 | 
+422 | 
+423 | async def solve_generator(
+424 |     *, call: Callable, stack: AsyncExitStack, sub_values: Dict[str, Any]
+425 | ) -> Any:
+426 |     if inspect.isgeneratorfunction(call):
+427 |         cm = contextmanager_in_threadpool(contextmanager(call)(**sub_values))
+428 |     elif inspect.isasyncgenfunction(call):
+429 |         cm = asynccontextmanager(call)(**sub_values)
+430 |     return await stack.enter_async_context(cm)
+431 | 
+432 | 
+433 | async def solve_dependencies(
+434 |     *,
+435 |     request: Union[Request, WebSocket],
+436 |     dependant: Dependant,
+437 |     body: Optional[Union[Dict[str, Any], FormData]] = None,
+438 |     background_tasks: BackgroundTasks = None,
+439 |     response: Response = None,
+440 |     dependency_overrides_provider: Any = None,
+441 |     dependency_cache: Dict[Tuple[Callable, Tuple[str]], Any] = None,
+442 | ) -> Tuple[
+443 |     Dict[str, Any],
+444 |     List[ErrorWrapper],
+445 |     Optional[BackgroundTasks],
+446 |     Response,
+447 |     Dict[Tuple[Callable, Tuple[str]], Any],
+448 | ]:
+449 |     values: Dict[str, Any] = {}
+450 |     errors: List[ErrorWrapper] = []
+451 |     response = response or Response(
+452 |         content=None,
+453 |         status_code=None,  # type: ignore
+454 |         headers=None,
+455 |         media_type=None,
+456 |         background=None,
+457 |     )
+458 |     dependency_cache = dependency_cache or {}
+459 |     sub_dependant: Dependant
+460 |     for sub_dependant in dependant.dependencies:
+461 |         sub_dependant.call = cast(Callable, sub_dependant.call)
+462 |         sub_dependant.cache_key = cast(
+463 |             Tuple[Callable, Tuple[str]], sub_dependant.cache_key
+464 |         )
+465 |         call = sub_dependant.call
+466 |         use_sub_dependant = sub_dependant
+467 |         if (
+468 |             dependency_overrides_provider
+469 |             and dependency_overrides_provider.dependency_overrides
+470 |         ):
+471 |             original_call = sub_dependant.call
+472 |             call = getattr(
+473 |                 dependency_overrides_provider, "dependency_overrides", {}
+474 |             ).get(original_call, original_call)
+475 |             use_path: str = sub_dependant.path  # type: ignore
+476 |             use_sub_dependant = get_dependant(
+477 |                 path=use_path,
+478 |                 call=call,
+479 |                 name=sub_dependant.name,
+480 |                 security_scopes=sub_dependant.security_scopes,
+481 |             )
+482 | 
+483 |         solved_result = await solve_dependencies(
+484 |             request=request,
+485 |             dependant=use_sub_dependant,
+486 |             body=body,
+487 |             background_tasks=background_tasks,
+488 |             response=response,
+489 |             dependency_overrides_provider=dependency_overrides_provider,
+490 |             dependency_cache=dependency_cache,
+491 |         )
+492 |         (
+493 |             sub_values,
+494 |             sub_errors,
+495 |             background_tasks,
+496 |             sub_response,
+497 |             sub_dependency_cache,
+498 |         ) = solved_result
+499 |         sub_response = cast(Response, sub_response)
+500 |         response.headers.raw.extend(sub_response.headers.raw)
+501 |         if sub_response.status_code:
+502 |             response.status_code = sub_response.status_code
+503 |         dependency_cache.update(sub_dependency_cache)
+504 |         if sub_errors:
+505 |             errors.extend(sub_errors)
+506 |             continue
+507 |         if sub_dependant.use_cache and sub_dependant.cache_key in dependency_cache:
+508 |             solved = dependency_cache[sub_dependant.cache_key]
+509 |         elif inspect.isgeneratorfunction(call) or inspect.isasyncgenfunction(call):
+510 |             stack = request.scope.get("fastapi_astack")
+511 |             if stack is None:
+512 |                 raise RuntimeError(
+513 |                     async_contextmanager_dependencies_error
+514 |                 )  # pragma: no cover
+515 |             solved = await solve_generator(
+516 |                 call=call, stack=stack, sub_values=sub_values
+517 |             )
+518 |         elif is_coroutine_callable(call):
+519 |             solved = await call(**sub_values)
+520 |         else:
+521 |             solved = await run_in_threadpool(call, **sub_values)
+522 |         if sub_dependant.name is not None:
+523 |             values[sub_dependant.name] = solved
+524 |         if sub_dependant.cache_key not in dependency_cache:
+525 |             dependency_cache[sub_dependant.cache_key] = solved
+526 |     path_values, path_errors = request_params_to_args(
+527 |         dependant.path_params, request.path_params
+528 |     )
+529 |     query_values, query_errors = request_params_to_args(
+530 |         dependant.query_params, request.query_params
+531 |     )
+532 |     header_values, header_errors = request_params_to_args(
+533 |         dependant.header_params, request.headers
+534 |     )
+535 |     cookie_values, cookie_errors = request_params_to_args(
+536 |         dependant.cookie_params, request.cookies
+537 |     )
+538 |     values.update(path_values)
+539 |     values.update(query_values)
+540 |     values.update(header_values)
+541 |     values.update(cookie_values)
+542 |     errors += path_errors + query_errors + header_errors + cookie_errors
+543 |     if dependant.body_params:
+544 |         (
+545 |             body_values,
+546 |             body_errors,
+547 |         ) = await request_body_to_args(  # body_params checked above
+548 |             required_params=dependant.body_params, received_body=body
+549 |         )
+550 |         values.update(body_values)
+551 |         errors.extend(body_errors)
+552 |     if dependant.request_param_name and isinstance(request, Request):
+553 |         values[dependant.request_param_name] = request
+554 |     elif dependant.websocket_param_name and isinstance(request, WebSocket):
+555 |         values[dependant.websocket_param_name] = request
+556 |     if dependant.background_tasks_param_name:
+557 |         if background_tasks is None:
+558 |             background_tasks = BackgroundTasks()
+559 |         values[dependant.background_tasks_param_name] = background_tasks
+560 |     if dependant.response_param_name:
+561 |         values[dependant.response_param_name] = response
+562 |     if dependant.security_scopes_param_name:
+563 |         values[dependant.security_scopes_param_name] = SecurityScopes(
+564 |             scopes=dependant.security_scopes
+565 |         )
+566 |     return values, errors, background_tasks, response, dependency_cache
+567 | 
+568 | 
+569 | def request_params_to_args(
+570 |     required_params: Sequence[ModelField],
+571 |     received_params: Union[Mapping[str, Any], QueryParams, Headers],
+572 | ) -> Tuple[Dict[str, Any], List[ErrorWrapper]]:
+573 |     values = {}
+574 |     errors = []
+575 |     for field in required_params:
+576 |         if is_scalar_sequence_field(field) and isinstance(
+577 |             received_params, (QueryParams, Headers)
+578 |         ):
+579 |             value = received_params.getlist(field.alias) or field.default
+580 |         else:
+581 |             value = received_params.get(field.alias)
+582 |         field_info = get_field_info(field)
+583 |         assert isinstance(
+584 |             field_info, params.Param
+585 |         ), "Params must be subclasses of Param"
+586 |         if value is None:
+587 |             if field.required:
+588 |                 if PYDANTIC_1:
+589 |                     errors.append(
+590 |                         ErrorWrapper(
+591 |                             MissingError(), loc=(field_info.in_.value, field.alias)
+592 |                         )
+593 |                     )
+594 |                 else:  # pragma: nocover
+595 |                     errors.append(
+596 |                         ErrorWrapper(  # type: ignore
+597 |                             MissingError(),
+598 |                             loc=(field_info.in_.value, field.alias),
+599 |                             config=BaseConfig,
+600 |                         )
+601 |                     )
+602 |             else:
+603 |                 values[field.name] = deepcopy(field.default)
+604 |             continue
+605 |         v_, errors_ = field.validate(
+606 |             value, values, loc=(field_info.in_.value, field.alias)
+607 |         )
+608 |         if isinstance(errors_, ErrorWrapper):
+609 |             errors.append(errors_)
+610 |         elif isinstance(errors_, list):
+611 |             errors.extend(errors_)
+612 |         else:
+613 |             values[field.name] = v_
+614 |     return values, errors
+615 | 
+616 | 
+617 | async def request_body_to_args(
+618 |     required_params: List[ModelField],
+619 |     received_body: Optional[Union[Dict[str, Any], FormData]],
+620 | ) -> Tuple[Dict[str, Any], List[ErrorWrapper]]:
+621 |     values = {}
+622 |     errors = []
+623 |     if required_params:
+624 |         field = required_params[0]
+625 |         field_info = get_field_info(field)
+626 |         embed = getattr(field_info, "embed", None)
+627 |         if len(required_params) == 1 and not embed:
+628 |             received_body = {field.alias: received_body}
+629 |         for field in required_params:
+630 |             value: Any = None
+631 |             if received_body is not None:
+632 |                 if field.shape in sequence_shapes and isinstance(
+633 |                     received_body, FormData
+634 |                 ):
+635 |                     value = received_body.getlist(field.alias)
+636 |                 else:
+637 |                     value = received_body.get(field.alias)
+638 |             if (
+639 |                 value is None
+640 |                 or (isinstance(field_info, params.Form) and value == "")
+641 |                 or (
+642 |                     isinstance(field_info, params.Form)
+643 |                     and field.shape in sequence_shapes
+644 |                     and len(value) == 0
+645 |                 )
+646 |             ):
+647 |                 if field.required:
+648 |                     if PYDANTIC_1:
+649 |                         errors.append(
+650 |                             ErrorWrapper(MissingError(), loc=("body", field.alias))
+651 |                         )
+652 |                     else:  # pragma: nocover
+653 |                         errors.append(
+654 |                             ErrorWrapper(  # type: ignore
+655 |                                 MissingError(),
+656 |                                 loc=("body", field.alias),
+657 |                                 config=BaseConfig,
+658 |                             )
+659 |                         )
+660 |                 else:
+661 |                     values[field.name] = deepcopy(field.default)
+662 |                 continue
+663 |             if (
+664 |                 isinstance(field_info, params.File)
+665 |                 and lenient_issubclass(field.type_, bytes)
+666 |                 and isinstance(value, UploadFile)
+667 |             ):
+668 |                 value = await value.read()
+669 |             elif (
+670 |                 field.shape in sequence_shapes
+671 |                 and isinstance(field_info, params.File)
+672 |                 and lenient_issubclass(field.type_, bytes)
+673 |                 and isinstance(value, sequence_types)
+674 |             ):
+675 |                 awaitables = [sub_value.read() for sub_value in value]
+676 |                 contents = await asyncio.gather(*awaitables)
+677 |                 value = sequence_shape_to_type[field.shape](contents)
+678 |             v_, errors_ = field.validate(value, values, loc=("body", field.alias))
+679 |             if isinstance(errors_, ErrorWrapper):
+680 |                 errors.append(errors_)
+681 |             elif isinstance(errors_, list):
+682 |                 errors.extend(errors_)
+683 |             else:
+684 |                 values[field.name] = v_
+685 |     return values, errors
+686 | 
+687 | 
+688 | def get_schema_compatible_field(*, field: ModelField) -> ModelField:
+689 |     out_field = field
+690 |     if lenient_issubclass(field.type_, UploadFile):
+691 |         use_type: type = bytes
+692 |         if field.shape in sequence_shapes:
+693 |             use_type = List[bytes]
+694 |         if PYDANTIC_1:
+695 |             out_field = ModelField(
+696 |                 name=field.name,
+697 |                 type_=use_type,
+698 |                 class_validators=field.class_validators,
+699 |                 model_config=field.model_config,
+700 |                 default=field.default,
+701 |                 required=field.required,
+702 |                 alias=field.alias,
+703 |                 field_info=field.field_info,
+704 |             )
+705 |         else:  # pragma: nocover
+706 |             out_field = ModelField(  # type: ignore
+707 |                 name=field.name,
+708 |                 type_=use_type,
+709 |                 class_validators=field.class_validators,
+710 |                 model_config=field.model_config,
+711 |                 default=field.default,
+712 |                 required=field.required,
+713 |                 alias=field.alias,
+714 |                 schema=field.schema,  # type: ignore
+715 |             )
+716 | 
+717 |     return out_field
+718 | 
+719 | 
+720 | def get_body_field(*, dependant: Dependant, name: str) -> Optional[ModelField]:
+721 |     flat_dependant = get_flat_dependant(dependant)
+722 |     if not flat_dependant.body_params:
+723 |         return None
+724 |     first_param = flat_dependant.body_params[0]
+725 |     field_info = get_field_info(first_param)
+726 |     embed = getattr(field_info, "embed", None)
+727 |     if len(flat_dependant.body_params) == 1 and not embed:
+728 |         return get_schema_compatible_field(field=first_param)
+729 |     model_name = "Body_" + name
+730 |     BodyModel = create_model(model_name)
+731 |     for f in flat_dependant.body_params:
+732 |         BodyModel.__fields__[f.name] = get_schema_compatible_field(field=f)
+733 |     required = any(True for f in flat_dependant.body_params if f.required)
+734 | 
+735 |     BodyFieldInfo_kwargs: Dict[str, Any] = dict(default=None)
+736 |     if any(
+737 |         isinstance(get_field_info(f), params.File) for f in flat_dependant.body_params
+738 |     ):
+739 |         BodyFieldInfo: Type[params.Body] = params.File
+740 |     elif any(
+741 |         isinstance(get_field_info(f), params.Form) for f in flat_dependant.body_params
+742 |     ):
+743 |         BodyFieldInfo = params.Form
+744 |     else:
+745 |         BodyFieldInfo = params.Body
+746 | 
+747 |         body_param_media_types = [
+748 |             getattr(get_field_info(f), "media_type")
+749 |             for f in flat_dependant.body_params
+750 |             if isinstance(get_field_info(f), params.Body)
+751 |         ]
+752 |         if len(set(body_param_media_types)) == 1:
+753 |             BodyFieldInfo_kwargs["media_type"] = body_param_media_types[0]
+754 |     if PYDANTIC_1:
+755 |         field = ModelField(
+756 |             name="body",
+757 |             type_=BodyModel,
+758 |             default=None,
+759 |             required=required,
+760 |             model_config=BaseConfig,
+761 |             class_validators={},
+762 |             alias="body",
+763 |             field_info=BodyFieldInfo(**BodyFieldInfo_kwargs),
+764 |         )
+765 |     else:  # pragma: nocover
+766 |         field = ModelField(  # type: ignore
+767 |             name="body",
+768 |             type_=BodyModel,
+769 |             default=None,
+770 |             required=required,
+771 |             model_config=BaseConfig,
+772 |             class_validators={},
+773 |             alias="body",
+774 |             schema=BodyFieldInfo(**BodyFieldInfo_kwargs),
+775 |         )
+776 |     return field
+```
+
+
+FAILING TEST FILES:
+
+[test_file_1] BugsInPy/workspace/fastapi/tests/test_forms_from_non_typing_sequences.py
+```python
+ 1 | from fastapi import FastAPI, Form
+ 2 | from starlette.testclient import TestClient
+ 3 | 
+ 4 | app = FastAPI()
+ 5 | 
+ 6 | 
+ 7 | @app.post("/form/python-list")
+ 8 | def post_form_param_list(items: list = Form(...)):
+ 9 |     return items
+10 | 
+11 | 
+12 | @app.post("/form/python-set")
+13 | def post_form_param_set(items: set = Form(...)):
+14 |     return items
+15 | 
+16 | 
+17 | @app.post("/form/python-tuple")
+18 | def post_form_param_tuple(items: tuple = Form(...)):
+19 |     return items
+20 | 
+21 | 
+22 | client = TestClient(app)
+23 | 
+24 | 
+25 | def test_python_list_param_as_form():
+26 |     response = client.post(
+27 |         "/form/python-list", data={"items": ["first", "second", "third"]}
+28 |     )
+29 |     assert response.status_code == 200
+30 |     assert response.json() == ["first", "second", "third"]
+31 | 
+32 | 
+33 | def test_python_set_param_as_form():
+34 |     response = client.post(
+35 |         "/form/python-set", data={"items": ["first", "second", "third"]}
+36 |     )
+37 |     assert response.status_code == 200
+38 |     assert set(response.json()) == {"first", "second", "third"}
+39 | 
+40 | 
+41 | def test_python_tuple_param_as_form():
+42 |     response = client.post(
+43 |         "/form/python-tuple", data={"items": ["first", "second", "third"]}
+44 |     )
+45 |     assert response.status_code == 200
+46 |     assert response.json() == ["first", "second", "third"]
+```

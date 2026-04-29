@@ -1,0 +1,224 @@
+You are given buggy source files and failing test files.
+
+Your task is BUG LOCALIZATION ONLY.
+
+Return only valid JSON using this exact format:
+
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "relative/path.py",
+      "line_start": 1,
+      "line_end": 1,
+      "confidence": "low|medium|high",
+      "reason": "Max 2 sentences."
+    }
+  ]
+}
+
+Rules:
+- Do not propose fixes.
+- Do not rewrite code.
+- Do not explain outside JSON.
+- Line numbers must refer to the numbered buggy source file.
+- Include at most 3 suspected locations.
+- Prefer the smallest line range that identifies the origin of the bug.
+
+
+SOURCE FILES:
+
+[file_1] BugsInPy/workspace/fastapi/fastapi/exception_handlers.py
+```python
+ 1 | from fastapi.exceptions import RequestValidationError
+ 2 | from starlette.exceptions import HTTPException
+ 3 | from starlette.requests import Request
+ 4 | from starlette.responses import JSONResponse
+ 5 | from starlette.status import HTTP_422_UNPROCESSABLE_ENTITY
+ 6 | 
+ 7 | 
+ 8 | async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
+ 9 |     headers = getattr(exc, "headers", None)
+10 |     if headers:
+11 |         return JSONResponse(
+12 |             {"detail": exc.detail}, status_code=exc.status_code, headers=headers
+13 |         )
+14 |     else:
+15 |         return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+16 | 
+17 | 
+18 | async def request_validation_exception_handler(
+19 |     request: Request, exc: RequestValidationError
+20 | ) -> JSONResponse:
+21 |     return JSONResponse(
+22 |         status_code=HTTP_422_UNPROCESSABLE_ENTITY, content={"detail": exc.errors()}
+23 |     )
+```
+
+
+FAILING TEST FILES:
+
+[test_file_1] BugsInPy/workspace/fastapi/tests/test_multi_body_errors.py
+```python
+  1 | from decimal import Decimal
+  2 | from typing import List
+  3 | 
+  4 | from fastapi import FastAPI
+  5 | from pydantic import BaseModel, condecimal
+  6 | from starlette.testclient import TestClient
+  7 | 
+  8 | app = FastAPI()
+  9 | 
+ 10 | 
+ 11 | class Item(BaseModel):
+ 12 |     name: str
+ 13 |     age: condecimal(gt=Decimal(0.0))
+ 14 | 
+ 15 | 
+ 16 | @app.post("/items/")
+ 17 | def save_item_no_body(item: List[Item]):
+ 18 |     return {"item": item}
+ 19 | 
+ 20 | 
+ 21 | client = TestClient(app)
+ 22 | 
+ 23 | 
+ 24 | openapi_schema = {
+ 25 |     "openapi": "3.0.2",
+ 26 |     "info": {"title": "Fast API", "version": "0.1.0"},
+ 27 |     "paths": {
+ 28 |         "/items/": {
+ 29 |             "post": {
+ 30 |                 "responses": {
+ 31 |                     "200": {
+ 32 |                         "description": "Successful Response",
+ 33 |                         "content": {"application/json": {"schema": {}}},
+ 34 |                     },
+ 35 |                     "422": {
+ 36 |                         "description": "Validation Error",
+ 37 |                         "content": {
+ 38 |                             "application/json": {
+ 39 |                                 "schema": {
+ 40 |                                     "$ref": "#/components/schemas/HTTPValidationError"
+ 41 |                                 }
+ 42 |                             }
+ 43 |                         },
+ 44 |                     },
+ 45 |                 },
+ 46 |                 "summary": "Save Item No Body",
+ 47 |                 "operationId": "save_item_no_body_items__post",
+ 48 |                 "requestBody": {
+ 49 |                     "content": {
+ 50 |                         "application/json": {
+ 51 |                             "schema": {
+ 52 |                                 "title": "Item",
+ 53 |                                 "type": "array",
+ 54 |                                 "items": {"$ref": "#/components/schemas/Item"},
+ 55 |                             }
+ 56 |                         }
+ 57 |                     },
+ 58 |                     "required": True,
+ 59 |                 },
+ 60 |             }
+ 61 |         }
+ 62 |     },
+ 63 |     "components": {
+ 64 |         "schemas": {
+ 65 |             "Item": {
+ 66 |                 "title": "Item",
+ 67 |                 "required": ["name", "age"],
+ 68 |                 "type": "object",
+ 69 |                 "properties": {
+ 70 |                     "name": {"title": "Name", "type": "string"},
+ 71 |                     "age": {"title": "Age", "exclusiveMinimum": 0.0, "type": "number"},
+ 72 |                 },
+ 73 |             },
+ 74 |             "ValidationError": {
+ 75 |                 "title": "ValidationError",
+ 76 |                 "required": ["loc", "msg", "type"],
+ 77 |                 "type": "object",
+ 78 |                 "properties": {
+ 79 |                     "loc": {
+ 80 |                         "title": "Location",
+ 81 |                         "type": "array",
+ 82 |                         "items": {"type": "string"},
+ 83 |                     },
+ 84 |                     "msg": {"title": "Message", "type": "string"},
+ 85 |                     "type": {"title": "Error Type", "type": "string"},
+ 86 |                 },
+ 87 |             },
+ 88 |             "HTTPValidationError": {
+ 89 |                 "title": "HTTPValidationError",
+ 90 |                 "type": "object",
+ 91 |                 "properties": {
+ 92 |                     "detail": {
+ 93 |                         "title": "Detail",
+ 94 |                         "type": "array",
+ 95 |                         "items": {"$ref": "#/components/schemas/ValidationError"},
+ 96 |                     }
+ 97 |                 },
+ 98 |             },
+ 99 |         }
+100 |     },
+101 | }
+102 | 
+103 | single_error = {
+104 |     "detail": [
+105 |         {
+106 |             "ctx": {"limit_value": 0.0},
+107 |             "loc": ["body", "item", 0, "age"],
+108 |             "msg": "ensure this value is greater than 0",
+109 |             "type": "value_error.number.not_gt",
+110 |         }
+111 |     ]
+112 | }
+113 | 
+114 | multiple_errors = {
+115 |     "detail": [
+116 |         {
+117 |             "loc": ["body", "item", 0, "name"],
+118 |             "msg": "field required",
+119 |             "type": "value_error.missing",
+120 |         },
+121 |         {
+122 |             "loc": ["body", "item", 0, "age"],
+123 |             "msg": "value is not a valid decimal",
+124 |             "type": "type_error.decimal",
+125 |         },
+126 |         {
+127 |             "loc": ["body", "item", 1, "name"],
+128 |             "msg": "field required",
+129 |             "type": "value_error.missing",
+130 |         },
+131 |         {
+132 |             "loc": ["body", "item", 1, "age"],
+133 |             "msg": "value is not a valid decimal",
+134 |             "type": "type_error.decimal",
+135 |         },
+136 |     ]
+137 | }
+138 | 
+139 | 
+140 | def test_openapi_schema():
+141 |     response = client.get("/openapi.json")
+142 |     assert response.status_code == 200
+143 |     assert response.json() == openapi_schema
+144 | 
+145 | 
+146 | def test_put_correct_body():
+147 |     response = client.post("/items/", json=[{"name": "Foo", "age": 5}])
+148 |     assert response.status_code == 200
+149 |     assert response.json() == {"item": [{"name": "Foo", "age": 5}]}
+150 | 
+151 | 
+152 | def test_jsonable_encoder_requiring_error():
+153 |     response = client.post("/items/", json=[{"name": "Foo", "age": -1.0}])
+154 |     assert response.status_code == 422
+155 |     assert response.json() == single_error
+156 | 
+157 | 
+158 | def test_put_incorrect_body_multiple():
+159 |     response = client.post("/items/", json=[{"age": "five"}, {"age": "six"}])
+160 |     assert response.status_code == 422
+161 |     assert response.json() == multiple_errors
+```

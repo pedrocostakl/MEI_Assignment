@@ -1,9 +1,9 @@
 from pathlib import Path
 import argparse
-# EXAMPLe:
+# Example:
 # For Bug 2, 
 # python generate_llm_prompt.py --source fastapi/routing.py --tests tests/test_ws_router.py --failure-output failure.txt --out prompt_fastapi_bug_2.txt
-
+# python generate_llm_prompt.py --source BugsInPy/workspace/fastapi/fastapi/applications.py  --tests BugsInPy/workspace/fastapi/tests/test_ws_router.py --out prompt_fastapi_bug_2.txt
 def numbered_file(path: Path) -> str:
     lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     width = len(str(len(lines)))
@@ -60,13 +60,16 @@ Rules:
         file_counter += 1
 
     prompt.append("\n\nFAILING TEST FILES:")
+    
+    test_file_counter = 1
 
     for path in test_files:
         path = Path(path)
-        prompt.append(f"\n[test_file] {path.as_posix()}")
+        prompt.append(f"\n[test_file_{test_file_counter}] {path.as_posix()}")
         prompt.append("```python")
         prompt.append(numbered_file(path))
         prompt.append("```")
+        test_file_counter +=1
 
     if failure_output:
         failure_path = Path(failure_output)
