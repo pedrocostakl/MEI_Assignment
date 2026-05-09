@@ -1,0 +1,1987 @@
+You are given buggy source files and failing test files.
+
+Your task is BUG LOCALIZATION ONLY.
+
+Return only valid JSON using this exact format:
+
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "relative/path.py",
+      "line_start": 1,
+      "line_end": 1,
+      "confidence": "low|medium|high",
+      "reason": "Max 2 sentences."
+    }
+  ]
+}
+
+Rules:
+- Do not propose fixes.
+- Do not rewrite code.
+- Do not explain outside JSON.
+- Line numbers must refer to the numbered buggy source file.
+- Include at most 3 suspected locations.
+- Prefer the smallest line range that identifies the origin of the bug.
+
+
+SOURCE FILES:
+
+[file_1] BugsInPy/workspace/tornado/tornado/ioloop.py
+```python
+   1 | #!/usr/bin/env python
+   2 | #
+   3 | # Copyright 2009 Facebook
+   4 | #
+   5 | # Licensed under the Apache License, Version 2.0 (the "License"); you may
+   6 | # not use this file except in compliance with the License. You may obtain
+   7 | # a copy of the License at
+   8 | #
+   9 | #     http://www.apache.org/licenses/LICENSE-2.0
+  10 | #
+  11 | # Unless required by applicable law or agreed to in writing, software
+  12 | # distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+  13 | # WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+  14 | # License for the specific language governing permissions and limitations
+  15 | # under the License.
+  16 | 
+  17 | """An I/O event loop for non-blocking sockets.
+  18 | 
+  19 | Typical applications will use a single `IOLoop` object, in the
+  20 | `IOLoop.instance` singleton.  The `IOLoop.start` method should usually
+  21 | be called at the end of the ``main()`` function.  Atypical applications may
+  22 | use more than one `IOLoop`, such as one `IOLoop` per thread, or per `unittest`
+  23 | case.
+  24 | 
+  25 | In addition to I/O events, the `IOLoop` can also schedule time-based events.
+  26 | `IOLoop.add_timeout` is a non-blocking alternative to `time.sleep`.
+  27 | """
+  28 | 
+  29 | from __future__ import absolute_import, division, print_function
+  30 | 
+  31 | import collections
+  32 | import datetime
+  33 | import errno
+  34 | import functools
+  35 | import heapq
+  36 | import itertools
+  37 | import logging
+  38 | import numbers
+  39 | import os
+  40 | import select
+  41 | import sys
+  42 | import threading
+  43 | import time
+  44 | import traceback
+  45 | import math
+  46 | 
+  47 | from tornado.concurrent import TracebackFuture, is_future
+  48 | from tornado.log import app_log, gen_log
+  49 | from tornado.platform.auto import set_close_exec, Waker
+  50 | from tornado import stack_context
+  51 | from tornado.util import PY3, Configurable, errno_from_exception, timedelta_to_seconds, TimeoutError
+  52 | 
+  53 | try:
+  54 |     import signal
+  55 | except ImportError:
+  56 |     signal = None
+  57 | 
+  58 | try:
+  59 |     from concurrent.futures import ThreadPoolExecutor
+  60 | except ImportError:
+  61 |     ThreadPoolExecutor = None
+  62 | 
+  63 | if PY3:
+  64 |     import _thread as thread
+  65 | else:
+  66 |     import thread
+  67 | 
+  68 | try:
+  69 |     import asyncio
+  70 | except ImportError:
+  71 |     asyncio = None
+  72 | 
+  73 | 
+  74 | _POLL_TIMEOUT = 3600.0
+  75 | 
+  76 | 
+  77 | class IOLoop(Configurable):
+  78 |     """A level-triggered I/O loop.
+  79 | 
+  80 |     We use ``epoll`` (Linux) or ``kqueue`` (BSD and Mac OS X) if they
+  81 |     are available, or else we fall back on select(). If you are
+  82 |     implementing a system that needs to handle thousands of
+  83 |     simultaneous connections, you should use a system that supports
+  84 |     either ``epoll`` or ``kqueue``.
+  85 | 
+  86 |     Example usage for a simple TCP server:
+  87 | 
+  88 |     .. testcode::
+  89 | 
+  90 |         import errno
+  91 |         import functools
+  92 |         import tornado.ioloop
+  93 |         import socket
+  94 | 
+  95 |         def connection_ready(sock, fd, events):
+  96 |             while True:
+  97 |                 try:
+  98 |                     connection, address = sock.accept()
+  99 |                 except socket.error as e:
+ 100 |                     if e.args[0] not in (errno.EWOULDBLOCK, errno.EAGAIN):
+ 101 |                         raise
+ 102 |                     return
+ 103 |                 connection.setblocking(0)
+ 104 |                 handle_connection(connection, address)
+ 105 | 
+ 106 |         if __name__ == '__main__':
+ 107 |             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM, 0)
+ 108 |             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+ 109 |             sock.setblocking(0)
+ 110 |             sock.bind(("", port))
+ 111 |             sock.listen(128)
+ 112 | 
+ 113 |             io_loop = tornado.ioloop.IOLoop.current()
+ 114 |             callback = functools.partial(connection_ready, sock)
+ 115 |             io_loop.add_handler(sock.fileno(), callback, io_loop.READ)
+ 116 |             io_loop.start()
+ 117 | 
+ 118 |     .. testoutput::
+ 119 |        :hide:
+ 120 | 
+ 121 |     By default, a newly-constructed `IOLoop` becomes the thread's current
+ 122 |     `IOLoop`, unless there already is a current `IOLoop`. This behavior
+ 123 |     can be controlled with the ``make_current`` argument to the `IOLoop`
+ 124 |     constructor: if ``make_current=True``, the new `IOLoop` will always
+ 125 |     try to become current and it raises an error if there is already a
+ 126 |     current instance. If ``make_current=False``, the new `IOLoop` will
+ 127 |     not try to become current.
+ 128 | 
+ 129 |     In general, an `IOLoop` cannot survive a fork or be shared across
+ 130 |     processes in any way. When multiple processes are being used, each
+ 131 |     process should create its own `IOLoop`, which also implies that
+ 132 |     any objects which depend on the `IOLoop` (such as
+ 133 |     `.AsyncHTTPClient`) must also be created in the child processes.
+ 134 |     As a guideline, anything that starts processes (including the
+ 135 |     `tornado.process` and `multiprocessing` modules) should do so as
+ 136 |     early as possible, ideally the first thing the application does
+ 137 |     after loading its configuration in ``main()``.
+ 138 | 
+ 139 |     .. versionchanged:: 4.2
+ 140 |        Added the ``make_current`` keyword argument to the `IOLoop`
+ 141 |        constructor.
+ 142 |     """
+ 143 |     # Constants from the epoll module
+ 144 |     _EPOLLIN = 0x001
+ 145 |     _EPOLLPRI = 0x002
+ 146 |     _EPOLLOUT = 0x004
+ 147 |     _EPOLLERR = 0x008
+ 148 |     _EPOLLHUP = 0x010
+ 149 |     _EPOLLRDHUP = 0x2000
+ 150 |     _EPOLLONESHOT = (1 << 30)
+ 151 |     _EPOLLET = (1 << 31)
+ 152 | 
+ 153 |     # Our events map exactly to the epoll events
+ 154 |     NONE = 0
+ 155 |     READ = _EPOLLIN
+ 156 |     WRITE = _EPOLLOUT
+ 157 |     ERROR = _EPOLLERR | _EPOLLHUP
+ 158 | 
+ 159 |     # Global lock for creating global IOLoop instance
+ 160 |     _instance_lock = threading.Lock()
+ 161 | 
+ 162 |     _current = threading.local()
+ 163 | 
+ 164 |     @staticmethod
+ 165 |     def instance():
+ 166 |         """Deprecated alias for `IOLoop.current()`.
+ 167 | 
+ 168 |         .. versionchanged:: 5.0
+ 169 | 
+ 170 |            Previously, this method returned a global singleton
+ 171 |            `IOLoop`, in contrast with the per-thread `IOLoop` returned
+ 172 |            by `current()`. In nearly all cases the two were the same
+ 173 |            (when they differed, it was generally used from non-Tornado
+ 174 |            threads to communicate back to the main thread's `IOLoop`).
+ 175 |            This distinction is not present in `asyncio`, so in order
+ 176 |            to facilitate integration with that package `instance()`
+ 177 |            was changed to be an alias to `current()`. Applications
+ 178 |            using the cross-thread communications aspect of
+ 179 |            `instance()` should instead set their own global variable
+ 180 |            to point to the `IOLoop` they want to use.
+ 181 | 
+ 182 |         .. deprecated:: 5.0
+ 183 |         """
+ 184 |         return IOLoop.current()
+ 185 | 
+ 186 |     @staticmethod
+ 187 |     def initialized():
+ 188 |         """Returns true if there is a current IOLoop.
+ 189 | 
+ 190 |         .. versionchanged:: 5.0
+ 191 | 
+ 192 |            Redefined in terms of `current()` instead of `instance()`.
+ 193 | 
+ 194 |         .. deprecated:: 5.0
+ 195 | 
+ 196 |            This method only knows about `IOLoop` objects (and not, for
+ 197 |            example, `asyncio` event loops), so it is of limited use.
+ 198 |         """
+ 199 |         return IOLoop.current(instance=False) is not None
+ 200 | 
+ 201 |     def install(self):
+ 202 |         """Deprecated alias for `make_current()`.
+ 203 | 
+ 204 |         .. versionchanged:: 5.0
+ 205 | 
+ 206 |            Previously, this method would set this `IOLoop` as the
+ 207 |            global singleton used by `IOLoop.instance()`. Now that
+ 208 |            `instance()` is an alias for `current()`, `install()`
+ 209 |            is an alias for `make_current()`.
+ 210 | 
+ 211 |         .. deprecated:: 5.0
+ 212 |         """
+ 213 |         self.make_current()
+ 214 | 
+ 215 |     @staticmethod
+ 216 |     def clear_instance():
+ 217 |         """Deprecated alias for `clear_current()`.
+ 218 | 
+ 219 |         .. versionchanged:: 5.0
+ 220 | 
+ 221 |            Previously, this method would clear the `IOLoop` used as
+ 222 |            the global singleton by `IOLoop.instance()`. Now that
+ 223 |            `instance()` is an alias for `current()`,
+ 224 |            `clear_instance()` is an alias for `clear_instance()`.
+ 225 | 
+ 226 |         .. deprecated:: 5.0
+ 227 | 
+ 228 |         """
+ 229 |         IOLoop.clear_current()
+ 230 | 
+ 231 |     @staticmethod
+ 232 |     def current(instance=True):
+ 233 |         """Returns the current thread's `IOLoop`.
+ 234 | 
+ 235 |         If an `IOLoop` is currently running or has been marked as
+ 236 |         current by `make_current`, returns that instance.  If there is
+ 237 |         no current `IOLoop` and ``instance`` is true, creates one.
+ 238 | 
+ 239 |         .. versionchanged:: 4.1
+ 240 |            Added ``instance`` argument to control the fallback to
+ 241 |            `IOLoop.instance()`.
+ 242 |         .. versionchanged:: 5.0
+ 243 |            The ``instance`` argument now controls whether an `IOLoop`
+ 244 |            is created automatically when there is none, instead of
+ 245 |            whether we fall back to `IOLoop.instance()` (which is now
+ 246 |            an alias for this method)
+ 247 |         """
+ 248 |         current = getattr(IOLoop._current, "instance", None)
+ 249 |         if current is None and instance:
+ 250 |             current = None
+ 251 |             if asyncio is not None:
+ 252 |                 from tornado.platform.asyncio import AsyncIOLoop, AsyncIOMainLoop
+ 253 |                 if IOLoop.configured_class() is AsyncIOLoop:
+ 254 |                     current = AsyncIOMainLoop()
+ 255 |             if current is None:
+ 256 |                 current = IOLoop()
+ 257 |             if IOLoop._current.instance is not current:
+ 258 |                 raise RuntimeError("new IOLoop did not become current")
+ 259 |         return current
+ 260 | 
+ 261 |     def make_current(self):
+ 262 |         """Makes this the `IOLoop` for the current thread.
+ 263 | 
+ 264 |         An `IOLoop` automatically becomes current for its thread
+ 265 |         when it is started, but it is sometimes useful to call
+ 266 |         `make_current` explicitly before starting the `IOLoop`,
+ 267 |         so that code run at startup time can find the right
+ 268 |         instance.
+ 269 | 
+ 270 |         .. versionchanged:: 4.1
+ 271 |            An `IOLoop` created while there is no current `IOLoop`
+ 272 |            will automatically become current.
+ 273 |         """
+ 274 |         IOLoop._current.instance = self
+ 275 | 
+ 276 |     @staticmethod
+ 277 |     def clear_current():
+ 278 |         """Clears the `IOLoop` for the current thread.
+ 279 | 
+ 280 |         Intended primarily for use by test frameworks in between tests.
+ 281 |         """
+ 282 |         IOLoop._current.instance = None
+ 283 | 
+ 284 |     @classmethod
+ 285 |     def configurable_base(cls):
+ 286 |         return IOLoop
+ 287 | 
+ 288 |     @classmethod
+ 289 |     def configurable_default(cls):
+ 290 |         if asyncio is not None:
+ 291 |             from tornado.platform.asyncio import AsyncIOLoop
+ 292 |             return AsyncIOLoop
+ 293 |         return PollIOLoop
+ 294 | 
+ 295 |     def initialize(self, make_current=None):
+ 296 |         if make_current is None:
+ 297 |             if IOLoop.current(instance=False) is None:
+ 298 |                 self.make_current()
+ 299 |         elif make_current:
+ 300 |             if IOLoop.current(instance=False) is not None:
+ 301 |                 raise RuntimeError("current IOLoop already exists")
+ 302 |             self.make_current()
+ 303 | 
+ 304 |     def close(self, all_fds=False):
+ 305 |         """Closes the `IOLoop`, freeing any resources used.
+ 306 | 
+ 307 |         If ``all_fds`` is true, all file descriptors registered on the
+ 308 |         IOLoop will be closed (not just the ones created by the
+ 309 |         `IOLoop` itself).
+ 310 | 
+ 311 |         Many applications will only use a single `IOLoop` that runs for the
+ 312 |         entire lifetime of the process.  In that case closing the `IOLoop`
+ 313 |         is not necessary since everything will be cleaned up when the
+ 314 |         process exits.  `IOLoop.close` is provided mainly for scenarios
+ 315 |         such as unit tests, which create and destroy a large number of
+ 316 |         ``IOLoops``.
+ 317 | 
+ 318 |         An `IOLoop` must be completely stopped before it can be closed.  This
+ 319 |         means that `IOLoop.stop()` must be called *and* `IOLoop.start()` must
+ 320 |         be allowed to return before attempting to call `IOLoop.close()`.
+ 321 |         Therefore the call to `close` will usually appear just after
+ 322 |         the call to `start` rather than near the call to `stop`.
+ 323 | 
+ 324 |         .. versionchanged:: 3.1
+ 325 |            If the `IOLoop` implementation supports non-integer objects
+ 326 |            for "file descriptors", those objects will have their
+ 327 |            ``close`` method when ``all_fds`` is true.
+ 328 |         """
+ 329 |         raise NotImplementedError()
+ 330 | 
+ 331 |     def add_handler(self, fd, handler, events):
+ 332 |         """Registers the given handler to receive the given events for ``fd``.
+ 333 | 
+ 334 |         The ``fd`` argument may either be an integer file descriptor or
+ 335 |         a file-like object with a ``fileno()`` method (and optionally a
+ 336 |         ``close()`` method, which may be called when the `IOLoop` is shut
+ 337 |         down).
+ 338 | 
+ 339 |         The ``events`` argument is a bitwise or of the constants
+ 340 |         ``IOLoop.READ``, ``IOLoop.WRITE``, and ``IOLoop.ERROR``.
+ 341 | 
+ 342 |         When an event occurs, ``handler(fd, events)`` will be run.
+ 343 | 
+ 344 |         .. versionchanged:: 4.0
+ 345 |            Added the ability to pass file-like objects in addition to
+ 346 |            raw file descriptors.
+ 347 |         """
+ 348 |         raise NotImplementedError()
+ 349 | 
+ 350 |     def update_handler(self, fd, events):
+ 351 |         """Changes the events we listen for ``fd``.
+ 352 | 
+ 353 |         .. versionchanged:: 4.0
+ 354 |            Added the ability to pass file-like objects in addition to
+ 355 |            raw file descriptors.
+ 356 |         """
+ 357 |         raise NotImplementedError()
+ 358 | 
+ 359 |     def remove_handler(self, fd):
+ 360 |         """Stop listening for events on ``fd``.
+ 361 | 
+ 362 |         .. versionchanged:: 4.0
+ 363 |            Added the ability to pass file-like objects in addition to
+ 364 |            raw file descriptors.
+ 365 |         """
+ 366 |         raise NotImplementedError()
+ 367 | 
+ 368 |     def set_blocking_signal_threshold(self, seconds, action):
+ 369 |         """Sends a signal if the `IOLoop` is blocked for more than
+ 370 |         ``s`` seconds.
+ 371 | 
+ 372 |         Pass ``seconds=None`` to disable.  Requires Python 2.6 on a unixy
+ 373 |         platform.
+ 374 | 
+ 375 |         The action parameter is a Python signal handler.  Read the
+ 376 |         documentation for the `signal` module for more information.
+ 377 |         If ``action`` is None, the process will be killed if it is
+ 378 |         blocked for too long.
+ 379 |         """
+ 380 |         raise NotImplementedError()
+ 381 | 
+ 382 |     def set_blocking_log_threshold(self, seconds):
+ 383 |         """Logs a stack trace if the `IOLoop` is blocked for more than
+ 384 |         ``s`` seconds.
+ 385 | 
+ 386 |         Equivalent to ``set_blocking_signal_threshold(seconds,
+ 387 |         self.log_stack)``
+ 388 |         """
+ 389 |         self.set_blocking_signal_threshold(seconds, self.log_stack)
+ 390 | 
+ 391 |     def log_stack(self, signal, frame):
+ 392 |         """Signal handler to log the stack trace of the current thread.
+ 393 | 
+ 394 |         For use with `set_blocking_signal_threshold`.
+ 395 |         """
+ 396 |         gen_log.warning('IOLoop blocked for %f seconds in\n%s',
+ 397 |                         self._blocking_signal_threshold,
+ 398 |                         ''.join(traceback.format_stack(frame)))
+ 399 | 
+ 400 |     def start(self):
+ 401 |         """Starts the I/O loop.
+ 402 | 
+ 403 |         The loop will run until one of the callbacks calls `stop()`, which
+ 404 |         will make the loop stop after the current event iteration completes.
+ 405 |         """
+ 406 |         raise NotImplementedError()
+ 407 | 
+ 408 |     def _setup_logging(self):
+ 409 |         """The IOLoop catches and logs exceptions, so it's
+ 410 |         important that log output be visible.  However, python's
+ 411 |         default behavior for non-root loggers (prior to python
+ 412 |         3.2) is to print an unhelpful "no handlers could be
+ 413 |         found" message rather than the actual log entry, so we
+ 414 |         must explicitly configure logging if we've made it this
+ 415 |         far without anything.
+ 416 | 
+ 417 |         This method should be called from start() in subclasses.
+ 418 |         """
+ 419 |         if not any([logging.getLogger().handlers,
+ 420 |                     logging.getLogger('tornado').handlers,
+ 421 |                     logging.getLogger('tornado.application').handlers]):
+ 422 |             logging.basicConfig()
+ 423 | 
+ 424 |     def stop(self):
+ 425 |         """Stop the I/O loop.
+ 426 | 
+ 427 |         If the event loop is not currently running, the next call to `start()`
+ 428 |         will return immediately.
+ 429 | 
+ 430 |         To use asynchronous methods from otherwise-synchronous code (such as
+ 431 |         unit tests), you can start and stop the event loop like this::
+ 432 | 
+ 433 |           ioloop = IOLoop()
+ 434 |           async_method(ioloop=ioloop, callback=ioloop.stop)
+ 435 |           ioloop.start()
+ 436 | 
+ 437 |         ``ioloop.start()`` will return after ``async_method`` has run
+ 438 |         its callback, whether that callback was invoked before or
+ 439 |         after ``ioloop.start``.
+ 440 | 
+ 441 |         Note that even after `stop` has been called, the `IOLoop` is not
+ 442 |         completely stopped until `IOLoop.start` has also returned.
+ 443 |         Some work that was scheduled before the call to `stop` may still
+ 444 |         be run before the `IOLoop` shuts down.
+ 445 |         """
+ 446 |         raise NotImplementedError()
+ 447 | 
+ 448 |     def run_sync(self, func, timeout=None):
+ 449 |         """Starts the `IOLoop`, runs the given function, and stops the loop.
+ 450 | 
+ 451 |         The function must return either a yieldable object or
+ 452 |         ``None``. If the function returns a yieldable object, the
+ 453 |         `IOLoop` will run until the yieldable is resolved (and
+ 454 |         `run_sync()` will return the yieldable's result). If it raises
+ 455 |         an exception, the `IOLoop` will stop and the exception will be
+ 456 |         re-raised to the caller.
+ 457 | 
+ 458 |         The keyword-only argument ``timeout`` may be used to set
+ 459 |         a maximum duration for the function.  If the timeout expires,
+ 460 |         a `tornado.util.TimeoutError` is raised.
+ 461 | 
+ 462 |         This method is useful in conjunction with `tornado.gen.coroutine`
+ 463 |         to allow asynchronous calls in a ``main()`` function::
+ 464 | 
+ 465 |             @gen.coroutine
+ 466 |             def main():
+ 467 |                 # do stuff...
+ 468 | 
+ 469 |             if __name__ == '__main__':
+ 470 |                 IOLoop.current().run_sync(main)
+ 471 | 
+ 472 |         .. versionchanged:: 4.3
+ 473 |            Returning a non-``None``, non-yieldable value is now an error.
+ 474 |         """
+ 475 |         future_cell = [None]
+ 476 | 
+ 477 |         def run():
+ 478 |             try:
+ 479 |                 result = func()
+ 480 |                 if result is not None:
+ 481 |                     from tornado.gen import convert_yielded
+ 482 |                     result = convert_yielded(result)
+ 483 |             except Exception:
+ 484 |                 future_cell[0] = TracebackFuture()
+ 485 |                 future_cell[0].set_exc_info(sys.exc_info())
+ 486 |             else:
+ 487 |                 if is_future(result):
+ 488 |                     future_cell[0] = result
+ 489 |                 else:
+ 490 |                     future_cell[0] = TracebackFuture()
+ 491 |                     future_cell[0].set_result(result)
+ 492 |             self.add_future(future_cell[0], lambda future: self.stop())
+ 493 |         self.add_callback(run)
+ 494 |         if timeout is not None:
+ 495 |             timeout_handle = self.add_timeout(self.time() + timeout, self.stop)
+ 496 |         self.start()
+ 497 |         if timeout is not None:
+ 498 |             self.remove_timeout(timeout_handle)
+ 499 |         if not future_cell[0].done():
+ 500 |             raise TimeoutError('Operation timed out after %s seconds' % timeout)
+ 501 |         return future_cell[0].result()
+ 502 | 
+ 503 |     def time(self):
+ 504 |         """Returns the current time according to the `IOLoop`'s clock.
+ 505 | 
+ 506 |         The return value is a floating-point number relative to an
+ 507 |         unspecified time in the past.
+ 508 | 
+ 509 |         By default, the `IOLoop`'s time function is `time.time`.  However,
+ 510 |         it may be configured to use e.g. `time.monotonic` instead.
+ 511 |         Calls to `add_timeout` that pass a number instead of a
+ 512 |         `datetime.timedelta` should use this function to compute the
+ 513 |         appropriate time, so they can work no matter what time function
+ 514 |         is chosen.
+ 515 |         """
+ 516 |         return time.time()
+ 517 | 
+ 518 |     def add_timeout(self, deadline, callback, *args, **kwargs):
+ 519 |         """Runs the ``callback`` at the time ``deadline`` from the I/O loop.
+ 520 | 
+ 521 |         Returns an opaque handle that may be passed to
+ 522 |         `remove_timeout` to cancel.
+ 523 | 
+ 524 |         ``deadline`` may be a number denoting a time (on the same
+ 525 |         scale as `IOLoop.time`, normally `time.time`), or a
+ 526 |         `datetime.timedelta` object for a deadline relative to the
+ 527 |         current time.  Since Tornado 4.0, `call_later` is a more
+ 528 |         convenient alternative for the relative case since it does not
+ 529 |         require a timedelta object.
+ 530 | 
+ 531 |         Note that it is not safe to call `add_timeout` from other threads.
+ 532 |         Instead, you must use `add_callback` to transfer control to the
+ 533 |         `IOLoop`'s thread, and then call `add_timeout` from there.
+ 534 | 
+ 535 |         Subclasses of IOLoop must implement either `add_timeout` or
+ 536 |         `call_at`; the default implementations of each will call
+ 537 |         the other.  `call_at` is usually easier to implement, but
+ 538 |         subclasses that wish to maintain compatibility with Tornado
+ 539 |         versions prior to 4.0 must use `add_timeout` instead.
+ 540 | 
+ 541 |         .. versionchanged:: 4.0
+ 542 |            Now passes through ``*args`` and ``**kwargs`` to the callback.
+ 543 |         """
+ 544 |         if isinstance(deadline, numbers.Real):
+ 545 |             return self.call_at(deadline, callback, *args, **kwargs)
+ 546 |         elif isinstance(deadline, datetime.timedelta):
+ 547 |             return self.call_at(self.time() + timedelta_to_seconds(deadline),
+ 548 |                                 callback, *args, **kwargs)
+ 549 |         else:
+ 550 |             raise TypeError("Unsupported deadline %r" % deadline)
+ 551 | 
+ 552 |     def call_later(self, delay, callback, *args, **kwargs):
+ 553 |         """Runs the ``callback`` after ``delay`` seconds have passed.
+ 554 | 
+ 555 |         Returns an opaque handle that may be passed to `remove_timeout`
+ 556 |         to cancel.  Note that unlike the `asyncio` method of the same
+ 557 |         name, the returned object does not have a ``cancel()`` method.
+ 558 | 
+ 559 |         See `add_timeout` for comments on thread-safety and subclassing.
+ 560 | 
+ 561 |         .. versionadded:: 4.0
+ 562 |         """
+ 563 |         return self.call_at(self.time() + delay, callback, *args, **kwargs)
+ 564 | 
+ 565 |     def call_at(self, when, callback, *args, **kwargs):
+ 566 |         """Runs the ``callback`` at the absolute time designated by ``when``.
+ 567 | 
+ 568 |         ``when`` must be a number using the same reference point as
+ 569 |         `IOLoop.time`.
+ 570 | 
+ 571 |         Returns an opaque handle that may be passed to `remove_timeout`
+ 572 |         to cancel.  Note that unlike the `asyncio` method of the same
+ 573 |         name, the returned object does not have a ``cancel()`` method.
+ 574 | 
+ 575 |         See `add_timeout` for comments on thread-safety and subclassing.
+ 576 | 
+ 577 |         .. versionadded:: 4.0
+ 578 |         """
+ 579 |         return self.add_timeout(when, callback, *args, **kwargs)
+ 580 | 
+ 581 |     def remove_timeout(self, timeout):
+ 582 |         """Cancels a pending timeout.
+ 583 | 
+ 584 |         The argument is a handle as returned by `add_timeout`.  It is
+ 585 |         safe to call `remove_timeout` even if the callback has already
+ 586 |         been run.
+ 587 |         """
+ 588 |         raise NotImplementedError()
+ 589 | 
+ 590 |     def add_callback(self, callback, *args, **kwargs):
+ 591 |         """Calls the given callback on the next I/O loop iteration.
+ 592 | 
+ 593 |         It is safe to call this method from any thread at any time,
+ 594 |         except from a signal handler.  Note that this is the **only**
+ 595 |         method in `IOLoop` that makes this thread-safety guarantee; all
+ 596 |         other interaction with the `IOLoop` must be done from that
+ 597 |         `IOLoop`'s thread.  `add_callback()` may be used to transfer
+ 598 |         control from other threads to the `IOLoop`'s thread.
+ 599 | 
+ 600 |         To add a callback from a signal handler, see
+ 601 |         `add_callback_from_signal`.
+ 602 |         """
+ 603 |         raise NotImplementedError()
+ 604 | 
+ 605 |     def add_callback_from_signal(self, callback, *args, **kwargs):
+ 606 |         """Calls the given callback on the next I/O loop iteration.
+ 607 | 
+ 608 |         Safe for use from a Python signal handler; should not be used
+ 609 |         otherwise.
+ 610 | 
+ 611 |         Callbacks added with this method will be run without any
+ 612 |         `.stack_context`, to avoid picking up the context of the function
+ 613 |         that was interrupted by the signal.
+ 614 |         """
+ 615 |         raise NotImplementedError()
+ 616 | 
+ 617 |     def spawn_callback(self, callback, *args, **kwargs):
+ 618 |         """Calls the given callback on the next IOLoop iteration.
+ 619 | 
+ 620 |         Unlike all other callback-related methods on IOLoop,
+ 621 |         ``spawn_callback`` does not associate the callback with its caller's
+ 622 |         ``stack_context``, so it is suitable for fire-and-forget callbacks
+ 623 |         that should not interfere with the caller.
+ 624 | 
+ 625 |         .. versionadded:: 4.0
+ 626 |         """
+ 627 |         with stack_context.NullContext():
+ 628 |             self.add_callback(callback, *args, **kwargs)
+ 629 | 
+ 630 |     def add_future(self, future, callback):
+ 631 |         """Schedules a callback on the ``IOLoop`` when the given
+ 632 |         `.Future` is finished.
+ 633 | 
+ 634 |         The callback is invoked with one argument, the
+ 635 |         `.Future`.
+ 636 |         """
+ 637 |         assert is_future(future)
+ 638 |         callback = stack_context.wrap(callback)
+ 639 |         future.add_done_callback(
+ 640 |             lambda future: self.add_callback(callback, future))
+ 641 | 
+ 642 |     def run_in_executor(self, executor, func, *args):
+ 643 |         """Runs a function in a ``concurrent.futures.Executor``. If
+ 644 |         ``executor`` is ``None``, the IO loop's default executor will be used.
+ 645 | 
+ 646 |         Use `functools.partial` to pass keyword arguments to `func`.
+ 647 | 
+ 648 |         """
+ 649 |         if ThreadPoolExecutor is None:
+ 650 |             raise RuntimeError(
+ 651 |                 "concurrent.futures is required to use IOLoop.run_in_executor")
+ 652 | 
+ 653 |         if executor is None:
+ 654 |             if not hasattr(self, '_executor'):
+ 655 |                 from tornado.process import cpu_count
+ 656 |                 self._executor = ThreadPoolExecutor(max_workers=(cpu_count() * 5))
+ 657 |             executor = self._executor
+ 658 | 
+ 659 |         return executor.submit(func, *args)
+ 660 | 
+ 661 |     def set_default_executor(self, executor):
+ 662 |         """Sets the default executor to use with :meth:`run_in_executor`."""
+ 663 |         self._executor = executor
+ 664 | 
+ 665 |     def _run_callback(self, callback):
+ 666 |         """Runs a callback with error handling.
+ 667 | 
+ 668 |         For use in subclasses.
+ 669 |         """
+ 670 |         try:
+ 671 |             ret = callback()
+ 672 |             if ret is not None:
+ 673 |                 from tornado import gen
+ 674 |                 # Functions that return Futures typically swallow all
+ 675 |                 # exceptions and store them in the Future.  If a Future
+ 676 |                 # makes it out to the IOLoop, ensure its exception (if any)
+ 677 |                 # gets logged too.
+ 678 |                 try:
+ 679 |                     ret = gen.convert_yielded(ret)
+ 680 |                 except gen.BadYieldError:
+ 681 |                     # It's not unusual for add_callback to be used with
+ 682 |                     # methods returning a non-None and non-yieldable
+ 683 |                     # result, which should just be ignored.
+ 684 |                     pass
+ 685 |                 else:
+ 686 |                     self.add_future(ret, self._discard_future_result)
+ 687 |         except Exception:
+ 688 |             self.handle_callback_exception(callback)
+ 689 | 
+ 690 |     def _discard_future_result(self, future):
+ 691 |         """Avoid unhandled-exception warnings from spawned coroutines."""
+ 692 |         future.result()
+ 693 | 
+ 694 |     def handle_callback_exception(self, callback):
+ 695 |         """This method is called whenever a callback run by the `IOLoop`
+ 696 |         throws an exception.
+ 697 | 
+ 698 |         By default simply logs the exception as an error.  Subclasses
+ 699 |         may override this method to customize reporting of exceptions.
+ 700 | 
+ 701 |         The exception itself is not passed explicitly, but is available
+ 702 |         in `sys.exc_info`.
+ 703 |         """
+ 704 |         app_log.error("Exception in callback %r", callback, exc_info=True)
+ 705 | 
+ 706 |     def split_fd(self, fd):
+ 707 |         """Returns an (fd, obj) pair from an ``fd`` parameter.
+ 708 | 
+ 709 |         We accept both raw file descriptors and file-like objects as
+ 710 |         input to `add_handler` and related methods.  When a file-like
+ 711 |         object is passed, we must retain the object itself so we can
+ 712 |         close it correctly when the `IOLoop` shuts down, but the
+ 713 |         poller interfaces favor file descriptors (they will accept
+ 714 |         file-like objects and call ``fileno()`` for you, but they
+ 715 |         always return the descriptor itself).
+ 716 | 
+ 717 |         This method is provided for use by `IOLoop` subclasses and should
+ 718 |         not generally be used by application code.
+ 719 | 
+ 720 |         .. versionadded:: 4.0
+ 721 |         """
+ 722 |         try:
+ 723 |             return fd.fileno(), fd
+ 724 |         except AttributeError:
+ 725 |             return fd, fd
+ 726 | 
+ 727 |     def close_fd(self, fd):
+ 728 |         """Utility method to close an ``fd``.
+ 729 | 
+ 730 |         If ``fd`` is a file-like object, we close it directly; otherwise
+ 731 |         we use `os.close`.
+ 732 | 
+ 733 |         This method is provided for use by `IOLoop` subclasses (in
+ 734 |         implementations of ``IOLoop.close(all_fds=True)`` and should
+ 735 |         not generally be used by application code.
+ 736 | 
+ 737 |         .. versionadded:: 4.0
+ 738 |         """
+ 739 |         try:
+ 740 |             try:
+ 741 |                 fd.close()
+ 742 |             except AttributeError:
+ 743 |                 os.close(fd)
+ 744 |         except OSError:
+ 745 |             pass
+ 746 | 
+ 747 | 
+ 748 | class PollIOLoop(IOLoop):
+ 749 |     """Base class for IOLoops built around a select-like function.
+ 750 | 
+ 751 |     For concrete implementations, see `tornado.platform.epoll.EPollIOLoop`
+ 752 |     (Linux), `tornado.platform.kqueue.KQueueIOLoop` (BSD and Mac), or
+ 753 |     `tornado.platform.select.SelectIOLoop` (all platforms).
+ 754 |     """
+ 755 |     def initialize(self, impl, time_func=None, **kwargs):
+ 756 |         super(PollIOLoop, self).initialize(**kwargs)
+ 757 |         self._impl = impl
+ 758 |         if hasattr(self._impl, 'fileno'):
+ 759 |             set_close_exec(self._impl.fileno())
+ 760 |         self.time_func = time_func or time.time
+ 761 |         self._handlers = {}
+ 762 |         self._events = {}
+ 763 |         self._callbacks = collections.deque()
+ 764 |         self._timeouts = []
+ 765 |         self._cancellations = 0
+ 766 |         self._running = False
+ 767 |         self._stopped = False
+ 768 |         self._closing = False
+ 769 |         self._thread_ident = None
+ 770 |         self._pid = os.getpid()
+ 771 |         self._blocking_signal_threshold = None
+ 772 |         self._timeout_counter = itertools.count()
+ 773 | 
+ 774 |         # Create a pipe that we send bogus data to when we want to wake
+ 775 |         # the I/O loop when it is idle
+ 776 |         self._waker = Waker()
+ 777 |         self.add_handler(self._waker.fileno(),
+ 778 |                          lambda fd, events: self._waker.consume(),
+ 779 |                          self.READ)
+ 780 | 
+ 781 |     @classmethod
+ 782 |     def configurable_base(cls):
+ 783 |         return PollIOLoop
+ 784 | 
+ 785 |     @classmethod
+ 786 |     def configurable_default(cls):
+ 787 |         if hasattr(select, "epoll"):
+ 788 |             from tornado.platform.epoll import EPollIOLoop
+ 789 |             return EPollIOLoop
+ 790 |         if hasattr(select, "kqueue"):
+ 791 |             # Python 2.6+ on BSD or Mac
+ 792 |             from tornado.platform.kqueue import KQueueIOLoop
+ 793 |             return KQueueIOLoop
+ 794 |         from tornado.platform.select import SelectIOLoop
+ 795 |         return SelectIOLoop
+ 796 | 
+ 797 |     def close(self, all_fds=False):
+ 798 |         self._closing = True
+ 799 |         self.remove_handler(self._waker.fileno())
+ 800 |         if all_fds:
+ 801 |             for fd, handler in list(self._handlers.values()):
+ 802 |                 self.close_fd(fd)
+ 803 |         self._waker.close()
+ 804 |         self._impl.close()
+ 805 |         self._callbacks = None
+ 806 |         self._timeouts = None
+ 807 |         if hasattr(self, '_executor'):
+ 808 |             self._executor.shutdown()
+ 809 | 
+ 810 |     def add_handler(self, fd, handler, events):
+ 811 |         fd, obj = self.split_fd(fd)
+ 812 |         self._handlers[fd] = (obj, stack_context.wrap(handler))
+ 813 |         self._impl.register(fd, events | self.ERROR)
+ 814 | 
+ 815 |     def update_handler(self, fd, events):
+ 816 |         fd, obj = self.split_fd(fd)
+ 817 |         self._impl.modify(fd, events | self.ERROR)
+ 818 | 
+ 819 |     def remove_handler(self, fd):
+ 820 |         fd, obj = self.split_fd(fd)
+ 821 |         self._handlers.pop(fd, None)
+ 822 |         self._events.pop(fd, None)
+ 823 |         try:
+ 824 |             self._impl.unregister(fd)
+ 825 |         except Exception:
+ 826 |             gen_log.debug("Error deleting fd from IOLoop", exc_info=True)
+ 827 | 
+ 828 |     def set_blocking_signal_threshold(self, seconds, action):
+ 829 |         if not hasattr(signal, "setitimer"):
+ 830 |             gen_log.error("set_blocking_signal_threshold requires a signal module "
+ 831 |                           "with the setitimer method")
+ 832 |             return
+ 833 |         self._blocking_signal_threshold = seconds
+ 834 |         if seconds is not None:
+ 835 |             signal.signal(signal.SIGALRM,
+ 836 |                           action if action is not None else signal.SIG_DFL)
+ 837 | 
+ 838 |     def start(self):
+ 839 |         if self._running:
+ 840 |             raise RuntimeError("IOLoop is already running")
+ 841 |         if os.getpid() != self._pid:
+ 842 |             raise RuntimeError("Cannot share PollIOLoops across processes")
+ 843 |         self._setup_logging()
+ 844 |         if self._stopped:
+ 845 |             self._stopped = False
+ 846 |             return
+ 847 |         old_current = getattr(IOLoop._current, "instance", None)
+ 848 |         IOLoop._current.instance = self
+ 849 |         self._thread_ident = thread.get_ident()
+ 850 |         self._running = True
+ 851 | 
+ 852 |         # signal.set_wakeup_fd closes a race condition in event loops:
+ 853 |         # a signal may arrive at the beginning of select/poll/etc
+ 854 |         # before it goes into its interruptible sleep, so the signal
+ 855 |         # will be consumed without waking the select.  The solution is
+ 856 |         # for the (C, synchronous) signal handler to write to a pipe,
+ 857 |         # which will then be seen by select.
+ 858 |         #
+ 859 |         # In python's signal handling semantics, this only matters on the
+ 860 |         # main thread (fortunately, set_wakeup_fd only works on the main
+ 861 |         # thread and will raise a ValueError otherwise).
+ 862 |         #
+ 863 |         # If someone has already set a wakeup fd, we don't want to
+ 864 |         # disturb it.  This is an issue for twisted, which does its
+ 865 |         # SIGCHLD processing in response to its own wakeup fd being
+ 866 |         # written to.  As long as the wakeup fd is registered on the IOLoop,
+ 867 |         # the loop will still wake up and everything should work.
+ 868 |         old_wakeup_fd = None
+ 869 |         if hasattr(signal, 'set_wakeup_fd') and os.name == 'posix':
+ 870 |             # requires python 2.6+, unix.  set_wakeup_fd exists but crashes
+ 871 |             # the python process on windows.
+ 872 |             try:
+ 873 |                 old_wakeup_fd = signal.set_wakeup_fd(self._waker.write_fileno())
+ 874 |                 if old_wakeup_fd != -1:
+ 875 |                     # Already set, restore previous value.  This is a little racy,
+ 876 |                     # but there's no clean get_wakeup_fd and in real use the
+ 877 |                     # IOLoop is just started once at the beginning.
+ 878 |                     signal.set_wakeup_fd(old_wakeup_fd)
+ 879 |                     old_wakeup_fd = None
+ 880 |             except ValueError:
+ 881 |                 # Non-main thread, or the previous value of wakeup_fd
+ 882 |                 # is no longer valid.
+ 883 |                 old_wakeup_fd = None
+ 884 | 
+ 885 |         try:
+ 886 |             while True:
+ 887 |                 # Prevent IO event starvation by delaying new callbacks
+ 888 |                 # to the next iteration of the event loop.
+ 889 |                 ncallbacks = len(self._callbacks)
+ 890 | 
+ 891 |                 # Add any timeouts that have come due to the callback list.
+ 892 |                 # Do not run anything until we have determined which ones
+ 893 |                 # are ready, so timeouts that call add_timeout cannot
+ 894 |                 # schedule anything in this iteration.
+ 895 |                 due_timeouts = []
+ 896 |                 if self._timeouts:
+ 897 |                     now = self.time()
+ 898 |                     while self._timeouts:
+ 899 |                         if self._timeouts[0].callback is None:
+ 900 |                             # The timeout was cancelled.  Note that the
+ 901 |                             # cancellation check is repeated below for timeouts
+ 902 |                             # that are cancelled by another timeout or callback.
+ 903 |                             heapq.heappop(self._timeouts)
+ 904 |                             self._cancellations -= 1
+ 905 |                         elif self._timeouts[0].deadline <= now:
+ 906 |                             due_timeouts.append(heapq.heappop(self._timeouts))
+ 907 |                         else:
+ 908 |                             break
+ 909 |                     if (self._cancellations > 512 and
+ 910 |                             self._cancellations > (len(self._timeouts) >> 1)):
+ 911 |                         # Clean up the timeout queue when it gets large and it's
+ 912 |                         # more than half cancellations.
+ 913 |                         self._cancellations = 0
+ 914 |                         self._timeouts = [x for x in self._timeouts
+ 915 |                                           if x.callback is not None]
+ 916 |                         heapq.heapify(self._timeouts)
+ 917 | 
+ 918 |                 for i in range(ncallbacks):
+ 919 |                     self._run_callback(self._callbacks.popleft())
+ 920 |                 for timeout in due_timeouts:
+ 921 |                     if timeout.callback is not None:
+ 922 |                         self._run_callback(timeout.callback)
+ 923 |                 # Closures may be holding on to a lot of memory, so allow
+ 924 |                 # them to be freed before we go into our poll wait.
+ 925 |                 due_timeouts = timeout = None
+ 926 | 
+ 927 |                 if self._callbacks:
+ 928 |                     # If any callbacks or timeouts called add_callback,
+ 929 |                     # we don't want to wait in poll() before we run them.
+ 930 |                     poll_timeout = 0.0
+ 931 |                 elif self._timeouts:
+ 932 |                     # If there are any timeouts, schedule the first one.
+ 933 |                     # Use self.time() instead of 'now' to account for time
+ 934 |                     # spent running callbacks.
+ 935 |                     poll_timeout = self._timeouts[0].deadline - self.time()
+ 936 |                     poll_timeout = max(0, min(poll_timeout, _POLL_TIMEOUT))
+ 937 |                 else:
+ 938 |                     # No timeouts and no callbacks, so use the default.
+ 939 |                     poll_timeout = _POLL_TIMEOUT
+ 940 | 
+ 941 |                 if not self._running:
+ 942 |                     break
+ 943 | 
+ 944 |                 if self._blocking_signal_threshold is not None:
+ 945 |                     # clear alarm so it doesn't fire while poll is waiting for
+ 946 |                     # events.
+ 947 |                     signal.setitimer(signal.ITIMER_REAL, 0, 0)
+ 948 | 
+ 949 |                 try:
+ 950 |                     event_pairs = self._impl.poll(poll_timeout)
+ 951 |                 except Exception as e:
+ 952 |                     # Depending on python version and IOLoop implementation,
+ 953 |                     # different exception types may be thrown and there are
+ 954 |                     # two ways EINTR might be signaled:
+ 955 |                     # * e.errno == errno.EINTR
+ 956 |                     # * e.args is like (errno.EINTR, 'Interrupted system call')
+ 957 |                     if errno_from_exception(e) == errno.EINTR:
+ 958 |                         continue
+ 959 |                     else:
+ 960 |                         raise
+ 961 | 
+ 962 |                 if self._blocking_signal_threshold is not None:
+ 963 |                     signal.setitimer(signal.ITIMER_REAL,
+ 964 |                                      self._blocking_signal_threshold, 0)
+ 965 | 
+ 966 |                 # Pop one fd at a time from the set of pending fds and run
+ 967 |                 # its handler. Since that handler may perform actions on
+ 968 |                 # other file descriptors, there may be reentrant calls to
+ 969 |                 # this IOLoop that modify self._events
+ 970 |                 self._events.update(event_pairs)
+ 971 |                 while self._events:
+ 972 |                     fd, events = self._events.popitem()
+ 973 |                     try:
+ 974 |                         fd_obj, handler_func = self._handlers[fd]
+ 975 |                         handler_func(fd_obj, events)
+ 976 |                     except (OSError, IOError) as e:
+ 977 |                         if errno_from_exception(e) == errno.EPIPE:
+ 978 |                             # Happens when the client closes the connection
+ 979 |                             pass
+ 980 |                         else:
+ 981 |                             self.handle_callback_exception(self._handlers.get(fd))
+ 982 |                     except Exception:
+ 983 |                         self.handle_callback_exception(self._handlers.get(fd))
+ 984 |                 fd_obj = handler_func = None
+ 985 | 
+ 986 |         finally:
+ 987 |             # reset the stopped flag so another start/stop pair can be issued
+ 988 |             self._stopped = False
+ 989 |             if self._blocking_signal_threshold is not None:
+ 990 |                 signal.setitimer(signal.ITIMER_REAL, 0, 0)
+ 991 |             IOLoop._current.instance = old_current
+ 992 |             if old_wakeup_fd is not None:
+ 993 |                 signal.set_wakeup_fd(old_wakeup_fd)
+ 994 | 
+ 995 |     def stop(self):
+ 996 |         self._running = False
+ 997 |         self._stopped = True
+ 998 |         self._waker.wake()
+ 999 | 
+1000 |     def time(self):
+1001 |         return self.time_func()
+1002 | 
+1003 |     def call_at(self, deadline, callback, *args, **kwargs):
+1004 |         timeout = _Timeout(
+1005 |             deadline,
+1006 |             functools.partial(stack_context.wrap(callback), *args, **kwargs),
+1007 |             self)
+1008 |         heapq.heappush(self._timeouts, timeout)
+1009 |         return timeout
+1010 | 
+1011 |     def remove_timeout(self, timeout):
+1012 |         # Removing from a heap is complicated, so just leave the defunct
+1013 |         # timeout object in the queue (see discussion in
+1014 |         # http://docs.python.org/library/heapq.html).
+1015 |         # If this turns out to be a problem, we could add a garbage
+1016 |         # collection pass whenever there are too many dead timeouts.
+1017 |         timeout.callback = None
+1018 |         self._cancellations += 1
+1019 | 
+1020 |     def add_callback(self, callback, *args, **kwargs):
+1021 |         if self._closing:
+1022 |             return
+1023 |         # Blindly insert into self._callbacks. This is safe even
+1024 |         # from signal handlers because deque.append is atomic.
+1025 |         self._callbacks.append(functools.partial(
+1026 |             stack_context.wrap(callback), *args, **kwargs))
+1027 |         if thread.get_ident() != self._thread_ident:
+1028 |             # This will write one byte but Waker.consume() reads many
+1029 |             # at once, so it's ok to write even when not strictly
+1030 |             # necessary.
+1031 |             self._waker.wake()
+1032 |         else:
+1033 |             # If we're on the IOLoop's thread, we don't need to wake anyone.
+1034 |             pass
+1035 | 
+1036 |     def add_callback_from_signal(self, callback, *args, **kwargs):
+1037 |         with stack_context.NullContext():
+1038 |             self.add_callback(callback, *args, **kwargs)
+1039 | 
+1040 | 
+1041 | class _Timeout(object):
+1042 |     """An IOLoop timeout, a UNIX timestamp and a callback"""
+1043 | 
+1044 |     # Reduce memory overhead when there are lots of pending callbacks
+1045 |     __slots__ = ['deadline', 'callback', 'tdeadline']
+1046 | 
+1047 |     def __init__(self, deadline, callback, io_loop):
+1048 |         if not isinstance(deadline, numbers.Real):
+1049 |             raise TypeError("Unsupported deadline %r" % deadline)
+1050 |         self.deadline = deadline
+1051 |         self.callback = callback
+1052 |         self.tdeadline = (deadline, next(io_loop._timeout_counter))
+1053 | 
+1054 |     # Comparison methods to sort by deadline, with object id as a tiebreaker
+1055 |     # to guarantee a consistent ordering.  The heapq module uses __le__
+1056 |     # in python2.5, and __lt__ in 2.6+ (sort() and most other comparisons
+1057 |     # use __lt__).
+1058 |     def __lt__(self, other):
+1059 |         return self.tdeadline < other.tdeadline
+1060 | 
+1061 |     def __le__(self, other):
+1062 |         return self.tdeadline <= other.tdeadline
+1063 | 
+1064 | 
+1065 | class PeriodicCallback(object):
+1066 |     """Schedules the given callback to be called periodically.
+1067 | 
+1068 |     The callback is called every ``callback_time`` milliseconds.
+1069 |     Note that the timeout is given in milliseconds, while most other
+1070 |     time-related functions in Tornado use seconds.
+1071 | 
+1072 |     If the callback runs for longer than ``callback_time`` milliseconds,
+1073 |     subsequent invocations will be skipped to get back on schedule.
+1074 | 
+1075 |     `start` must be called after the `PeriodicCallback` is created.
+1076 | 
+1077 |     .. versionchanged:: 5.0
+1078 |        The ``io_loop`` argument (deprecated since version 4.1) has been removed.
+1079 |     """
+1080 |     def __init__(self, callback, callback_time):
+1081 |         self.callback = callback
+1082 |         if callback_time <= 0:
+1083 |             raise ValueError("Periodic callback must have a positive callback_time")
+1084 |         self.callback_time = callback_time
+1085 |         self.io_loop = IOLoop.current()
+1086 |         self._running = False
+1087 |         self._timeout = None
+1088 | 
+1089 |     def start(self):
+1090 |         """Starts the timer."""
+1091 |         self._running = True
+1092 |         self._next_timeout = self.io_loop.time()
+1093 |         self._schedule_next()
+1094 | 
+1095 |     def stop(self):
+1096 |         """Stops the timer."""
+1097 |         self._running = False
+1098 |         if self._timeout is not None:
+1099 |             self.io_loop.remove_timeout(self._timeout)
+1100 |             self._timeout = None
+1101 | 
+1102 |     def is_running(self):
+1103 |         """Return True if this `.PeriodicCallback` has been started.
+1104 | 
+1105 |         .. versionadded:: 4.1
+1106 |         """
+1107 |         return self._running
+1108 | 
+1109 |     def _run(self):
+1110 |         if not self._running:
+1111 |             return
+1112 |         try:
+1113 |             return self.callback()
+1114 |         except Exception:
+1115 |             self.io_loop.handle_callback_exception(self.callback)
+1116 |         finally:
+1117 |             self._schedule_next()
+1118 | 
+1119 |     def _schedule_next(self):
+1120 |         if self._running:
+1121 |             current_time = self.io_loop.time()
+1122 | 
+1123 |             if self._next_timeout <= current_time:
+1124 |                 callback_time_sec = self.callback_time / 1000.0
+1125 |                 self._next_timeout += (math.floor((current_time - self._next_timeout) /
+1126 |                                                   callback_time_sec) + 1) * callback_time_sec
+1127 | 
+1128 |             self._timeout = self.io_loop.add_timeout(self._next_timeout, self._run)
+```
+
+
+FAILING TEST FILES:
+
+[test_file_1] BugsInPy/workspace/tornado/tornado/test/ioloop_test.py
+```python
+  1 | #!/usr/bin/env python
+  2 | 
+  3 | 
+  4 | from __future__ import absolute_import, division, print_function
+  5 | import contextlib
+  6 | import datetime
+  7 | import functools
+  8 | import socket
+  9 | import subprocess
+ 10 | import sys
+ 11 | import threading
+ 12 | import time
+ 13 | import types
+ 14 | 
+ 15 | from tornado.escape import native_str
+ 16 | from tornado import gen
+ 17 | from tornado.ioloop import IOLoop, TimeoutError, PollIOLoop, PeriodicCallback
+ 18 | from tornado.log import app_log
+ 19 | from tornado.platform.select import _Select
+ 20 | from tornado.stack_context import ExceptionStackContext, StackContext, wrap, NullContext
+ 21 | from tornado.testing import AsyncTestCase, bind_unused_port, ExpectLog, gen_test
+ 22 | from tornado.test.util import unittest, skipIfNonUnix, skipOnTravis, skipBefore35, exec_test
+ 23 | from tornado.concurrent import Future
+ 24 | 
+ 25 | try:
+ 26 |     from concurrent import futures
+ 27 | except ImportError:
+ 28 |     futures = None
+ 29 | 
+ 30 | try:
+ 31 |     import asyncio
+ 32 | except ImportError:
+ 33 |     asyncio = None
+ 34 | 
+ 35 | try:
+ 36 |     import twisted
+ 37 | except ImportError:
+ 38 |     twisted = None
+ 39 | 
+ 40 | 
+ 41 | class FakeTimeSelect(_Select):
+ 42 |     def __init__(self):
+ 43 |         self._time = 1000
+ 44 |         super(FakeTimeSelect, self).__init__()
+ 45 | 
+ 46 |     def time(self):
+ 47 |         return self._time
+ 48 | 
+ 49 |     def sleep(self, t):
+ 50 |         self._time += t
+ 51 | 
+ 52 |     def poll(self, timeout):
+ 53 |         events = super(FakeTimeSelect, self).poll(0)
+ 54 |         if events:
+ 55 |             return events
+ 56 |         self._time += timeout
+ 57 |         return []
+ 58 | 
+ 59 | 
+ 60 | class FakeTimeIOLoop(PollIOLoop):
+ 61 |     """IOLoop implementation with a fake and deterministic clock.
+ 62 | 
+ 63 |     The clock advances as needed to trigger timeouts immediately.
+ 64 |     For use when testing code that involves the passage of time
+ 65 |     and no external dependencies.
+ 66 |     """
+ 67 |     def initialize(self):
+ 68 |         self.fts = FakeTimeSelect()
+ 69 |         super(FakeTimeIOLoop, self).initialize(impl=self.fts,
+ 70 |                                                time_func=self.fts.time)
+ 71 | 
+ 72 |     def sleep(self, t):
+ 73 |         """Simulate a blocking sleep by advancing the clock."""
+ 74 |         self.fts.sleep(t)
+ 75 | 
+ 76 | 
+ 77 | class TestIOLoop(AsyncTestCase):
+ 78 |     def test_add_callback_return_sequence(self):
+ 79 |         # A callback returning {} or [] shouldn't spin the CPU, see Issue #1803.
+ 80 |         self.calls = 0
+ 81 | 
+ 82 |         loop = self.io_loop
+ 83 |         test = self
+ 84 |         old_add_callback = loop.add_callback
+ 85 | 
+ 86 |         def add_callback(self, callback, *args, **kwargs):
+ 87 |             test.calls += 1
+ 88 |             old_add_callback(callback, *args, **kwargs)
+ 89 | 
+ 90 |         loop.add_callback = types.MethodType(add_callback, loop)
+ 91 |         loop.add_callback(lambda: {})
+ 92 |         loop.add_callback(lambda: [])
+ 93 |         loop.add_timeout(datetime.timedelta(milliseconds=50), loop.stop)
+ 94 |         loop.start()
+ 95 |         self.assertLess(self.calls, 10)
+ 96 | 
+ 97 |     @skipOnTravis
+ 98 |     def test_add_callback_wakeup(self):
+ 99 |         # Make sure that add_callback from inside a running IOLoop
+100 |         # wakes up the IOLoop immediately instead of waiting for a timeout.
+101 |         def callback():
+102 |             self.called = True
+103 |             self.stop()
+104 | 
+105 |         def schedule_callback():
+106 |             self.called = False
+107 |             self.io_loop.add_callback(callback)
+108 |             # Store away the time so we can check if we woke up immediately
+109 |             self.start_time = time.time()
+110 |         self.io_loop.add_timeout(self.io_loop.time(), schedule_callback)
+111 |         self.wait()
+112 |         self.assertAlmostEqual(time.time(), self.start_time, places=2)
+113 |         self.assertTrue(self.called)
+114 | 
+115 |     @skipOnTravis
+116 |     def test_add_callback_wakeup_other_thread(self):
+117 |         def target():
+118 |             # sleep a bit to let the ioloop go into its poll loop
+119 |             time.sleep(0.01)
+120 |             self.stop_time = time.time()
+121 |             self.io_loop.add_callback(self.stop)
+122 |         thread = threading.Thread(target=target)
+123 |         self.io_loop.add_callback(thread.start)
+124 |         self.wait()
+125 |         delta = time.time() - self.stop_time
+126 |         self.assertLess(delta, 0.1)
+127 |         thread.join()
+128 | 
+129 |     def test_add_timeout_timedelta(self):
+130 |         self.io_loop.add_timeout(datetime.timedelta(microseconds=1), self.stop)
+131 |         self.wait()
+132 | 
+133 |     def test_multiple_add(self):
+134 |         sock, port = bind_unused_port()
+135 |         try:
+136 |             self.io_loop.add_handler(sock.fileno(), lambda fd, events: None,
+137 |                                      IOLoop.READ)
+138 |             # Attempting to add the same handler twice fails
+139 |             # (with a platform-dependent exception)
+140 |             self.assertRaises(Exception, self.io_loop.add_handler,
+141 |                               sock.fileno(), lambda fd, events: None,
+142 |                               IOLoop.READ)
+143 |         finally:
+144 |             self.io_loop.remove_handler(sock.fileno())
+145 |             sock.close()
+146 | 
+147 |     def test_remove_without_add(self):
+148 |         # remove_handler should not throw an exception if called on an fd
+149 |         # was never added.
+150 |         sock, port = bind_unused_port()
+151 |         try:
+152 |             self.io_loop.remove_handler(sock.fileno())
+153 |         finally:
+154 |             sock.close()
+155 | 
+156 |     def test_add_callback_from_signal(self):
+157 |         # cheat a little bit and just run this normally, since we can't
+158 |         # easily simulate the races that happen with real signal handlers
+159 |         self.io_loop.add_callback_from_signal(self.stop)
+160 |         self.wait()
+161 | 
+162 |     def test_add_callback_from_signal_other_thread(self):
+163 |         # Very crude test, just to make sure that we cover this case.
+164 |         # This also happens to be the first test where we run an IOLoop in
+165 |         # a non-main thread.
+166 |         other_ioloop = IOLoop()
+167 |         thread = threading.Thread(target=other_ioloop.start)
+168 |         thread.start()
+169 |         other_ioloop.add_callback_from_signal(other_ioloop.stop)
+170 |         thread.join()
+171 |         other_ioloop.close()
+172 | 
+173 |     def test_add_callback_while_closing(self):
+174 |         # Issue #635: add_callback() should raise a clean exception
+175 |         # if called while another thread is closing the IOLoop.
+176 |         if IOLoop.configured_class().__name__.endswith('AsyncIOLoop'):
+177 |             raise unittest.SkipTest("AsyncIOMainLoop shutdown not thread safe")
+178 |         closing = threading.Event()
+179 | 
+180 |         def target():
+181 |             other_ioloop.add_callback(other_ioloop.stop)
+182 |             other_ioloop.start()
+183 |             closing.set()
+184 |             other_ioloop.close(all_fds=True)
+185 |         other_ioloop = IOLoop()
+186 |         thread = threading.Thread(target=target)
+187 |         thread.start()
+188 |         closing.wait()
+189 |         for i in range(1000):
+190 |             try:
+191 |                 other_ioloop.add_callback(lambda: None)
+192 |             except RuntimeError as e:
+193 |                 self.assertEqual("IOLoop is closing", str(e))
+194 |                 break
+195 | 
+196 |     def test_handle_callback_exception(self):
+197 |         # IOLoop.handle_callback_exception can be overridden to catch
+198 |         # exceptions in callbacks.
+199 |         def handle_callback_exception(callback):
+200 |             self.assertIs(sys.exc_info()[0], ZeroDivisionError)
+201 |             self.stop()
+202 |         self.io_loop.handle_callback_exception = handle_callback_exception
+203 |         with NullContext():
+204 |             # remove the test StackContext that would see this uncaught
+205 |             # exception as a test failure.
+206 |             self.io_loop.add_callback(lambda: 1 / 0)
+207 |         self.wait()
+208 | 
+209 |     @skipIfNonUnix  # just because socketpair is so convenient
+210 |     def test_read_while_writeable(self):
+211 |         # Ensure that write events don't come in while we're waiting for
+212 |         # a read and haven't asked for writeability. (the reverse is
+213 |         # difficult to test for)
+214 |         client, server = socket.socketpair()
+215 |         try:
+216 |             def handler(fd, events):
+217 |                 self.assertEqual(events, IOLoop.READ)
+218 |                 self.stop()
+219 |             self.io_loop.add_handler(client.fileno(), handler, IOLoop.READ)
+220 |             self.io_loop.add_timeout(self.io_loop.time() + 0.01,
+221 |                                      functools.partial(server.send, b'asdf'))
+222 |             self.wait()
+223 |             self.io_loop.remove_handler(client.fileno())
+224 |         finally:
+225 |             client.close()
+226 |             server.close()
+227 | 
+228 |     def test_remove_timeout_after_fire(self):
+229 |         # It is not an error to call remove_timeout after it has run.
+230 |         handle = self.io_loop.add_timeout(self.io_loop.time(), self.stop)
+231 |         self.wait()
+232 |         self.io_loop.remove_timeout(handle)
+233 | 
+234 |     def test_remove_timeout_cleanup(self):
+235 |         # Add and remove enough callbacks to trigger cleanup.
+236 |         # Not a very thorough test, but it ensures that the cleanup code
+237 |         # gets executed and doesn't blow up.  This test is only really useful
+238 |         # on PollIOLoop subclasses, but it should run silently on any
+239 |         # implementation.
+240 |         for i in range(2000):
+241 |             timeout = self.io_loop.add_timeout(self.io_loop.time() + 3600,
+242 |                                                lambda: None)
+243 |             self.io_loop.remove_timeout(timeout)
+244 |         # HACK: wait two IOLoop iterations for the GC to happen.
+245 |         self.io_loop.add_callback(lambda: self.io_loop.add_callback(self.stop))
+246 |         self.wait()
+247 | 
+248 |     def test_remove_timeout_from_timeout(self):
+249 |         calls = [False, False]
+250 | 
+251 |         # Schedule several callbacks and wait for them all to come due at once.
+252 |         # t2 should be cancelled by t1, even though it is already scheduled to
+253 |         # be run before the ioloop even looks at it.
+254 |         now = self.io_loop.time()
+255 | 
+256 |         def t1():
+257 |             calls[0] = True
+258 |             self.io_loop.remove_timeout(t2_handle)
+259 |         self.io_loop.add_timeout(now + 0.01, t1)
+260 | 
+261 |         def t2():
+262 |             calls[1] = True
+263 |         t2_handle = self.io_loop.add_timeout(now + 0.02, t2)
+264 |         self.io_loop.add_timeout(now + 0.03, self.stop)
+265 |         time.sleep(0.03)
+266 |         self.wait()
+267 |         self.assertEqual(calls, [True, False])
+268 | 
+269 |     def test_timeout_with_arguments(self):
+270 |         # This tests that all the timeout methods pass through *args correctly.
+271 |         results = []
+272 |         self.io_loop.add_timeout(self.io_loop.time(), results.append, 1)
+273 |         self.io_loop.add_timeout(datetime.timedelta(seconds=0),
+274 |                                  results.append, 2)
+275 |         self.io_loop.call_at(self.io_loop.time(), results.append, 3)
+276 |         self.io_loop.call_later(0, results.append, 4)
+277 |         self.io_loop.call_later(0, self.stop)
+278 |         self.wait()
+279 |         # The asyncio event loop does not guarantee the order of these
+280 |         # callbacks, but PollIOLoop does.
+281 |         self.assertEqual(sorted(results), [1, 2, 3, 4])
+282 | 
+283 |     def test_add_timeout_return(self):
+284 |         # All the timeout methods return non-None handles that can be
+285 |         # passed to remove_timeout.
+286 |         handle = self.io_loop.add_timeout(self.io_loop.time(), lambda: None)
+287 |         self.assertFalse(handle is None)
+288 |         self.io_loop.remove_timeout(handle)
+289 | 
+290 |     def test_call_at_return(self):
+291 |         handle = self.io_loop.call_at(self.io_loop.time(), lambda: None)
+292 |         self.assertFalse(handle is None)
+293 |         self.io_loop.remove_timeout(handle)
+294 | 
+295 |     def test_call_later_return(self):
+296 |         handle = self.io_loop.call_later(0, lambda: None)
+297 |         self.assertFalse(handle is None)
+298 |         self.io_loop.remove_timeout(handle)
+299 | 
+300 |     def test_close_file_object(self):
+301 |         """When a file object is used instead of a numeric file descriptor,
+302 |         the object should be closed (by IOLoop.close(all_fds=True),
+303 |         not just the fd.
+304 |         """
+305 |         # Use a socket since they are supported by IOLoop on all platforms.
+306 |         # Unfortunately, sockets don't support the .closed attribute for
+307 |         # inspecting their close status, so we must use a wrapper.
+308 |         class SocketWrapper(object):
+309 |             def __init__(self, sockobj):
+310 |                 self.sockobj = sockobj
+311 |                 self.closed = False
+312 | 
+313 |             def fileno(self):
+314 |                 return self.sockobj.fileno()
+315 | 
+316 |             def close(self):
+317 |                 self.closed = True
+318 |                 self.sockobj.close()
+319 |         sockobj, port = bind_unused_port()
+320 |         socket_wrapper = SocketWrapper(sockobj)
+321 |         io_loop = IOLoop()
+322 |         io_loop.add_handler(socket_wrapper, lambda fd, events: None,
+323 |                             IOLoop.READ)
+324 |         io_loop.close(all_fds=True)
+325 |         self.assertTrue(socket_wrapper.closed)
+326 | 
+327 |     def test_handler_callback_file_object(self):
+328 |         """The handler callback receives the same fd object it passed in."""
+329 |         server_sock, port = bind_unused_port()
+330 |         fds = []
+331 | 
+332 |         def handle_connection(fd, events):
+333 |             fds.append(fd)
+334 |             conn, addr = server_sock.accept()
+335 |             conn.close()
+336 |             self.stop()
+337 |         self.io_loop.add_handler(server_sock, handle_connection, IOLoop.READ)
+338 |         with contextlib.closing(socket.socket()) as client_sock:
+339 |             client_sock.connect(('127.0.0.1', port))
+340 |             self.wait()
+341 |         self.io_loop.remove_handler(server_sock)
+342 |         self.io_loop.add_handler(server_sock.fileno(), handle_connection,
+343 |                                  IOLoop.READ)
+344 |         with contextlib.closing(socket.socket()) as client_sock:
+345 |             client_sock.connect(('127.0.0.1', port))
+346 |             self.wait()
+347 |         self.assertIs(fds[0], server_sock)
+348 |         self.assertEqual(fds[1], server_sock.fileno())
+349 |         self.io_loop.remove_handler(server_sock.fileno())
+350 |         server_sock.close()
+351 | 
+352 |     def test_mixed_fd_fileobj(self):
+353 |         server_sock, port = bind_unused_port()
+354 | 
+355 |         def f(fd, events):
+356 |             pass
+357 |         self.io_loop.add_handler(server_sock, f, IOLoop.READ)
+358 |         with self.assertRaises(Exception):
+359 |             # The exact error is unspecified - some implementations use
+360 |             # IOError, others use ValueError.
+361 |             self.io_loop.add_handler(server_sock.fileno(), f, IOLoop.READ)
+362 |         self.io_loop.remove_handler(server_sock.fileno())
+363 |         server_sock.close()
+364 | 
+365 |     def test_reentrant(self):
+366 |         """Calling start() twice should raise an error, not deadlock."""
+367 |         returned_from_start = [False]
+368 |         got_exception = [False]
+369 | 
+370 |         def callback():
+371 |             try:
+372 |                 self.io_loop.start()
+373 |                 returned_from_start[0] = True
+374 |             except Exception:
+375 |                 got_exception[0] = True
+376 |             self.stop()
+377 |         self.io_loop.add_callback(callback)
+378 |         self.wait()
+379 |         self.assertTrue(got_exception[0])
+380 |         self.assertFalse(returned_from_start[0])
+381 | 
+382 |     def test_exception_logging(self):
+383 |         """Uncaught exceptions get logged by the IOLoop."""
+384 |         # Use a NullContext to keep the exception from being caught by
+385 |         # AsyncTestCase.
+386 |         with NullContext():
+387 |             self.io_loop.add_callback(lambda: 1 / 0)
+388 |             self.io_loop.add_callback(self.stop)
+389 |             with ExpectLog(app_log, "Exception in callback"):
+390 |                 self.wait()
+391 | 
+392 |     def test_exception_logging_future(self):
+393 |         """The IOLoop examines exceptions from Futures and logs them."""
+394 |         with NullContext():
+395 |             @gen.coroutine
+396 |             def callback():
+397 |                 self.io_loop.add_callback(self.stop)
+398 |                 1 / 0
+399 |             self.io_loop.add_callback(callback)
+400 |             with ExpectLog(app_log, "Exception in callback"):
+401 |                 self.wait()
+402 | 
+403 |     @skipBefore35
+404 |     def test_exception_logging_native_coro(self):
+405 |         """The IOLoop examines exceptions from awaitables and logs them."""
+406 |         namespace = exec_test(globals(), locals(), """
+407 |         async def callback():
+408 |             self.io_loop.add_callback(self.stop)
+409 |             1 / 0
+410 |         """)
+411 |         with NullContext():
+412 |             self.io_loop.add_callback(namespace["callback"])
+413 |             with ExpectLog(app_log, "Exception in callback"):
+414 |                 self.wait()
+415 | 
+416 |     def test_spawn_callback(self):
+417 |         # An added callback runs in the test's stack_context, so will be
+418 |         # re-raised in wait().
+419 |         self.io_loop.add_callback(lambda: 1 / 0)
+420 |         with self.assertRaises(ZeroDivisionError):
+421 |             self.wait()
+422 |         # A spawned callback is run directly on the IOLoop, so it will be
+423 |         # logged without stopping the test.
+424 |         self.io_loop.spawn_callback(lambda: 1 / 0)
+425 |         self.io_loop.add_callback(self.stop)
+426 |         with ExpectLog(app_log, "Exception in callback"):
+427 |             self.wait()
+428 | 
+429 |     @skipIfNonUnix
+430 |     def test_remove_handler_from_handler(self):
+431 |         # Create two sockets with simultaneous read events.
+432 |         client, server = socket.socketpair()
+433 |         try:
+434 |             client.send(b'abc')
+435 |             server.send(b'abc')
+436 | 
+437 |             # After reading from one fd, remove the other from the IOLoop.
+438 |             chunks = []
+439 | 
+440 |             def handle_read(fd, events):
+441 |                 chunks.append(fd.recv(1024))
+442 |                 if fd is client:
+443 |                     self.io_loop.remove_handler(server)
+444 |                 else:
+445 |                     self.io_loop.remove_handler(client)
+446 |             self.io_loop.add_handler(client, handle_read, self.io_loop.READ)
+447 |             self.io_loop.add_handler(server, handle_read, self.io_loop.READ)
+448 |             self.io_loop.call_later(0.1, self.stop)
+449 |             self.wait()
+450 | 
+451 |             # Only one fd was read; the other was cleanly removed.
+452 |             self.assertEqual(chunks, [b'abc'])
+453 |         finally:
+454 |             client.close()
+455 |             server.close()
+456 | 
+457 | 
+458 | # Deliberately not a subclass of AsyncTestCase so the IOLoop isn't
+459 | # automatically set as current.
+460 | class TestIOLoopCurrent(unittest.TestCase):
+461 |     def setUp(self):
+462 |         self.io_loop = None
+463 |         IOLoop.clear_current()
+464 | 
+465 |     def tearDown(self):
+466 |         if self.io_loop is not None:
+467 |             self.io_loop.close()
+468 | 
+469 |     def test_default_current(self):
+470 |         self.io_loop = IOLoop()
+471 |         # The first IOLoop with default arguments is made current.
+472 |         self.assertIs(self.io_loop, IOLoop.current())
+473 |         # A second IOLoop can be created but is not made current.
+474 |         io_loop2 = IOLoop()
+475 |         self.assertIs(self.io_loop, IOLoop.current())
+476 |         io_loop2.close()
+477 | 
+478 |     def test_non_current(self):
+479 |         self.io_loop = IOLoop(make_current=False)
+480 |         # The new IOLoop is not initially made current.
+481 |         self.assertIsNone(IOLoop.current(instance=False))
+482 |         # Starting the IOLoop makes it current, and stopping the loop
+483 |         # makes it non-current. This process is repeatable.
+484 |         for i in range(3):
+485 |             def f():
+486 |                 self.current_io_loop = IOLoop.current()
+487 |                 self.io_loop.stop()
+488 |             self.io_loop.add_callback(f)
+489 |             self.io_loop.start()
+490 |             self.assertIs(self.current_io_loop, self.io_loop)
+491 |             # Now that the loop is stopped, it is no longer current.
+492 |             self.assertIsNone(IOLoop.current(instance=False))
+493 | 
+494 |     def test_force_current(self):
+495 |         self.io_loop = IOLoop(make_current=True)
+496 |         self.assertIs(self.io_loop, IOLoop.current())
+497 |         with self.assertRaises(RuntimeError):
+498 |             # A second make_current=True construction cannot succeed.
+499 |             IOLoop(make_current=True)
+500 |         # current() was not affected by the failed construction.
+501 |         self.assertIs(self.io_loop, IOLoop.current())
+502 | 
+503 | 
+504 | class TestIOLoopAddCallback(AsyncTestCase):
+505 |     def setUp(self):
+506 |         super(TestIOLoopAddCallback, self).setUp()
+507 |         self.active_contexts = []
+508 | 
+509 |     def add_callback(self, callback, *args, **kwargs):
+510 |         self.io_loop.add_callback(callback, *args, **kwargs)
+511 | 
+512 |     @contextlib.contextmanager
+513 |     def context(self, name):
+514 |         self.active_contexts.append(name)
+515 |         yield
+516 |         self.assertEqual(self.active_contexts.pop(), name)
+517 | 
+518 |     def test_pre_wrap(self):
+519 |         # A pre-wrapped callback is run in the context in which it was
+520 |         # wrapped, not when it was added to the IOLoop.
+521 |         def f1():
+522 |             self.assertIn('c1', self.active_contexts)
+523 |             self.assertNotIn('c2', self.active_contexts)
+524 |             self.stop()
+525 | 
+526 |         with StackContext(functools.partial(self.context, 'c1')):
+527 |             wrapped = wrap(f1)
+528 | 
+529 |         with StackContext(functools.partial(self.context, 'c2')):
+530 |             self.add_callback(wrapped)
+531 | 
+532 |         self.wait()
+533 | 
+534 |     def test_pre_wrap_with_args(self):
+535 |         # Same as test_pre_wrap, but the function takes arguments.
+536 |         # Implementation note: The function must not be wrapped in a
+537 |         # functools.partial until after it has been passed through
+538 |         # stack_context.wrap
+539 |         def f1(foo, bar):
+540 |             self.assertIn('c1', self.active_contexts)
+541 |             self.assertNotIn('c2', self.active_contexts)
+542 |             self.stop((foo, bar))
+543 | 
+544 |         with StackContext(functools.partial(self.context, 'c1')):
+545 |             wrapped = wrap(f1)
+546 | 
+547 |         with StackContext(functools.partial(self.context, 'c2')):
+548 |             self.add_callback(wrapped, 1, bar=2)
+549 | 
+550 |         result = self.wait()
+551 |         self.assertEqual(result, (1, 2))
+552 | 
+553 | 
+554 | class TestIOLoopAddCallbackFromSignal(TestIOLoopAddCallback):
+555 |     # Repeat the add_callback tests using add_callback_from_signal
+556 |     def add_callback(self, callback, *args, **kwargs):
+557 |         self.io_loop.add_callback_from_signal(callback, *args, **kwargs)
+558 | 
+559 | 
+560 | @unittest.skipIf(futures is None, "futures module not present")
+561 | class TestIOLoopFutures(AsyncTestCase):
+562 |     def test_add_future_threads(self):
+563 |         with futures.ThreadPoolExecutor(1) as pool:
+564 |             self.io_loop.add_future(pool.submit(lambda: None),
+565 |                                     lambda future: self.stop(future))
+566 |             future = self.wait()
+567 |             self.assertTrue(future.done())
+568 |             self.assertTrue(future.result() is None)
+569 | 
+570 |     def test_add_future_stack_context(self):
+571 |         ready = threading.Event()
+572 | 
+573 |         def task():
+574 |             # we must wait for the ioloop callback to be scheduled before
+575 |             # the task completes to ensure that add_future adds the callback
+576 |             # asynchronously (which is the scenario in which capturing
+577 |             # the stack_context matters)
+578 |             ready.wait(1)
+579 |             assert ready.isSet(), "timed out"
+580 |             raise Exception("worker")
+581 | 
+582 |         def callback(future):
+583 |             self.future = future
+584 |             raise Exception("callback")
+585 | 
+586 |         def handle_exception(typ, value, traceback):
+587 |             self.exception = value
+588 |             self.stop()
+589 |             return True
+590 | 
+591 |         # stack_context propagates to the ioloop callback, but the worker
+592 |         # task just has its exceptions caught and saved in the Future.
+593 |         with futures.ThreadPoolExecutor(1) as pool:
+594 |             with ExceptionStackContext(handle_exception):
+595 |                 self.io_loop.add_future(pool.submit(task), callback)
+596 |             ready.set()
+597 |         self.wait()
+598 | 
+599 |         self.assertEqual(self.exception.args[0], "callback")
+600 |         self.assertEqual(self.future.exception().args[0], "worker")
+601 | 
+602 |     @gen_test
+603 |     def test_run_in_executor_gen(self):
+604 |         event1 = threading.Event()
+605 |         event2 = threading.Event()
+606 | 
+607 |         def sync_func(self_event, other_event):
+608 |             self_event.set()
+609 |             other_event.wait()
+610 |             # Note that return value doesn't actually do anything,
+611 |             # it is just passed through to our final assertion to
+612 |             # make sure it is passed through properly.
+613 |             return self_event
+614 | 
+615 |         # Run two synchronous functions, which would deadlock if not
+616 |         # run in parallel.
+617 |         res = yield [
+618 |             IOLoop.current().run_in_executor(None, sync_func, event1, event2),
+619 |             IOLoop.current().run_in_executor(None, sync_func, event2, event1)
+620 |         ]
+621 | 
+622 |         self.assertEqual([event1, event2], res)
+623 | 
+624 |     @skipBefore35
+625 |     @gen_test
+626 |     def test_run_in_executor_native(self):
+627 |         event1 = threading.Event()
+628 |         event2 = threading.Event()
+629 | 
+630 |         def sync_func(self_event, other_event):
+631 |             self_event.set()
+632 |             other_event.wait()
+633 |             return self_event
+634 | 
+635 |         # Go through an async wrapper to ensure that the result of
+636 |         # run_in_executor works with await and not just gen.coroutine
+637 |         # (simply passing the underlying concurrrent future would do that).
+638 |         namespace = exec_test(globals(), locals(), """
+639 |             async def async_wrapper(self_event, other_event):
+640 |                 return await IOLoop.current().run_in_executor(
+641 |                     None, sync_func, self_event, other_event)
+642 |         """)
+643 | 
+644 |         res = yield [
+645 |             namespace["async_wrapper"](event1, event2),
+646 |             namespace["async_wrapper"](event2, event1)
+647 |             ]
+648 | 
+649 |         self.assertEqual([event1, event2], res)
+650 | 
+651 |     @gen_test
+652 |     def test_set_default_executor(self):
+653 |         count = [0]
+654 | 
+655 |         class MyExecutor(futures.ThreadPoolExecutor):
+656 |             def submit(self, func, *args):
+657 |                 count[0] += 1
+658 |                 return super(MyExecutor, self).submit(func, *args)
+659 | 
+660 |         event = threading.Event()
+661 | 
+662 |         def sync_func():
+663 |             event.set()
+664 | 
+665 |         executor = MyExecutor(1)
+666 |         loop = IOLoop.current()
+667 |         loop.set_default_executor(executor)
+668 |         yield loop.run_in_executor(None, sync_func)
+669 |         self.assertEqual(1, count[0])
+670 |         self.assertTrue(event.is_set())
+671 | 
+672 | 
+673 | class TestIOLoopRunSync(unittest.TestCase):
+674 |     def setUp(self):
+675 |         self.io_loop = IOLoop()
+676 | 
+677 |     def tearDown(self):
+678 |         self.io_loop.close()
+679 | 
+680 |     def test_sync_result(self):
+681 |         with self.assertRaises(gen.BadYieldError):
+682 |             self.io_loop.run_sync(lambda: 42)
+683 | 
+684 |     def test_sync_exception(self):
+685 |         with self.assertRaises(ZeroDivisionError):
+686 |             self.io_loop.run_sync(lambda: 1 / 0)
+687 | 
+688 |     def test_async_result(self):
+689 |         @gen.coroutine
+690 |         def f():
+691 |             yield gen.Task(self.io_loop.add_callback)
+692 |             raise gen.Return(42)
+693 |         self.assertEqual(self.io_loop.run_sync(f), 42)
+694 | 
+695 |     def test_async_exception(self):
+696 |         @gen.coroutine
+697 |         def f():
+698 |             yield gen.Task(self.io_loop.add_callback)
+699 |             1 / 0
+700 |         with self.assertRaises(ZeroDivisionError):
+701 |             self.io_loop.run_sync(f)
+702 | 
+703 |     def test_current(self):
+704 |         def f():
+705 |             self.assertIs(IOLoop.current(), self.io_loop)
+706 |         self.io_loop.run_sync(f)
+707 | 
+708 |     def test_timeout(self):
+709 |         @gen.coroutine
+710 |         def f():
+711 |             yield gen.Task(self.io_loop.add_timeout, self.io_loop.time() + 1)
+712 |         self.assertRaises(TimeoutError, self.io_loop.run_sync, f, timeout=0.01)
+713 | 
+714 |     @skipBefore35
+715 |     def test_native_coroutine(self):
+716 |         namespace = exec_test(globals(), locals(), """
+717 |         async def f():
+718 |             await gen.Task(self.io_loop.add_callback)
+719 |         """)
+720 |         self.io_loop.run_sync(namespace['f'])
+721 | 
+722 | 
+723 | class TestPeriodicCallback(unittest.TestCase):
+724 |     def setUp(self):
+725 |         self.io_loop = FakeTimeIOLoop()
+726 |         self.io_loop.make_current()
+727 | 
+728 |     def tearDown(self):
+729 |         self.io_loop.close()
+730 | 
+731 |     def test_basic(self):
+732 |         calls = []
+733 | 
+734 |         def cb():
+735 |             calls.append(self.io_loop.time())
+736 |         pc = PeriodicCallback(cb, 10000)
+737 |         pc.start()
+738 |         self.io_loop.call_later(50, self.io_loop.stop)
+739 |         self.io_loop.start()
+740 |         self.assertEqual(calls, [1010, 1020, 1030, 1040, 1050])
+741 | 
+742 |     def test_overrun(self):
+743 |         sleep_durations = [9, 9, 10, 11, 20, 20, 35, 35, 0, 0]
+744 |         expected = [
+745 |             1010, 1020, 1030,  # first 3 calls on schedule
+746 |             1050, 1070,  # next 2 delayed one cycle
+747 |             1100, 1130,  # next 2 delayed 2 cycles
+748 |             1170, 1210,  # next 2 delayed 3 cycles
+749 |             1220, 1230,  # then back on schedule.
+750 |         ]
+751 |         calls = []
+752 | 
+753 |         def cb():
+754 |             calls.append(self.io_loop.time())
+755 |             if not sleep_durations:
+756 |                 self.io_loop.stop()
+757 |                 return
+758 |             self.io_loop.sleep(sleep_durations.pop(0))
+759 |         pc = PeriodicCallback(cb, 10000)
+760 |         pc.start()
+761 |         self.io_loop.start()
+762 |         self.assertEqual(calls, expected)
+763 | 
+764 | 
+765 | class TestIOLoopConfiguration(unittest.TestCase):
+766 |     def run_python(self, *statements):
+767 |         statements = [
+768 |             'from tornado.ioloop import IOLoop, PollIOLoop',
+769 |             'classname = lambda x: x.__class__.__name__',
+770 |         ] + list(statements)
+771 |         args = [sys.executable, '-c', '; '.join(statements)]
+772 |         return native_str(subprocess.check_output(args)).strip()
+773 | 
+774 |     def test_default(self):
+775 |         if asyncio is not None:
+776 |             # When asyncio is available, it is used by default.
+777 |             cls = self.run_python('print(classname(IOLoop.current()))')
+778 |             self.assertEqual(cls, 'AsyncIOMainLoop')
+779 |             cls = self.run_python('print(classname(IOLoop()))')
+780 |             self.assertEqual(cls, 'AsyncIOLoop')
+781 |         else:
+782 |             # Otherwise, the default is a subclass of PollIOLoop
+783 |             is_poll = self.run_python(
+784 |                 'print(isinstance(IOLoop.current(), PollIOLoop))')
+785 |             self.assertEqual(is_poll, 'True')
+786 | 
+787 |     def test_explicit_select(self):
+788 |         # SelectIOLoop can always be configured explicitly.
+789 |         default_class = self.run_python(
+790 |             'IOLoop.configure("tornado.platform.select.SelectIOLoop")',
+791 |             'print(classname(IOLoop.current()))')
+792 |         self.assertEqual(default_class, 'SelectIOLoop')
+793 | 
+794 |     @unittest.skipIf(asyncio is None, "asyncio module not present")
+795 |     def test_asyncio(self):
+796 |         cls = self.run_python(
+797 |             'IOLoop.configure("tornado.platform.asyncio.AsyncIOLoop")',
+798 |             'print(classname(IOLoop.current()))')
+799 |         self.assertEqual(cls, 'AsyncIOMainLoop')
+800 | 
+801 |     @unittest.skipIf(asyncio is None, "asyncio module not present")
+802 |     def test_asyncio_main(self):
+803 |         cls = self.run_python(
+804 |             'from tornado.platform.asyncio import AsyncIOMainLoop',
+805 |             'AsyncIOMainLoop().install()',
+806 |             'print(classname(IOLoop.current()))')
+807 |         self.assertEqual(cls, 'AsyncIOMainLoop')
+808 | 
+809 |     @unittest.skipIf(twisted is None, "twisted module not present")
+810 |     def test_twisted(self):
+811 |         cls = self.run_python(
+812 |             'from tornado.platform.twisted import TwistedIOLoop',
+813 |             'TwistedIOLoop().install()',
+814 |             'print(classname(IOLoop.current()))')
+815 |         self.assertEqual(cls, 'TwistedIOLoop')
+816 | 
+817 | 
+818 | if __name__ == "__main__":
+819 |     unittest.main()
+```

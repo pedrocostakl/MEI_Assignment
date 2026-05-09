@@ -1,0 +1,2337 @@
+You are given buggy source files and failing test files.
+
+Your task is BUG LOCALIZATION ONLY.
+
+Return only valid JSON using this exact format:
+
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "relative/path.py",
+      "line_start": 1,
+      "line_end": 1,
+      "confidence": "low|medium|high",
+      "reason": "Max 2 sentences."
+    }
+  ]
+}
+
+Rules:
+- Do not propose fixes.
+- Do not rewrite code.
+- Do not explain outside JSON.
+- Line numbers must refer to the numbered buggy source file.
+- Include at most 3 suspected locations.
+- Prefer the smallest line range that identifies the origin of the bug.
+
+
+SOURCE FILES:
+
+[file_1] BugsInPy/workspace/tornado/tornado/gen.py
+```python
+   1 | """``tornado.gen`` is a generator-based interface to make it easier to
+   2 | work in an asynchronous environment.  Code using the ``gen`` module
+   3 | is technically asynchronous, but it is written as a single generator
+   4 | instead of a collection of separate functions.
+   5 | 
+   6 | For example, the following asynchronous handler:
+   7 | 
+   8 | .. testcode::
+   9 | 
+  10 |     class AsyncHandler(RequestHandler):
+  11 |         @asynchronous
+  12 |         def get(self):
+  13 |             http_client = AsyncHTTPClient()
+  14 |             http_client.fetch("http://example.com",
+  15 |                               callback=self.on_fetch)
+  16 | 
+  17 |         def on_fetch(self, response):
+  18 |             do_something_with_response(response)
+  19 |             self.render("template.html")
+  20 | 
+  21 | .. testoutput::
+  22 |    :hide:
+  23 | 
+  24 | could be written with ``gen`` as:
+  25 | 
+  26 | .. testcode::
+  27 | 
+  28 |     class GenAsyncHandler(RequestHandler):
+  29 |         @gen.coroutine
+  30 |         def get(self):
+  31 |             http_client = AsyncHTTPClient()
+  32 |             response = yield http_client.fetch("http://example.com")
+  33 |             do_something_with_response(response)
+  34 |             self.render("template.html")
+  35 | 
+  36 | .. testoutput::
+  37 |    :hide:
+  38 | 
+  39 | Most asynchronous functions in Tornado return a `.Future`;
+  40 | yielding this object returns its `~.Future.result`.
+  41 | 
+  42 | You can also yield a list or dict of ``Futures``, which will be
+  43 | started at the same time and run in parallel; a list or dict of results will
+  44 | be returned when they are all finished:
+  45 | 
+  46 | .. testcode::
+  47 | 
+  48 |     @gen.coroutine
+  49 |     def get(self):
+  50 |         http_client = AsyncHTTPClient()
+  51 |         response1, response2 = yield [http_client.fetch(url1),
+  52 |                                       http_client.fetch(url2)]
+  53 |         response_dict = yield dict(response3=http_client.fetch(url3),
+  54 |                                    response4=http_client.fetch(url4))
+  55 |         response3 = response_dict['response3']
+  56 |         response4 = response_dict['response4']
+  57 | 
+  58 | .. testoutput::
+  59 |    :hide:
+  60 | 
+  61 | If the `~functools.singledispatch` library is available (standard in
+  62 | Python 3.4, available via the `singledispatch
+  63 | <https://pypi.python.org/pypi/singledispatch>`_ package on older
+  64 | versions), additional types of objects may be yielded. Tornado includes
+  65 | support for ``asyncio.Future`` and Twisted's ``Deferred`` class when
+  66 | ``tornado.platform.asyncio`` and ``tornado.platform.twisted`` are imported.
+  67 | See the `convert_yielded` function to extend this mechanism.
+  68 | 
+  69 | .. versionchanged:: 3.2
+  70 |    Dict support added.
+  71 | 
+  72 | .. versionchanged:: 4.1
+  73 |    Support added for yielding ``asyncio`` Futures and Twisted Deferreds
+  74 |    via ``singledispatch``.
+  75 | 
+  76 | """
+  77 | from __future__ import absolute_import, division, print_function, with_statement
+  78 | 
+  79 | import collections
+  80 | import functools
+  81 | import itertools
+  82 | import sys
+  83 | import types
+  84 | import weakref
+  85 | 
+  86 | from tornado.concurrent import Future, TracebackFuture, is_future, chain_future
+  87 | from tornado.ioloop import IOLoop
+  88 | from tornado.log import app_log
+  89 | from tornado import stack_context
+  90 | from tornado.util import raise_exc_info
+  91 | 
+  92 | try:
+  93 |     from functools import singledispatch  # py34+
+  94 | except ImportError as e:
+  95 |     try:
+  96 |         from singledispatch import singledispatch  # backport
+  97 |     except ImportError:
+  98 |         singledispatch = None
+  99 | 
+ 100 | 
+ 101 | class KeyReuseError(Exception):
+ 102 |     pass
+ 103 | 
+ 104 | 
+ 105 | class UnknownKeyError(Exception):
+ 106 |     pass
+ 107 | 
+ 108 | 
+ 109 | class LeakedCallbackError(Exception):
+ 110 |     pass
+ 111 | 
+ 112 | 
+ 113 | class BadYieldError(Exception):
+ 114 |     pass
+ 115 | 
+ 116 | 
+ 117 | class ReturnValueIgnoredError(Exception):
+ 118 |     pass
+ 119 | 
+ 120 | 
+ 121 | class TimeoutError(Exception):
+ 122 |     """Exception raised by ``with_timeout``."""
+ 123 | 
+ 124 | 
+ 125 | def engine(func):
+ 126 |     """Callback-oriented decorator for asynchronous generators.
+ 127 | 
+ 128 |     This is an older interface; for new code that does not need to be
+ 129 |     compatible with versions of Tornado older than 3.0 the
+ 130 |     `coroutine` decorator is recommended instead.
+ 131 | 
+ 132 |     This decorator is similar to `coroutine`, except it does not
+ 133 |     return a `.Future` and the ``callback`` argument is not treated
+ 134 |     specially.
+ 135 | 
+ 136 |     In most cases, functions decorated with `engine` should take
+ 137 |     a ``callback`` argument and invoke it with their result when
+ 138 |     they are finished.  One notable exception is the
+ 139 |     `~tornado.web.RequestHandler` :ref:`HTTP verb methods <verbs>`,
+ 140 |     which use ``self.finish()`` in place of a callback argument.
+ 141 |     """
+ 142 |     func = _make_coroutine_wrapper(func, replace_callback=False)
+ 143 | 
+ 144 |     @functools.wraps(func)
+ 145 |     def wrapper(*args, **kwargs):
+ 146 |         future = func(*args, **kwargs)
+ 147 | 
+ 148 |         def final_callback(future):
+ 149 |             if future.result() is not None:
+ 150 |                 raise ReturnValueIgnoredError(
+ 151 |                     "@gen.engine functions cannot return values: %r" %
+ 152 |                     (future.result(),))
+ 153 |         # The engine interface doesn't give us any way to return
+ 154 |         # errors but to raise them into the stack context.
+ 155 |         # Save the stack context here to use when the Future has resolved.
+ 156 |         future.add_done_callback(stack_context.wrap(final_callback))
+ 157 |     return wrapper
+ 158 | 
+ 159 | 
+ 160 | def coroutine(func, replace_callback=True):
+ 161 |     """Decorator for asynchronous generators.
+ 162 | 
+ 163 |     Any generator that yields objects from this module must be wrapped
+ 164 |     in either this decorator or `engine`.
+ 165 | 
+ 166 |     Coroutines may "return" by raising the special exception
+ 167 |     `Return(value) <Return>`.  In Python 3.3+, it is also possible for
+ 168 |     the function to simply use the ``return value`` statement (prior to
+ 169 |     Python 3.3 generators were not allowed to also return values).
+ 170 |     In all versions of Python a coroutine that simply wishes to exit
+ 171 |     early may use the ``return`` statement without a value.
+ 172 | 
+ 173 |     Functions with this decorator return a `.Future`.  Additionally,
+ 174 |     they may be called with a ``callback`` keyword argument, which
+ 175 |     will be invoked with the future's result when it resolves.  If the
+ 176 |     coroutine fails, the callback will not be run and an exception
+ 177 |     will be raised into the surrounding `.StackContext`.  The
+ 178 |     ``callback`` argument is not visible inside the decorated
+ 179 |     function; it is handled by the decorator itself.
+ 180 | 
+ 181 |     From the caller's perspective, ``@gen.coroutine`` is similar to
+ 182 |     the combination of ``@return_future`` and ``@gen.engine``.
+ 183 | 
+ 184 |     .. warning::
+ 185 | 
+ 186 |        When exceptions occur inside a coroutine, the exception
+ 187 |        information will be stored in the `.Future` object. You must
+ 188 |        examine the result of the `.Future` object, or the exception
+ 189 |        may go unnoticed by your code. This means yielding the function
+ 190 |        if called from another coroutine, using something like
+ 191 |        `.IOLoop.run_sync` for top-level calls, or passing the `.Future`
+ 192 |        to `.IOLoop.add_future`.
+ 193 | 
+ 194 |     """
+ 195 |     return _make_coroutine_wrapper(func, replace_callback=True)
+ 196 | 
+ 197 | 
+ 198 | def _make_coroutine_wrapper(func, replace_callback):
+ 199 |     """The inner workings of ``@gen.coroutine`` and ``@gen.engine``.
+ 200 | 
+ 201 |     The two decorators differ in their treatment of the ``callback``
+ 202 |     argument, so we cannot simply implement ``@engine`` in terms of
+ 203 |     ``@coroutine``.
+ 204 |     """
+ 205 |     @functools.wraps(func)
+ 206 |     def wrapper(*args, **kwargs):
+ 207 |         future = TracebackFuture()
+ 208 | 
+ 209 |         if replace_callback and 'callback' in kwargs:
+ 210 |             callback = kwargs.pop('callback')
+ 211 |             IOLoop.current().add_future(
+ 212 |                 future, lambda future: callback(future.result()))
+ 213 | 
+ 214 |         try:
+ 215 |             result = func(*args, **kwargs)
+ 216 |         except (Return, StopIteration) as e:
+ 217 |             result = getattr(e, 'value', None)
+ 218 |         except Exception:
+ 219 |             future.set_exc_info(sys.exc_info())
+ 220 |             return future
+ 221 |         else:
+ 222 |             if isinstance(result, types.GeneratorType):
+ 223 |                 # Inline the first iteration of Runner.run.  This lets us
+ 224 |                 # avoid the cost of creating a Runner when the coroutine
+ 225 |                 # never actually yields, which in turn allows us to
+ 226 |                 # use "optional" coroutines in critical path code without
+ 227 |                 # performance penalty for the synchronous case.
+ 228 |                 try:
+ 229 |                     orig_stack_contexts = stack_context._state.contexts
+ 230 |                     yielded = next(result)
+ 231 |                     if stack_context._state.contexts is not orig_stack_contexts:
+ 232 |                         yielded = TracebackFuture()
+ 233 |                         yielded.set_exception(
+ 234 |                             stack_context.StackContextInconsistentError(
+ 235 |                                 'stack_context inconsistency (probably caused '
+ 236 |                                 'by yield within a "with StackContext" block)'))
+ 237 |                 except (StopIteration, Return) as e:
+ 238 |                     future.set_result(getattr(e, 'value', None))
+ 239 |                 except Exception:
+ 240 |                     future.set_exc_info(sys.exc_info())
+ 241 |                 else:
+ 242 |                     Runner(result, future, yielded)
+ 243 |                 try:
+ 244 |                     return future
+ 245 |                 finally:
+ 246 |                     # Subtle memory optimization: if next() raised an exception,
+ 247 |                     # the future's exc_info contains a traceback which
+ 248 |                     # includes this stack frame.  This creates a cycle,
+ 249 |                     # which will be collected at the next full GC but has
+ 250 |                     # been shown to greatly increase memory usage of
+ 251 |                     # benchmarks (relative to the refcount-based scheme
+ 252 |                     # used in the absence of cycles).  We can avoid the
+ 253 |                     # cycle by clearing the local variable after we return it.
+ 254 |                     future = None
+ 255 |         future.set_result(result)
+ 256 |         return future
+ 257 |     return wrapper
+ 258 | 
+ 259 | 
+ 260 | class Return(Exception):
+ 261 |     """Special exception to return a value from a `coroutine`.
+ 262 | 
+ 263 |     If this exception is raised, its value argument is used as the
+ 264 |     result of the coroutine::
+ 265 | 
+ 266 |         @gen.coroutine
+ 267 |         def fetch_json(url):
+ 268 |             response = yield AsyncHTTPClient().fetch(url)
+ 269 |             raise gen.Return(json_decode(response.body))
+ 270 | 
+ 271 |     In Python 3.3, this exception is no longer necessary: the ``return``
+ 272 |     statement can be used directly to return a value (previously
+ 273 |     ``yield`` and ``return`` with a value could not be combined in the
+ 274 |     same function).
+ 275 | 
+ 276 |     By analogy with the return statement, the value argument is optional,
+ 277 |     but it is never necessary to ``raise gen.Return()``.  The ``return``
+ 278 |     statement can be used with no arguments instead.
+ 279 |     """
+ 280 |     def __init__(self, value=None):
+ 281 |         super(Return, self).__init__()
+ 282 |         self.value = value
+ 283 | 
+ 284 | 
+ 285 | class WaitIterator(object):
+ 286 |     """Provides an iterator to yield the results of futures as they finish.
+ 287 | 
+ 288 |     Yielding a set of futures like this:
+ 289 | 
+ 290 |     ``results = yield [future1, future2]``
+ 291 | 
+ 292 |     pauses the coroutine until both ``future1`` and ``future2``
+ 293 |     return, and then restarts the coroutine with the results of both
+ 294 |     futures. If either future is an exception, the expression will
+ 295 |     raise that exception and all the results will be lost.
+ 296 | 
+ 297 |     If you need to get the result of each future as soon as possible,
+ 298 |     or if you need the result of some futures even if others produce
+ 299 |     errors, you can use ``WaitIterator``::
+ 300 | 
+ 301 |       wait_iterator = gen.WaitIterator(future1, future2)
+ 302 |       while not wait_iterator.done():
+ 303 |           try:
+ 304 |               result = yield wait_iterator.next()
+ 305 |           except Exception as e:
+ 306 |               print("Error {} from {}".format(e, wait_iterator.current_future))
+ 307 |           else:
+ 308 |               print("Result {} recieved from {} at {}".format(
+ 309 |                   result, wait_iterator.current_future,
+ 310 |                   wait_iterator.current_index))
+ 311 | 
+ 312 |     Because results are returned as soon as they are available the
+ 313 |     output from the iterator *will not be in the same order as the
+ 314 |     input arguments*. If you need to know which future produced the
+ 315 |     current result, you can use the attributes
+ 316 |     ``WaitIterator.current_future``, or ``WaitIterator.current_index``
+ 317 |     to get the index of the future from the input list. (if keyword
+ 318 |     arguments were used in the construction of the `WaitIterator`,
+ 319 |     ``current_index`` will use the corresponding keyword).
+ 320 | 
+ 321 |     .. versionadded:: 4.1
+ 322 |     """
+ 323 |     def __init__(self, *args, **kwargs):
+ 324 |         if args and kwargs:
+ 325 |             raise ValueError(
+ 326 |                 "You must provide args or kwargs, not both")
+ 327 | 
+ 328 |         if kwargs:
+ 329 |             self._unfinished = dict((f, k) for (k, f) in kwargs.items())
+ 330 |             futures = list(kwargs.values())
+ 331 |         else:
+ 332 |             self._unfinished = dict((f, i) for (i, f) in enumerate(args))
+ 333 |             futures = args
+ 334 | 
+ 335 |         self._finished = collections.deque()
+ 336 |         self.current_index = self.current_future = None
+ 337 |         self._running_future = None
+ 338 | 
+ 339 |         self_ref = weakref.ref(self)
+ 340 |         for future in futures:
+ 341 |             future.add_done_callback(functools.partial(
+ 342 |                 self._done_callback, self_ref))
+ 343 | 
+ 344 |     def done(self):
+ 345 |         """Returns True if this iterator has no more results."""
+ 346 |         if self._finished or self._unfinished:
+ 347 |             return False
+ 348 |         # Clear the 'current' values when iteration is done.
+ 349 |         self.current_index = self.current_future = None
+ 350 |         return True
+ 351 | 
+ 352 |     def next(self):
+ 353 |         """Returns a `.Future` that will yield the next available result.
+ 354 | 
+ 355 |         Note that this `.Future` will not be the same object as any of
+ 356 |         the inputs.
+ 357 |         """
+ 358 |         self._running_future = TracebackFuture()
+ 359 | 
+ 360 |         if self._finished:
+ 361 |             self._return_result(self._finished.popleft())
+ 362 | 
+ 363 |         return self._running_future
+ 364 | 
+ 365 |     @staticmethod
+ 366 |     def _done_callback(self_ref, done):
+ 367 |         self = self_ref()
+ 368 |         if self is not None:
+ 369 |             if self._running_future and not self._running_future.done():
+ 370 |                 self._return_result(done)
+ 371 |             else:
+ 372 |                 self._finished.append(done)
+ 373 | 
+ 374 |     def _return_result(self, done):
+ 375 |         """Called set the returned future's state that of the future
+ 376 |         we yielded, and set the current future for the iterator.
+ 377 |         """
+ 378 |         chain_future(done, self._running_future)
+ 379 | 
+ 380 |         self.current_future = done
+ 381 |         self.current_index = self._unfinished.pop(done)
+ 382 | 
+ 383 | 
+ 384 | class YieldPoint(object):
+ 385 |     """Base class for objects that may be yielded from the generator.
+ 386 | 
+ 387 |     .. deprecated:: 4.0
+ 388 |        Use `Futures <.Future>` instead.
+ 389 |     """
+ 390 |     def start(self, runner):
+ 391 |         """Called by the runner after the generator has yielded.
+ 392 | 
+ 393 |         No other methods will be called on this object before ``start``.
+ 394 |         """
+ 395 |         raise NotImplementedError()
+ 396 | 
+ 397 |     def is_ready(self):
+ 398 |         """Called by the runner to determine whether to resume the generator.
+ 399 | 
+ 400 |         Returns a boolean; may be called more than once.
+ 401 |         """
+ 402 |         raise NotImplementedError()
+ 403 | 
+ 404 |     def get_result(self):
+ 405 |         """Returns the value to use as the result of the yield expression.
+ 406 | 
+ 407 |         This method will only be called once, and only after `is_ready`
+ 408 |         has returned true.
+ 409 |         """
+ 410 |         raise NotImplementedError()
+ 411 | 
+ 412 | 
+ 413 | class Callback(YieldPoint):
+ 414 |     """Returns a callable object that will allow a matching `Wait` to proceed.
+ 415 | 
+ 416 |     The key may be any value suitable for use as a dictionary key, and is
+ 417 |     used to match ``Callbacks`` to their corresponding ``Waits``.  The key
+ 418 |     must be unique among outstanding callbacks within a single run of the
+ 419 |     generator function, but may be reused across different runs of the same
+ 420 |     function (so constants generally work fine).
+ 421 | 
+ 422 |     The callback may be called with zero or one arguments; if an argument
+ 423 |     is given it will be returned by `Wait`.
+ 424 | 
+ 425 |     .. deprecated:: 4.0
+ 426 |        Use `Futures <.Future>` instead.
+ 427 |     """
+ 428 |     def __init__(self, key):
+ 429 |         self.key = key
+ 430 | 
+ 431 |     def start(self, runner):
+ 432 |         self.runner = runner
+ 433 |         runner.register_callback(self.key)
+ 434 | 
+ 435 |     def is_ready(self):
+ 436 |         return True
+ 437 | 
+ 438 |     def get_result(self):
+ 439 |         return self.runner.result_callback(self.key)
+ 440 | 
+ 441 | 
+ 442 | class Wait(YieldPoint):
+ 443 |     """Returns the argument passed to the result of a previous `Callback`.
+ 444 | 
+ 445 |     .. deprecated:: 4.0
+ 446 |        Use `Futures <.Future>` instead.
+ 447 |     """
+ 448 |     def __init__(self, key):
+ 449 |         self.key = key
+ 450 | 
+ 451 |     def start(self, runner):
+ 452 |         self.runner = runner
+ 453 | 
+ 454 |     def is_ready(self):
+ 455 |         return self.runner.is_ready(self.key)
+ 456 | 
+ 457 |     def get_result(self):
+ 458 |         return self.runner.pop_result(self.key)
+ 459 | 
+ 460 | 
+ 461 | class WaitAll(YieldPoint):
+ 462 |     """Returns the results of multiple previous `Callbacks <Callback>`.
+ 463 | 
+ 464 |     The argument is a sequence of `Callback` keys, and the result is
+ 465 |     a list of results in the same order.
+ 466 | 
+ 467 |     `WaitAll` is equivalent to yielding a list of `Wait` objects.
+ 468 | 
+ 469 |     .. deprecated:: 4.0
+ 470 |        Use `Futures <.Future>` instead.
+ 471 |     """
+ 472 |     def __init__(self, keys):
+ 473 |         self.keys = keys
+ 474 | 
+ 475 |     def start(self, runner):
+ 476 |         self.runner = runner
+ 477 | 
+ 478 |     def is_ready(self):
+ 479 |         return all(self.runner.is_ready(key) for key in self.keys)
+ 480 | 
+ 481 |     def get_result(self):
+ 482 |         return [self.runner.pop_result(key) for key in self.keys]
+ 483 | 
+ 484 | 
+ 485 | def Task(func, *args, **kwargs):
+ 486 |     """Adapts a callback-based asynchronous function for use in coroutines.
+ 487 | 
+ 488 |     Takes a function (and optional additional arguments) and runs it with
+ 489 |     those arguments plus a ``callback`` keyword argument.  The argument passed
+ 490 |     to the callback is returned as the result of the yield expression.
+ 491 | 
+ 492 |     .. versionchanged:: 4.0
+ 493 |        ``gen.Task`` is now a function that returns a `.Future`, instead of
+ 494 |        a subclass of `YieldPoint`.  It still behaves the same way when
+ 495 |        yielded.
+ 496 |     """
+ 497 |     future = Future()
+ 498 | 
+ 499 |     def handle_exception(typ, value, tb):
+ 500 |         if future.done():
+ 501 |             return False
+ 502 |         future.set_exc_info((typ, value, tb))
+ 503 |         return True
+ 504 | 
+ 505 |     def set_result(result):
+ 506 |         if future.done():
+ 507 |             return
+ 508 |         future.set_result(result)
+ 509 |     with stack_context.ExceptionStackContext(handle_exception):
+ 510 |         func(*args, callback=_argument_adapter(set_result), **kwargs)
+ 511 |     return future
+ 512 | 
+ 513 | 
+ 514 | class YieldFuture(YieldPoint):
+ 515 |     def __init__(self, future, io_loop=None):
+ 516 |         """Adapts a `.Future` to the `YieldPoint` interface.
+ 517 | 
+ 518 |         .. versionchanged:: 4.1
+ 519 |            The ``io_loop`` argument is deprecated.
+ 520 |         """
+ 521 |         self.future = future
+ 522 |         self.io_loop = io_loop or IOLoop.current()
+ 523 | 
+ 524 |     def start(self, runner):
+ 525 |         if not self.future.done():
+ 526 |             self.runner = runner
+ 527 |             self.key = object()
+ 528 |             runner.register_callback(self.key)
+ 529 |             self.io_loop.add_future(self.future, runner.result_callback(self.key))
+ 530 |         else:
+ 531 |             self.runner = None
+ 532 |             self.result_fn = self.future.result
+ 533 | 
+ 534 |     def is_ready(self):
+ 535 |         if self.runner is not None:
+ 536 |             return self.runner.is_ready(self.key)
+ 537 |         else:
+ 538 |             return True
+ 539 | 
+ 540 |     def get_result(self):
+ 541 |         if self.runner is not None:
+ 542 |             return self.runner.pop_result(self.key).result()
+ 543 |         else:
+ 544 |             return self.result_fn()
+ 545 | 
+ 546 | 
+ 547 | class Multi(YieldPoint):
+ 548 |     """Runs multiple asynchronous operations in parallel.
+ 549 | 
+ 550 |     Takes a list of ``YieldPoints`` or ``Futures`` and returns a list of
+ 551 |     their responses.  It is not necessary to call `Multi` explicitly,
+ 552 |     since the engine will do so automatically when the generator yields
+ 553 |     a list of ``YieldPoints`` or a mixture of ``YieldPoints`` and ``Futures``.
+ 554 | 
+ 555 |     Instead of a list, the argument may also be a dictionary whose values are
+ 556 |     Futures, in which case a parallel dictionary is returned mapping the same
+ 557 |     keys to their results.
+ 558 | 
+ 559 |     It is not normally necessary to call this class directly, as it
+ 560 |     will be created automatically as needed. However, calling it directly
+ 561 |     allows you to use the ``quiet_exceptions`` argument to control
+ 562 |     the logging of multiple exceptions.
+ 563 | 
+ 564 |     .. versionchanged:: 4.2
+ 565 |        If multiple ``YieldPoints`` fail, any exceptions after the first
+ 566 |        (which is raised) will be logged. Added the ``quiet_exceptions``
+ 567 |        argument to suppress this logging for selected exception types.
+ 568 |     """
+ 569 |     def __init__(self, children, quiet_exceptions=()):
+ 570 |         self.keys = None
+ 571 |         if isinstance(children, dict):
+ 572 |             self.keys = list(children.keys())
+ 573 |             children = children.values()
+ 574 |         self.children = []
+ 575 |         for i in children:
+ 576 |             if is_future(i):
+ 577 |                 i = YieldFuture(i)
+ 578 |             self.children.append(i)
+ 579 |         assert all(isinstance(i, YieldPoint) for i in self.children)
+ 580 |         self.unfinished_children = set(self.children)
+ 581 |         self.quiet_exceptions = quiet_exceptions
+ 582 | 
+ 583 |     def start(self, runner):
+ 584 |         for i in self.children:
+ 585 |             i.start(runner)
+ 586 | 
+ 587 |     def is_ready(self):
+ 588 |         finished = list(itertools.takewhile(
+ 589 |             lambda i: i.is_ready(), self.unfinished_children))
+ 590 |         self.unfinished_children.difference_update(finished)
+ 591 |         return not self.unfinished_children
+ 592 | 
+ 593 |     def get_result(self):
+ 594 |         result_list = []
+ 595 |         exc_info = None
+ 596 |         for f in self.children:
+ 597 |             try:
+ 598 |                 result_list.append(f.get_result())
+ 599 |             except Exception as e:
+ 600 |                 if exc_info is None:
+ 601 |                     exc_info = sys.exc_info()
+ 602 |                 else:
+ 603 |                     if not isinstance(e, self.quiet_exceptions):
+ 604 |                         app_log.error("Multiple exceptions in yield list",
+ 605 |                                       exc_info=True)
+ 606 |         if exc_info is not None:
+ 607 |             raise_exc_info(exc_info)
+ 608 |         if self.keys is not None:
+ 609 |             return dict(zip(self.keys, result_list))
+ 610 |         else:
+ 611 |             return list(result_list)
+ 612 | 
+ 613 | 
+ 614 | def multi_future(children, quiet_exceptions=()):
+ 615 |     """Wait for multiple asynchronous futures in parallel.
+ 616 | 
+ 617 |     Takes a list of ``Futures`` (but *not* other ``YieldPoints``) and returns
+ 618 |     a new Future that resolves when all the other Futures are done.
+ 619 |     If all the ``Futures`` succeeded, the returned Future's result is a list
+ 620 |     of their results.  If any failed, the returned Future raises the exception
+ 621 |     of the first one to fail.
+ 622 | 
+ 623 |     Instead of a list, the argument may also be a dictionary whose values are
+ 624 |     Futures, in which case a parallel dictionary is returned mapping the same
+ 625 |     keys to their results.
+ 626 | 
+ 627 |     It is not normally necessary to call `multi_future` explcitly,
+ 628 |     since the engine will do so automatically when the generator
+ 629 |     yields a list of `Futures`. However, calling it directly
+ 630 |     allows you to use the ``quiet_exceptions`` argument to control
+ 631 |     the logging of multiple exceptions.
+ 632 | 
+ 633 |     This function is faster than the `Multi` `YieldPoint` because it
+ 634 |     does not require the creation of a stack context.
+ 635 | 
+ 636 |     .. versionadded:: 4.0
+ 637 | 
+ 638 |     .. versionchanged:: 4.2
+ 639 |        If multiple ``Futures`` fail, any exceptions after the first (which is
+ 640 |        raised) will be logged. Added the ``quiet_exceptions``
+ 641 |        argument to suppress this logging for selected exception types.
+ 642 |     """
+ 643 |     if isinstance(children, dict):
+ 644 |         keys = list(children.keys())
+ 645 |         children = children.values()
+ 646 |     else:
+ 647 |         keys = None
+ 648 |     assert all(is_future(i) for i in children)
+ 649 |     unfinished_children = set(children)
+ 650 | 
+ 651 |     future = Future()
+ 652 |     if not children:
+ 653 |         future.set_result({} if keys is not None else [])
+ 654 | 
+ 655 |     def callback(f):
+ 656 |         unfinished_children.remove(f)
+ 657 |         if not unfinished_children:
+ 658 |             result_list = []
+ 659 |             for f in children:
+ 660 |                 try:
+ 661 |                     result_list.append(f.result())
+ 662 |                 except Exception as e:
+ 663 |                     if future.done():
+ 664 |                         if not isinstance(e, quiet_exceptions):
+ 665 |                             app_log.error("Multiple exceptions in yield list",
+ 666 |                                           exc_info=True)
+ 667 |                     else:
+ 668 |                         future.set_exc_info(sys.exc_info())
+ 669 |             if not future.done():
+ 670 |                 if keys is not None:
+ 671 |                     future.set_result(dict(zip(keys, result_list)))
+ 672 |                 else:
+ 673 |                     future.set_result(result_list)
+ 674 | 
+ 675 |     listening = set()
+ 676 |     for f in children:
+ 677 |         if f not in listening:
+ 678 |             listening.add(f)
+ 679 |             f.add_done_callback(callback)
+ 680 |     return future
+ 681 | 
+ 682 | 
+ 683 | def maybe_future(x):
+ 684 |     """Converts ``x`` into a `.Future`.
+ 685 | 
+ 686 |     If ``x`` is already a `.Future`, it is simply returned; otherwise
+ 687 |     it is wrapped in a new `.Future`.  This is suitable for use as
+ 688 |     ``result = yield gen.maybe_future(f())`` when you don't know whether
+ 689 |     ``f()`` returns a `.Future` or not.
+ 690 |     """
+ 691 |     if is_future(x):
+ 692 |         return x
+ 693 |     else:
+ 694 |         fut = Future()
+ 695 |         fut.set_result(x)
+ 696 |         return fut
+ 697 | 
+ 698 | 
+ 699 | def with_timeout(timeout, future, io_loop=None, quiet_exceptions=()):
+ 700 |     """Wraps a `.Future` in a timeout.
+ 701 | 
+ 702 |     Raises `TimeoutError` if the input future does not complete before
+ 703 |     ``timeout``, which may be specified in any form allowed by
+ 704 |     `.IOLoop.add_timeout` (i.e. a `datetime.timedelta` or an absolute time
+ 705 |     relative to `.IOLoop.time`)
+ 706 | 
+ 707 |     If the wrapped `.Future` fails after it has timed out, the exception
+ 708 |     will be logged unless it is of a type contained in ``quiet_exceptions``
+ 709 |     (which may be an exception type or a sequence of types).
+ 710 | 
+ 711 |     Currently only supports Futures, not other `YieldPoint` classes.
+ 712 | 
+ 713 |     .. versionadded:: 4.0
+ 714 | 
+ 715 |     .. versionchanged:: 4.1
+ 716 |        Added the ``quiet_exceptions`` argument and the logging of unhandled
+ 717 |        exceptions.
+ 718 |     """
+ 719 |     # TODO: allow yield points in addition to futures?
+ 720 |     # Tricky to do with stack_context semantics.
+ 721 |     #
+ 722 |     # It's tempting to optimize this by cancelling the input future on timeout
+ 723 |     # instead of creating a new one, but A) we can't know if we are the only
+ 724 |     # one waiting on the input future, so cancelling it might disrupt other
+ 725 |     # callers and B) concurrent futures can only be cancelled while they are
+ 726 |     # in the queue, so cancellation cannot reliably bound our waiting time.
+ 727 |     result = Future()
+ 728 |     chain_future(future, result)
+ 729 |     if io_loop is None:
+ 730 |         io_loop = IOLoop.current()
+ 731 | 
+ 732 |     def error_callback(future):
+ 733 |         try:
+ 734 |             future.result()
+ 735 |         except Exception as e:
+ 736 |             if not isinstance(e, quiet_exceptions):
+ 737 |                 app_log.error("Exception in Future %r after timeout",
+ 738 |                               future, exc_info=True)
+ 739 | 
+ 740 |     def timeout_callback():
+ 741 |         result.set_exception(TimeoutError("Timeout"))
+ 742 |         # In case the wrapped future goes on to fail, log it.
+ 743 |         future.add_done_callback(error_callback)
+ 744 |     timeout_handle = io_loop.add_timeout(
+ 745 |         timeout, timeout_callback)
+ 746 |     if isinstance(future, Future):
+ 747 |         # We know this future will resolve on the IOLoop, so we don't
+ 748 |         # need the extra thread-safety of IOLoop.add_future (and we also
+ 749 |         # don't care about StackContext here.
+ 750 |         future.add_done_callback(
+ 751 |             lambda future: io_loop.remove_timeout(timeout_handle))
+ 752 |     else:
+ 753 |         # concurrent.futures.Futures may resolve on any thread, so we
+ 754 |         # need to route them back to the IOLoop.
+ 755 |         io_loop.add_future(
+ 756 |             future, lambda future: io_loop.remove_timeout(timeout_handle))
+ 757 |     return result
+ 758 | 
+ 759 | 
+ 760 | def sleep(duration):
+ 761 |     """Return a `.Future` that resolves after the given number of seconds.
+ 762 | 
+ 763 |     When used with ``yield`` in a coroutine, this is a non-blocking
+ 764 |     analogue to `time.sleep` (which should not be used in coroutines
+ 765 |     because it is blocking)::
+ 766 | 
+ 767 |         yield gen.sleep(0.5)
+ 768 | 
+ 769 |     Note that calling this function on its own does nothing; you must
+ 770 |     wait on the `.Future` it returns (usually by yielding it).
+ 771 | 
+ 772 |     .. versionadded:: 4.1
+ 773 |     """
+ 774 |     f = Future()
+ 775 |     IOLoop.current().call_later(duration, lambda: f.set_result(None))
+ 776 |     return f
+ 777 | 
+ 778 | 
+ 779 | _null_future = Future()
+ 780 | _null_future.set_result(None)
+ 781 | 
+ 782 | moment = Future()
+ 783 | moment.__doc__ = \
+ 784 |     """A special object which may be yielded to allow the IOLoop to run for
+ 785 | one iteration.
+ 786 | 
+ 787 | This is not needed in normal use but it can be helpful in long-running
+ 788 | coroutines that are likely to yield Futures that are ready instantly.
+ 789 | 
+ 790 | Usage: ``yield gen.moment``
+ 791 | 
+ 792 | .. versionadded:: 4.0
+ 793 | """
+ 794 | moment.set_result(None)
+ 795 | 
+ 796 | 
+ 797 | class Runner(object):
+ 798 |     """Internal implementation of `tornado.gen.engine`.
+ 799 | 
+ 800 |     Maintains information about pending callbacks and their results.
+ 801 | 
+ 802 |     The results of the generator are stored in ``result_future`` (a
+ 803 |     `.TracebackFuture`)
+ 804 |     """
+ 805 |     def __init__(self, gen, result_future, first_yielded):
+ 806 |         self.gen = gen
+ 807 |         self.result_future = result_future
+ 808 |         self.future = _null_future
+ 809 |         self.yield_point = None
+ 810 |         self.pending_callbacks = None
+ 811 |         self.results = None
+ 812 |         self.running = False
+ 813 |         self.finished = False
+ 814 |         self.had_exception = False
+ 815 |         self.io_loop = IOLoop.current()
+ 816 |         # For efficiency, we do not create a stack context until we
+ 817 |         # reach a YieldPoint (stack contexts are required for the historical
+ 818 |         # semantics of YieldPoints, but not for Futures).  When we have
+ 819 |         # done so, this field will be set and must be called at the end
+ 820 |         # of the coroutine.
+ 821 |         self.stack_context_deactivate = None
+ 822 |         if self.handle_yield(first_yielded):
+ 823 |             self.run()
+ 824 | 
+ 825 |     def register_callback(self, key):
+ 826 |         """Adds ``key`` to the list of callbacks."""
+ 827 |         if self.pending_callbacks is None:
+ 828 |             # Lazily initialize the old-style YieldPoint data structures.
+ 829 |             self.pending_callbacks = set()
+ 830 |             self.results = {}
+ 831 |         if key in self.pending_callbacks:
+ 832 |             raise KeyReuseError("key %r is already pending" % (key,))
+ 833 |         self.pending_callbacks.add(key)
+ 834 | 
+ 835 |     def is_ready(self, key):
+ 836 |         """Returns true if a result is available for ``key``."""
+ 837 |         if self.pending_callbacks is None or key not in self.pending_callbacks:
+ 838 |             raise UnknownKeyError("key %r is not pending" % (key,))
+ 839 |         return key in self.results
+ 840 | 
+ 841 |     def set_result(self, key, result):
+ 842 |         """Sets the result for ``key`` and attempts to resume the generator."""
+ 843 |         self.results[key] = result
+ 844 |         if self.yield_point is not None and self.yield_point.is_ready():
+ 845 |             try:
+ 846 |                 self.future.set_result(self.yield_point.get_result())
+ 847 |             except:
+ 848 |                 self.future.set_exc_info(sys.exc_info())
+ 849 |             self.yield_point = None
+ 850 |             self.run()
+ 851 | 
+ 852 |     def pop_result(self, key):
+ 853 |         """Returns the result for ``key`` and unregisters it."""
+ 854 |         self.pending_callbacks.remove(key)
+ 855 |         return self.results.pop(key)
+ 856 | 
+ 857 |     def run(self):
+ 858 |         """Starts or resumes the generator, running until it reaches a
+ 859 |         yield point that is not ready.
+ 860 |         """
+ 861 |         if self.running or self.finished:
+ 862 |             return
+ 863 |         try:
+ 864 |             self.running = True
+ 865 |             while True:
+ 866 |                 future = self.future
+ 867 |                 if not future.done():
+ 868 |                     return
+ 869 |                 self.future = None
+ 870 |                 try:
+ 871 |                     orig_stack_contexts = stack_context._state.contexts
+ 872 |                     exc_info = None
+ 873 | 
+ 874 |                     try:
+ 875 |                         value = future.result()
+ 876 |                     except Exception:
+ 877 |                         self.had_exception = True
+ 878 |                         exc_info = sys.exc_info()
+ 879 | 
+ 880 |                     if exc_info is not None:
+ 881 |                         yielded = self.gen.throw(*exc_info)
+ 882 |                         exc_info = None
+ 883 |                     else:
+ 884 |                         yielded = self.gen.send(value)
+ 885 | 
+ 886 |                     if stack_context._state.contexts is not orig_stack_contexts:
+ 887 |                         self.gen.throw(
+ 888 |                             stack_context.StackContextInconsistentError(
+ 889 |                                 'stack_context inconsistency (probably caused '
+ 890 |                                 'by yield within a "with StackContext" block)'))
+ 891 |                 except (StopIteration, Return) as e:
+ 892 |                     self.finished = True
+ 893 |                     self.future = _null_future
+ 894 |                     if self.pending_callbacks and not self.had_exception:
+ 895 |                         # If we ran cleanly without waiting on all callbacks
+ 896 |                         # raise an error (really more of a warning).  If we
+ 897 |                         # had an exception then some callbacks may have been
+ 898 |                         # orphaned, so skip the check in that case.
+ 899 |                         raise LeakedCallbackError(
+ 900 |                             "finished without waiting for callbacks %r" %
+ 901 |                             self.pending_callbacks)
+ 902 |                     self.result_future.set_result(getattr(e, 'value', None))
+ 903 |                     self.result_future = None
+ 904 |                     self._deactivate_stack_context()
+ 905 |                     return
+ 906 |                 except Exception:
+ 907 |                     self.finished = True
+ 908 |                     self.future = _null_future
+ 909 |                     self.result_future.set_exc_info(sys.exc_info())
+ 910 |                     self.result_future = None
+ 911 |                     self._deactivate_stack_context()
+ 912 |                     return
+ 913 |                 if not self.handle_yield(yielded):
+ 914 |                     return
+ 915 |         finally:
+ 916 |             self.running = False
+ 917 | 
+ 918 |     def handle_yield(self, yielded):
+ 919 |         # Lists containing YieldPoints require stack contexts;
+ 920 |         # other lists are handled via multi_future in convert_yielded.
+ 921 |         if (isinstance(yielded, list) and
+ 922 |                 any(isinstance(f, YieldPoint) for f in yielded)):
+ 923 |             yielded = Multi(yielded)
+ 924 |         elif (isinstance(yielded, dict) and
+ 925 |               any(isinstance(f, YieldPoint) for f in yielded.values())):
+ 926 |             yielded = Multi(yielded)
+ 927 | 
+ 928 |         if isinstance(yielded, YieldPoint):
+ 929 |             # YieldPoints are too closely coupled to the Runner to go
+ 930 |             # through the generic convert_yielded mechanism.
+ 931 |             self.future = TracebackFuture()
+ 932 | 
+ 933 |             def start_yield_point():
+ 934 |                 try:
+ 935 |                     yielded.start(self)
+ 936 |                     if yielded.is_ready():
+ 937 |                         self.future.set_result(
+ 938 |                             yielded.get_result())
+ 939 |                     else:
+ 940 |                         self.yield_point = yielded
+ 941 |                 except Exception:
+ 942 |                     self.future = TracebackFuture()
+ 943 |                     self.future.set_exc_info(sys.exc_info())
+ 944 | 
+ 945 |             if self.stack_context_deactivate is None:
+ 946 |                 # Start a stack context if this is the first
+ 947 |                 # YieldPoint we've seen.
+ 948 |                 with stack_context.ExceptionStackContext(
+ 949 |                         self.handle_exception) as deactivate:
+ 950 |                     self.stack_context_deactivate = deactivate
+ 951 | 
+ 952 |                     def cb():
+ 953 |                         start_yield_point()
+ 954 |                         self.run()
+ 955 |                     self.io_loop.add_callback(cb)
+ 956 |                     return False
+ 957 |             else:
+ 958 |                 start_yield_point()
+ 959 |         else:
+ 960 |             try:
+ 961 |                 self.future = convert_yielded(yielded)
+ 962 |             except BadYieldError:
+ 963 |                 self.future = TracebackFuture()
+ 964 |                 self.future.set_exc_info(sys.exc_info())
+ 965 | 
+ 966 |         if not self.future.done() or self.future is moment:
+ 967 |             self.io_loop.add_future(
+ 968 |                 self.future, lambda f: self.run())
+ 969 |             return False
+ 970 |         return True
+ 971 | 
+ 972 |     def result_callback(self, key):
+ 973 |         return stack_context.wrap(_argument_adapter(
+ 974 |             functools.partial(self.set_result, key)))
+ 975 | 
+ 976 |     def handle_exception(self, typ, value, tb):
+ 977 |         if not self.running and not self.finished:
+ 978 |             self.future = TracebackFuture()
+ 979 |             self.future.set_exc_info((typ, value, tb))
+ 980 |             self.run()
+ 981 |             return True
+ 982 |         else:
+ 983 |             return False
+ 984 | 
+ 985 |     def _deactivate_stack_context(self):
+ 986 |         if self.stack_context_deactivate is not None:
+ 987 |             self.stack_context_deactivate()
+ 988 |             self.stack_context_deactivate = None
+ 989 | 
+ 990 | Arguments = collections.namedtuple('Arguments', ['args', 'kwargs'])
+ 991 | 
+ 992 | 
+ 993 | def _argument_adapter(callback):
+ 994 |     """Returns a function that when invoked runs ``callback`` with one arg.
+ 995 | 
+ 996 |     If the function returned by this function is called with exactly
+ 997 |     one argument, that argument is passed to ``callback``.  Otherwise
+ 998 |     the args tuple and kwargs dict are wrapped in an `Arguments` object.
+ 999 |     """
+1000 |     def wrapper(*args, **kwargs):
+1001 |         if kwargs or len(args) > 1:
+1002 |             callback(Arguments(args, kwargs))
+1003 |         elif args:
+1004 |             callback(args[0])
+1005 |         else:
+1006 |             callback(None)
+1007 |     return wrapper
+1008 | 
+1009 | 
+1010 | def convert_yielded(yielded):
+1011 |     """Convert a yielded object into a `.Future`.
+1012 | 
+1013 |     The default implementation accepts lists, dictionaries, and Futures.
+1014 | 
+1015 |     If the `~functools.singledispatch` library is available, this function
+1016 |     may be extended to support additional types. For example::
+1017 | 
+1018 |         @convert_yielded.register(asyncio.Future)
+1019 |         def _(asyncio_future):
+1020 |             return tornado.platform.asyncio.to_tornado_future(asyncio_future)
+1021 | 
+1022 |     .. versionadded:: 4.1
+1023 |     """
+1024 |     # Lists and dicts containing YieldPoints were handled separately
+1025 |     # via Multi().
+1026 |     if isinstance(yielded, (list, dict)):
+1027 |         return multi_future(yielded)
+1028 |     elif is_future(yielded):
+1029 |         return yielded
+1030 |     else:
+1031 |         raise BadYieldError("yielded unknown object %r" % (yielded,))
+1032 | 
+1033 | if singledispatch is not None:
+1034 |     convert_yielded = singledispatch(convert_yielded)
+```
+
+
+FAILING TEST FILES:
+
+[test_file_1] BugsInPy/workspace/tornado/tornado/test/gen_test.py
+```python
+   1 | from __future__ import absolute_import, division, print_function, with_statement
+   2 | 
+   3 | import contextlib
+   4 | import datetime
+   5 | import functools
+   6 | import sys
+   7 | import textwrap
+   8 | import time
+   9 | import platform
+  10 | import weakref
+  11 | 
+  12 | from tornado.concurrent import return_future, Future
+  13 | from tornado.escape import url_escape
+  14 | from tornado.httpclient import AsyncHTTPClient
+  15 | from tornado.ioloop import IOLoop
+  16 | from tornado.log import app_log
+  17 | from tornado import stack_context
+  18 | from tornado.testing import AsyncHTTPTestCase, AsyncTestCase, ExpectLog, gen_test
+  19 | from tornado.test.util import unittest, skipOnTravis
+  20 | from tornado.web import Application, RequestHandler, asynchronous, HTTPError
+  21 | 
+  22 | from tornado import gen
+  23 | 
+  24 | try:
+  25 |     from concurrent import futures
+  26 | except ImportError:
+  27 |     futures = None
+  28 | 
+  29 | skipBefore33 = unittest.skipIf(sys.version_info < (3, 3), 'PEP 380 not available')
+  30 | skipNotCPython = unittest.skipIf(platform.python_implementation() != 'CPython',
+  31 |                                  'Not CPython implementation')
+  32 | 
+  33 | 
+  34 | class GenEngineTest(AsyncTestCase):
+  35 |     def setUp(self):
+  36 |         super(GenEngineTest, self).setUp()
+  37 |         self.named_contexts = []
+  38 | 
+  39 |     def named_context(self, name):
+  40 |         @contextlib.contextmanager
+  41 |         def context():
+  42 |             self.named_contexts.append(name)
+  43 |             try:
+  44 |                 yield
+  45 |             finally:
+  46 |                 self.assertEqual(self.named_contexts.pop(), name)
+  47 |         return context
+  48 | 
+  49 |     def run_gen(self, f):
+  50 |         f()
+  51 |         return self.wait()
+  52 | 
+  53 |     def delay_callback(self, iterations, callback, arg):
+  54 |         """Runs callback(arg) after a number of IOLoop iterations."""
+  55 |         if iterations == 0:
+  56 |             callback(arg)
+  57 |         else:
+  58 |             self.io_loop.add_callback(functools.partial(
+  59 |                 self.delay_callback, iterations - 1, callback, arg))
+  60 | 
+  61 |     @return_future
+  62 |     def async_future(self, result, callback):
+  63 |         self.io_loop.add_callback(callback, result)
+  64 | 
+  65 |     @gen.coroutine
+  66 |     def async_exception(self, e):
+  67 |         yield gen.moment
+  68 |         raise e
+  69 | 
+  70 |     def test_no_yield(self):
+  71 |         @gen.engine
+  72 |         def f():
+  73 |             self.stop()
+  74 |         self.run_gen(f)
+  75 | 
+  76 |     def test_inline_cb(self):
+  77 |         @gen.engine
+  78 |         def f():
+  79 |             (yield gen.Callback("k1"))()
+  80 |             res = yield gen.Wait("k1")
+  81 |             self.assertTrue(res is None)
+  82 |             self.stop()
+  83 |         self.run_gen(f)
+  84 | 
+  85 |     def test_ioloop_cb(self):
+  86 |         @gen.engine
+  87 |         def f():
+  88 |             self.io_loop.add_callback((yield gen.Callback("k1")))
+  89 |             yield gen.Wait("k1")
+  90 |             self.stop()
+  91 |         self.run_gen(f)
+  92 | 
+  93 |     def test_exception_phase1(self):
+  94 |         @gen.engine
+  95 |         def f():
+  96 |             1 / 0
+  97 |         self.assertRaises(ZeroDivisionError, self.run_gen, f)
+  98 | 
+  99 |     def test_exception_phase2(self):
+ 100 |         @gen.engine
+ 101 |         def f():
+ 102 |             self.io_loop.add_callback((yield gen.Callback("k1")))
+ 103 |             yield gen.Wait("k1")
+ 104 |             1 / 0
+ 105 |         self.assertRaises(ZeroDivisionError, self.run_gen, f)
+ 106 | 
+ 107 |     def test_exception_in_task_phase1(self):
+ 108 |         def fail_task(callback):
+ 109 |             1 / 0
+ 110 | 
+ 111 |         @gen.engine
+ 112 |         def f():
+ 113 |             try:
+ 114 |                 yield gen.Task(fail_task)
+ 115 |                 raise Exception("did not get expected exception")
+ 116 |             except ZeroDivisionError:
+ 117 |                 self.stop()
+ 118 |         self.run_gen(f)
+ 119 | 
+ 120 |     def test_exception_in_task_phase2(self):
+ 121 |         # This is the case that requires the use of stack_context in gen.engine
+ 122 |         def fail_task(callback):
+ 123 |             self.io_loop.add_callback(lambda: 1 / 0)
+ 124 | 
+ 125 |         @gen.engine
+ 126 |         def f():
+ 127 |             try:
+ 128 |                 yield gen.Task(fail_task)
+ 129 |                 raise Exception("did not get expected exception")
+ 130 |             except ZeroDivisionError:
+ 131 |                 self.stop()
+ 132 |         self.run_gen(f)
+ 133 | 
+ 134 |     def test_with_arg(self):
+ 135 |         @gen.engine
+ 136 |         def f():
+ 137 |             (yield gen.Callback("k1"))(42)
+ 138 |             res = yield gen.Wait("k1")
+ 139 |             self.assertEqual(42, res)
+ 140 |             self.stop()
+ 141 |         self.run_gen(f)
+ 142 | 
+ 143 |     def test_with_arg_tuple(self):
+ 144 |         @gen.engine
+ 145 |         def f():
+ 146 |             (yield gen.Callback((1, 2)))((3, 4))
+ 147 |             res = yield gen.Wait((1, 2))
+ 148 |             self.assertEqual((3, 4), res)
+ 149 |             self.stop()
+ 150 |         self.run_gen(f)
+ 151 | 
+ 152 |     def test_key_reuse(self):
+ 153 |         @gen.engine
+ 154 |         def f():
+ 155 |             yield gen.Callback("k1")
+ 156 |             yield gen.Callback("k1")
+ 157 |             self.stop()
+ 158 |         self.assertRaises(gen.KeyReuseError, self.run_gen, f)
+ 159 | 
+ 160 |     def test_key_reuse_tuple(self):
+ 161 |         @gen.engine
+ 162 |         def f():
+ 163 |             yield gen.Callback((1, 2))
+ 164 |             yield gen.Callback((1, 2))
+ 165 |             self.stop()
+ 166 |         self.assertRaises(gen.KeyReuseError, self.run_gen, f)
+ 167 | 
+ 168 |     def test_key_mismatch(self):
+ 169 |         @gen.engine
+ 170 |         def f():
+ 171 |             yield gen.Callback("k1")
+ 172 |             yield gen.Wait("k2")
+ 173 |             self.stop()
+ 174 |         self.assertRaises(gen.UnknownKeyError, self.run_gen, f)
+ 175 | 
+ 176 |     def test_key_mismatch_tuple(self):
+ 177 |         @gen.engine
+ 178 |         def f():
+ 179 |             yield gen.Callback((1, 2))
+ 180 |             yield gen.Wait((2, 3))
+ 181 |             self.stop()
+ 182 |         self.assertRaises(gen.UnknownKeyError, self.run_gen, f)
+ 183 | 
+ 184 |     def test_leaked_callback(self):
+ 185 |         @gen.engine
+ 186 |         def f():
+ 187 |             yield gen.Callback("k1")
+ 188 |             self.stop()
+ 189 |         self.assertRaises(gen.LeakedCallbackError, self.run_gen, f)
+ 190 | 
+ 191 |     def test_leaked_callback_tuple(self):
+ 192 |         @gen.engine
+ 193 |         def f():
+ 194 |             yield gen.Callback((1, 2))
+ 195 |             self.stop()
+ 196 |         self.assertRaises(gen.LeakedCallbackError, self.run_gen, f)
+ 197 | 
+ 198 |     def test_parallel_callback(self):
+ 199 |         @gen.engine
+ 200 |         def f():
+ 201 |             for k in range(3):
+ 202 |                 self.io_loop.add_callback((yield gen.Callback(k)))
+ 203 |             yield gen.Wait(1)
+ 204 |             self.io_loop.add_callback((yield gen.Callback(3)))
+ 205 |             yield gen.Wait(0)
+ 206 |             yield gen.Wait(3)
+ 207 |             yield gen.Wait(2)
+ 208 |             self.stop()
+ 209 |         self.run_gen(f)
+ 210 | 
+ 211 |     def test_bogus_yield(self):
+ 212 |         @gen.engine
+ 213 |         def f():
+ 214 |             yield 42
+ 215 |         self.assertRaises(gen.BadYieldError, self.run_gen, f)
+ 216 | 
+ 217 |     def test_bogus_yield_tuple(self):
+ 218 |         @gen.engine
+ 219 |         def f():
+ 220 |             yield (1, 2)
+ 221 |         self.assertRaises(gen.BadYieldError, self.run_gen, f)
+ 222 | 
+ 223 |     def test_reuse(self):
+ 224 |         @gen.engine
+ 225 |         def f():
+ 226 |             self.io_loop.add_callback((yield gen.Callback(0)))
+ 227 |             yield gen.Wait(0)
+ 228 |             self.stop()
+ 229 |         self.run_gen(f)
+ 230 |         self.run_gen(f)
+ 231 | 
+ 232 |     def test_task(self):
+ 233 |         @gen.engine
+ 234 |         def f():
+ 235 |             yield gen.Task(self.io_loop.add_callback)
+ 236 |             self.stop()
+ 237 |         self.run_gen(f)
+ 238 | 
+ 239 |     def test_wait_all(self):
+ 240 |         @gen.engine
+ 241 |         def f():
+ 242 |             (yield gen.Callback("k1"))("v1")
+ 243 |             (yield gen.Callback("k2"))("v2")
+ 244 |             results = yield gen.WaitAll(["k1", "k2"])
+ 245 |             self.assertEqual(results, ["v1", "v2"])
+ 246 |             self.stop()
+ 247 |         self.run_gen(f)
+ 248 | 
+ 249 |     def test_exception_in_yield(self):
+ 250 |         @gen.engine
+ 251 |         def f():
+ 252 |             try:
+ 253 |                 yield gen.Wait("k1")
+ 254 |                 raise Exception("did not get expected exception")
+ 255 |             except gen.UnknownKeyError:
+ 256 |                 pass
+ 257 |             self.stop()
+ 258 |         self.run_gen(f)
+ 259 | 
+ 260 |     def test_resume_after_exception_in_yield(self):
+ 261 |         @gen.engine
+ 262 |         def f():
+ 263 |             try:
+ 264 |                 yield gen.Wait("k1")
+ 265 |                 raise Exception("did not get expected exception")
+ 266 |             except gen.UnknownKeyError:
+ 267 |                 pass
+ 268 |             (yield gen.Callback("k2"))("v2")
+ 269 |             self.assertEqual((yield gen.Wait("k2")), "v2")
+ 270 |             self.stop()
+ 271 |         self.run_gen(f)
+ 272 | 
+ 273 |     def test_orphaned_callback(self):
+ 274 |         @gen.engine
+ 275 |         def f():
+ 276 |             self.orphaned_callback = yield gen.Callback(1)
+ 277 |         try:
+ 278 |             self.run_gen(f)
+ 279 |             raise Exception("did not get expected exception")
+ 280 |         except gen.LeakedCallbackError:
+ 281 |             pass
+ 282 |         self.orphaned_callback()
+ 283 | 
+ 284 |     def test_multi(self):
+ 285 |         @gen.engine
+ 286 |         def f():
+ 287 |             (yield gen.Callback("k1"))("v1")
+ 288 |             (yield gen.Callback("k2"))("v2")
+ 289 |             results = yield [gen.Wait("k1"), gen.Wait("k2")]
+ 290 |             self.assertEqual(results, ["v1", "v2"])
+ 291 |             self.stop()
+ 292 |         self.run_gen(f)
+ 293 | 
+ 294 |     def test_multi_dict(self):
+ 295 |         @gen.engine
+ 296 |         def f():
+ 297 |             (yield gen.Callback("k1"))("v1")
+ 298 |             (yield gen.Callback("k2"))("v2")
+ 299 |             results = yield dict(foo=gen.Wait("k1"), bar=gen.Wait("k2"))
+ 300 |             self.assertEqual(results, dict(foo="v1", bar="v2"))
+ 301 |             self.stop()
+ 302 |         self.run_gen(f)
+ 303 | 
+ 304 |     # The following tests explicitly run with both gen.Multi
+ 305 |     # and gen.multi_future (Task returns a Future, so it can be used
+ 306 |     # with either).
+ 307 |     def test_multi_yieldpoint_delayed(self):
+ 308 |         @gen.engine
+ 309 |         def f():
+ 310 |             # callbacks run at different times
+ 311 |             responses = yield gen.Multi([
+ 312 |                 gen.Task(self.delay_callback, 3, arg="v1"),
+ 313 |                 gen.Task(self.delay_callback, 1, arg="v2"),
+ 314 |             ])
+ 315 |             self.assertEqual(responses, ["v1", "v2"])
+ 316 |             self.stop()
+ 317 |         self.run_gen(f)
+ 318 | 
+ 319 |     def test_multi_yieldpoint_dict_delayed(self):
+ 320 |         @gen.engine
+ 321 |         def f():
+ 322 |             # callbacks run at different times
+ 323 |             responses = yield gen.Multi(dict(
+ 324 |                 foo=gen.Task(self.delay_callback, 3, arg="v1"),
+ 325 |                 bar=gen.Task(self.delay_callback, 1, arg="v2"),
+ 326 |             ))
+ 327 |             self.assertEqual(responses, dict(foo="v1", bar="v2"))
+ 328 |             self.stop()
+ 329 |         self.run_gen(f)
+ 330 | 
+ 331 |     def test_multi_future_delayed(self):
+ 332 |         @gen.engine
+ 333 |         def f():
+ 334 |             # callbacks run at different times
+ 335 |             responses = yield gen.multi_future([
+ 336 |                 gen.Task(self.delay_callback, 3, arg="v1"),
+ 337 |                 gen.Task(self.delay_callback, 1, arg="v2"),
+ 338 |             ])
+ 339 |             self.assertEqual(responses, ["v1", "v2"])
+ 340 |             self.stop()
+ 341 |         self.run_gen(f)
+ 342 | 
+ 343 |     def test_multi_future_dict_delayed(self):
+ 344 |         @gen.engine
+ 345 |         def f():
+ 346 |             # callbacks run at different times
+ 347 |             responses = yield gen.multi_future(dict(
+ 348 |                 foo=gen.Task(self.delay_callback, 3, arg="v1"),
+ 349 |                 bar=gen.Task(self.delay_callback, 1, arg="v2"),
+ 350 |             ))
+ 351 |             self.assertEqual(responses, dict(foo="v1", bar="v2"))
+ 352 |             self.stop()
+ 353 |         self.run_gen(f)
+ 354 | 
+ 355 |     @skipOnTravis
+ 356 |     @gen_test
+ 357 |     def test_multi_performance(self):
+ 358 |         # Yielding a list used to have quadratic performance; make
+ 359 |         # sure a large list stays reasonable.  On my laptop a list of
+ 360 |         # 2000 used to take 1.8s, now it takes 0.12.
+ 361 |         start = time.time()
+ 362 |         yield [gen.Task(self.io_loop.add_callback) for i in range(2000)]
+ 363 |         end = time.time()
+ 364 |         self.assertLess(end - start, 1.0)
+ 365 | 
+ 366 |     @gen_test
+ 367 |     def test_multi_empty(self):
+ 368 |         # Empty lists or dicts should return the same type.
+ 369 |         x = yield []
+ 370 |         self.assertTrue(isinstance(x, list))
+ 371 |         y = yield {}
+ 372 |         self.assertTrue(isinstance(y, dict))
+ 373 | 
+ 374 |     @gen_test
+ 375 |     def test_multi_mixed_types(self):
+ 376 |         # A YieldPoint (Wait) and Future (Task) can be combined
+ 377 |         # (and use the YieldPoint codepath)
+ 378 |         (yield gen.Callback("k1"))("v1")
+ 379 |         responses = yield [gen.Wait("k1"),
+ 380 |                            gen.Task(self.delay_callback, 3, arg="v2")]
+ 381 |         self.assertEqual(responses, ["v1", "v2"])
+ 382 | 
+ 383 |     @gen_test
+ 384 |     def test_future(self):
+ 385 |         result = yield self.async_future(1)
+ 386 |         self.assertEqual(result, 1)
+ 387 | 
+ 388 |     @gen_test
+ 389 |     def test_multi_future(self):
+ 390 |         results = yield [self.async_future(1), self.async_future(2)]
+ 391 |         self.assertEqual(results, [1, 2])
+ 392 | 
+ 393 |     @gen_test
+ 394 |     def test_multi_future_duplicate(self):
+ 395 |         f = self.async_future(2)
+ 396 |         results = yield [self.async_future(1), f, self.async_future(3), f]
+ 397 |         self.assertEqual(results, [1, 2, 3, 2])
+ 398 | 
+ 399 |     @gen_test
+ 400 |     def test_multi_dict_future(self):
+ 401 |         results = yield dict(foo=self.async_future(1), bar=self.async_future(2))
+ 402 |         self.assertEqual(results, dict(foo=1, bar=2))
+ 403 | 
+ 404 |     @gen_test
+ 405 |     def test_multi_exceptions(self):
+ 406 |         with ExpectLog(app_log, "Multiple exceptions in yield list"):
+ 407 |             with self.assertRaises(RuntimeError) as cm:
+ 408 |                 yield gen.Multi([self.async_exception(RuntimeError("error 1")),
+ 409 |                                  self.async_exception(RuntimeError("error 2"))])
+ 410 |         self.assertEqual(str(cm.exception), "error 1")
+ 411 | 
+ 412 |         # With only one exception, no error is logged.
+ 413 |         with self.assertRaises(RuntimeError):
+ 414 |             yield gen.Multi([self.async_exception(RuntimeError("error 1")),
+ 415 |                              self.async_future(2)])
+ 416 | 
+ 417 |         # Exception logging may be explicitly quieted.
+ 418 |         with self.assertRaises(RuntimeError):
+ 419 |                 yield gen.Multi([self.async_exception(RuntimeError("error 1")),
+ 420 |                                  self.async_exception(RuntimeError("error 2"))],
+ 421 |                                 quiet_exceptions=RuntimeError)
+ 422 | 
+ 423 |     @gen_test
+ 424 |     def test_multi_future_exceptions(self):
+ 425 |         with ExpectLog(app_log, "Multiple exceptions in yield list"):
+ 426 |             with self.assertRaises(RuntimeError) as cm:
+ 427 |                 yield [self.async_exception(RuntimeError("error 1")),
+ 428 |                        self.async_exception(RuntimeError("error 2"))]
+ 429 |         self.assertEqual(str(cm.exception), "error 1")
+ 430 | 
+ 431 |         # With only one exception, no error is logged.
+ 432 |         with self.assertRaises(RuntimeError):
+ 433 |             yield [self.async_exception(RuntimeError("error 1")),
+ 434 |                    self.async_future(2)]
+ 435 | 
+ 436 |         # Exception logging may be explicitly quieted.
+ 437 |         with self.assertRaises(RuntimeError):
+ 438 |                 yield gen.multi_future(
+ 439 |                     [self.async_exception(RuntimeError("error 1")),
+ 440 |                      self.async_exception(RuntimeError("error 2"))],
+ 441 |                     quiet_exceptions=RuntimeError)
+ 442 | 
+ 443 |     def test_arguments(self):
+ 444 |         @gen.engine
+ 445 |         def f():
+ 446 |             (yield gen.Callback("noargs"))()
+ 447 |             self.assertEqual((yield gen.Wait("noargs")), None)
+ 448 |             (yield gen.Callback("1arg"))(42)
+ 449 |             self.assertEqual((yield gen.Wait("1arg")), 42)
+ 450 | 
+ 451 |             (yield gen.Callback("kwargs"))(value=42)
+ 452 |             result = yield gen.Wait("kwargs")
+ 453 |             self.assertTrue(isinstance(result, gen.Arguments))
+ 454 |             self.assertEqual(((), dict(value=42)), result)
+ 455 |             self.assertEqual(dict(value=42), result.kwargs)
+ 456 | 
+ 457 |             (yield gen.Callback("2args"))(42, 43)
+ 458 |             result = yield gen.Wait("2args")
+ 459 |             self.assertTrue(isinstance(result, gen.Arguments))
+ 460 |             self.assertEqual(((42, 43), {}), result)
+ 461 |             self.assertEqual((42, 43), result.args)
+ 462 | 
+ 463 |             def task_func(callback):
+ 464 |                 callback(None, error="foo")
+ 465 |             result = yield gen.Task(task_func)
+ 466 |             self.assertTrue(isinstance(result, gen.Arguments))
+ 467 |             self.assertEqual(((None,), dict(error="foo")), result)
+ 468 | 
+ 469 |             self.stop()
+ 470 |         self.run_gen(f)
+ 471 | 
+ 472 |     def test_stack_context_leak(self):
+ 473 |         # regression test: repeated invocations of a gen-based
+ 474 |         # function should not result in accumulated stack_contexts
+ 475 |         def _stack_depth():
+ 476 |             head = stack_context._state.contexts[1]
+ 477 |             length = 0
+ 478 | 
+ 479 |             while head is not None:
+ 480 |                 length += 1
+ 481 |                 head = head.old_contexts[1]
+ 482 | 
+ 483 |             return length
+ 484 | 
+ 485 |         @gen.engine
+ 486 |         def inner(callback):
+ 487 |             yield gen.Task(self.io_loop.add_callback)
+ 488 |             callback()
+ 489 | 
+ 490 |         @gen.engine
+ 491 |         def outer():
+ 492 |             for i in range(10):
+ 493 |                 yield gen.Task(inner)
+ 494 | 
+ 495 |             stack_increase = _stack_depth() - initial_stack_depth
+ 496 |             self.assertTrue(stack_increase <= 2)
+ 497 |             self.stop()
+ 498 |         initial_stack_depth = _stack_depth()
+ 499 |         self.run_gen(outer)
+ 500 | 
+ 501 |     def test_stack_context_leak_exception(self):
+ 502 |         # same as previous, but with a function that exits with an exception
+ 503 |         @gen.engine
+ 504 |         def inner(callback):
+ 505 |             yield gen.Task(self.io_loop.add_callback)
+ 506 |             1 / 0
+ 507 | 
+ 508 |         @gen.engine
+ 509 |         def outer():
+ 510 |             for i in range(10):
+ 511 |                 try:
+ 512 |                     yield gen.Task(inner)
+ 513 |                 except ZeroDivisionError:
+ 514 |                     pass
+ 515 |             stack_increase = len(stack_context._state.contexts) - initial_stack_depth
+ 516 |             self.assertTrue(stack_increase <= 2)
+ 517 |             self.stop()
+ 518 |         initial_stack_depth = len(stack_context._state.contexts)
+ 519 |         self.run_gen(outer)
+ 520 | 
+ 521 |     def function_with_stack_context(self, callback):
+ 522 |         # Technically this function should stack_context.wrap its callback
+ 523 |         # upon entry.  However, it is very common for this step to be
+ 524 |         # omitted.
+ 525 |         def step2():
+ 526 |             self.assertEqual(self.named_contexts, ['a'])
+ 527 |             self.io_loop.add_callback(callback)
+ 528 | 
+ 529 |         with stack_context.StackContext(self.named_context('a')):
+ 530 |             self.io_loop.add_callback(step2)
+ 531 | 
+ 532 |     @gen_test
+ 533 |     def test_wait_transfer_stack_context(self):
+ 534 |         # Wait should not pick up contexts from where callback was invoked,
+ 535 |         # even if that function improperly fails to wrap its callback.
+ 536 |         cb = yield gen.Callback('k1')
+ 537 |         self.function_with_stack_context(cb)
+ 538 |         self.assertEqual(self.named_contexts, [])
+ 539 |         yield gen.Wait('k1')
+ 540 |         self.assertEqual(self.named_contexts, [])
+ 541 | 
+ 542 |     @gen_test
+ 543 |     def test_task_transfer_stack_context(self):
+ 544 |         yield gen.Task(self.function_with_stack_context)
+ 545 |         self.assertEqual(self.named_contexts, [])
+ 546 | 
+ 547 |     def test_raise_after_stop(self):
+ 548 |         # This pattern will be used in the following tests so make sure
+ 549 |         # the exception propagates as expected.
+ 550 |         @gen.engine
+ 551 |         def f():
+ 552 |             self.stop()
+ 553 |             1 / 0
+ 554 | 
+ 555 |         with self.assertRaises(ZeroDivisionError):
+ 556 |             self.run_gen(f)
+ 557 | 
+ 558 |     def test_sync_raise_return(self):
+ 559 |         # gen.Return is allowed in @gen.engine, but it may not be used
+ 560 |         # to return a value.
+ 561 |         @gen.engine
+ 562 |         def f():
+ 563 |             self.stop(42)
+ 564 |             raise gen.Return()
+ 565 | 
+ 566 |         result = self.run_gen(f)
+ 567 |         self.assertEqual(result, 42)
+ 568 | 
+ 569 |     def test_async_raise_return(self):
+ 570 |         @gen.engine
+ 571 |         def f():
+ 572 |             yield gen.Task(self.io_loop.add_callback)
+ 573 |             self.stop(42)
+ 574 |             raise gen.Return()
+ 575 | 
+ 576 |         result = self.run_gen(f)
+ 577 |         self.assertEqual(result, 42)
+ 578 | 
+ 579 |     def test_sync_raise_return_value(self):
+ 580 |         @gen.engine
+ 581 |         def f():
+ 582 |             raise gen.Return(42)
+ 583 | 
+ 584 |         with self.assertRaises(gen.ReturnValueIgnoredError):
+ 585 |             self.run_gen(f)
+ 586 | 
+ 587 |     def test_sync_raise_return_value_tuple(self):
+ 588 |         @gen.engine
+ 589 |         def f():
+ 590 |             raise gen.Return((1, 2))
+ 591 | 
+ 592 |         with self.assertRaises(gen.ReturnValueIgnoredError):
+ 593 |             self.run_gen(f)
+ 594 | 
+ 595 |     def test_async_raise_return_value(self):
+ 596 |         @gen.engine
+ 597 |         def f():
+ 598 |             yield gen.Task(self.io_loop.add_callback)
+ 599 |             raise gen.Return(42)
+ 600 | 
+ 601 |         with self.assertRaises(gen.ReturnValueIgnoredError):
+ 602 |             self.run_gen(f)
+ 603 | 
+ 604 |     def test_async_raise_return_value_tuple(self):
+ 605 |         @gen.engine
+ 606 |         def f():
+ 607 |             yield gen.Task(self.io_loop.add_callback)
+ 608 |             raise gen.Return((1, 2))
+ 609 | 
+ 610 |         with self.assertRaises(gen.ReturnValueIgnoredError):
+ 611 |             self.run_gen(f)
+ 612 | 
+ 613 |     def test_return_value(self):
+ 614 |         # It is an error to apply @gen.engine to a function that returns
+ 615 |         # a value.
+ 616 |         @gen.engine
+ 617 |         def f():
+ 618 |             return 42
+ 619 | 
+ 620 |         with self.assertRaises(gen.ReturnValueIgnoredError):
+ 621 |             self.run_gen(f)
+ 622 | 
+ 623 |     def test_return_value_tuple(self):
+ 624 |         # It is an error to apply @gen.engine to a function that returns
+ 625 |         # a value.
+ 626 |         @gen.engine
+ 627 |         def f():
+ 628 |             return (1, 2)
+ 629 | 
+ 630 |         with self.assertRaises(gen.ReturnValueIgnoredError):
+ 631 |             self.run_gen(f)
+ 632 | 
+ 633 |     @skipNotCPython
+ 634 |     def test_task_refcounting(self):
+ 635 |         # On CPython, tasks and their arguments should be released immediately
+ 636 |         # without waiting for garbage collection.
+ 637 |         @gen.engine
+ 638 |         def f():
+ 639 |             class Foo(object):
+ 640 |                 pass
+ 641 |             arg = Foo()
+ 642 |             self.arg_ref = weakref.ref(arg)
+ 643 |             task = gen.Task(self.io_loop.add_callback, arg=arg)
+ 644 |             self.task_ref = weakref.ref(task)
+ 645 |             yield task
+ 646 |             self.stop()
+ 647 | 
+ 648 |         self.run_gen(f)
+ 649 |         self.assertIs(self.arg_ref(), None)
+ 650 |         self.assertIs(self.task_ref(), None)
+ 651 | 
+ 652 | 
+ 653 | class GenCoroutineTest(AsyncTestCase):
+ 654 |     def setUp(self):
+ 655 |         # Stray StopIteration exceptions can lead to tests exiting prematurely,
+ 656 |         # so we need explicit checks here to make sure the tests run all
+ 657 |         # the way through.
+ 658 |         self.finished = False
+ 659 |         super(GenCoroutineTest, self).setUp()
+ 660 | 
+ 661 |     def tearDown(self):
+ 662 |         super(GenCoroutineTest, self).tearDown()
+ 663 |         assert self.finished
+ 664 | 
+ 665 |     @gen_test
+ 666 |     def test_sync_gen_return(self):
+ 667 |         @gen.coroutine
+ 668 |         def f():
+ 669 |             raise gen.Return(42)
+ 670 |         result = yield f()
+ 671 |         self.assertEqual(result, 42)
+ 672 |         self.finished = True
+ 673 | 
+ 674 |     @gen_test
+ 675 |     def test_async_gen_return(self):
+ 676 |         @gen.coroutine
+ 677 |         def f():
+ 678 |             yield gen.Task(self.io_loop.add_callback)
+ 679 |             raise gen.Return(42)
+ 680 |         result = yield f()
+ 681 |         self.assertEqual(result, 42)
+ 682 |         self.finished = True
+ 683 | 
+ 684 |     @gen_test
+ 685 |     def test_sync_return(self):
+ 686 |         @gen.coroutine
+ 687 |         def f():
+ 688 |             return 42
+ 689 |         result = yield f()
+ 690 |         self.assertEqual(result, 42)
+ 691 |         self.finished = True
+ 692 | 
+ 693 |     @skipBefore33
+ 694 |     @gen_test
+ 695 |     def test_async_return(self):
+ 696 |         # It is a compile-time error to return a value in a generator
+ 697 |         # before Python 3.3, so we must test this with exec.
+ 698 |         # Flatten the real global and local namespace into our fake globals:
+ 699 |         # it's all global from the perspective of f().
+ 700 |         global_namespace = dict(globals(), **locals())
+ 701 |         local_namespace = {}
+ 702 |         exec(textwrap.dedent("""
+ 703 |         @gen.coroutine
+ 704 |         def f():
+ 705 |             yield gen.Task(self.io_loop.add_callback)
+ 706 |             return 42
+ 707 |         """), global_namespace, local_namespace)
+ 708 |         result = yield local_namespace['f']()
+ 709 |         self.assertEqual(result, 42)
+ 710 |         self.finished = True
+ 711 | 
+ 712 |     @skipBefore33
+ 713 |     @gen_test
+ 714 |     def test_async_early_return(self):
+ 715 |         # A yield statement exists but is not executed, which means
+ 716 |         # this function "returns" via an exception.  This exception
+ 717 |         # doesn't happen before the exception handling is set up.
+ 718 |         global_namespace = dict(globals(), **locals())
+ 719 |         local_namespace = {}
+ 720 |         exec(textwrap.dedent("""
+ 721 |         @gen.coroutine
+ 722 |         def f():
+ 723 |             if True:
+ 724 |                 return 42
+ 725 |             yield gen.Task(self.io_loop.add_callback)
+ 726 |         """), global_namespace, local_namespace)
+ 727 |         result = yield local_namespace['f']()
+ 728 |         self.assertEqual(result, 42)
+ 729 |         self.finished = True
+ 730 | 
+ 731 |     @gen_test
+ 732 |     def test_sync_return_no_value(self):
+ 733 |         @gen.coroutine
+ 734 |         def f():
+ 735 |             return
+ 736 |         result = yield f()
+ 737 |         self.assertEqual(result, None)
+ 738 |         self.finished = True
+ 739 | 
+ 740 |     @gen_test
+ 741 |     def test_async_return_no_value(self):
+ 742 |         # Without a return value we don't need python 3.3.
+ 743 |         @gen.coroutine
+ 744 |         def f():
+ 745 |             yield gen.Task(self.io_loop.add_callback)
+ 746 |             return
+ 747 |         result = yield f()
+ 748 |         self.assertEqual(result, None)
+ 749 |         self.finished = True
+ 750 | 
+ 751 |     @gen_test
+ 752 |     def test_sync_raise(self):
+ 753 |         @gen.coroutine
+ 754 |         def f():
+ 755 |             1 / 0
+ 756 |         # The exception is raised when the future is yielded
+ 757 |         # (or equivalently when its result method is called),
+ 758 |         # not when the function itself is called).
+ 759 |         future = f()
+ 760 |         with self.assertRaises(ZeroDivisionError):
+ 761 |             yield future
+ 762 |         self.finished = True
+ 763 | 
+ 764 |     @gen_test
+ 765 |     def test_async_raise(self):
+ 766 |         @gen.coroutine
+ 767 |         def f():
+ 768 |             yield gen.Task(self.io_loop.add_callback)
+ 769 |             1 / 0
+ 770 |         future = f()
+ 771 |         with self.assertRaises(ZeroDivisionError):
+ 772 |             yield future
+ 773 |         self.finished = True
+ 774 | 
+ 775 |     @gen_test
+ 776 |     def test_pass_callback(self):
+ 777 |         @gen.coroutine
+ 778 |         def f():
+ 779 |             raise gen.Return(42)
+ 780 |         result = yield gen.Task(f)
+ 781 |         self.assertEqual(result, 42)
+ 782 |         self.finished = True
+ 783 | 
+ 784 |     @gen_test
+ 785 |     def test_replace_yieldpoint_exception(self):
+ 786 |         # Test exception handling: a coroutine can catch one exception
+ 787 |         # raised by a yield point and raise a different one.
+ 788 |         @gen.coroutine
+ 789 |         def f1():
+ 790 |             1 / 0
+ 791 | 
+ 792 |         @gen.coroutine
+ 793 |         def f2():
+ 794 |             try:
+ 795 |                 yield f1()
+ 796 |             except ZeroDivisionError:
+ 797 |                 raise KeyError()
+ 798 | 
+ 799 |         future = f2()
+ 800 |         with self.assertRaises(KeyError):
+ 801 |             yield future
+ 802 |         self.finished = True
+ 803 | 
+ 804 |     @gen_test
+ 805 |     def test_swallow_yieldpoint_exception(self):
+ 806 |         # Test exception handling: a coroutine can catch an exception
+ 807 |         # raised by a yield point and not raise a different one.
+ 808 |         @gen.coroutine
+ 809 |         def f1():
+ 810 |             1 / 0
+ 811 | 
+ 812 |         @gen.coroutine
+ 813 |         def f2():
+ 814 |             try:
+ 815 |                 yield f1()
+ 816 |             except ZeroDivisionError:
+ 817 |                 raise gen.Return(42)
+ 818 | 
+ 819 |         result = yield f2()
+ 820 |         self.assertEqual(result, 42)
+ 821 |         self.finished = True
+ 822 | 
+ 823 |     @gen_test
+ 824 |     def test_replace_context_exception(self):
+ 825 |         # Test exception handling: exceptions thrown into the stack context
+ 826 |         # can be caught and replaced.
+ 827 |         # Note that this test and the following are for behavior that is
+ 828 |         # not really supported any more:  coroutines no longer create a
+ 829 |         # stack context automatically; but one is created after the first
+ 830 |         # YieldPoint (i.e. not a Future).
+ 831 |         @gen.coroutine
+ 832 |         def f2():
+ 833 |             (yield gen.Callback(1))()
+ 834 |             yield gen.Wait(1)
+ 835 |             self.io_loop.add_callback(lambda: 1 / 0)
+ 836 |             try:
+ 837 |                 yield gen.Task(self.io_loop.add_timeout,
+ 838 |                                self.io_loop.time() + 10)
+ 839 |             except ZeroDivisionError:
+ 840 |                 raise KeyError()
+ 841 | 
+ 842 |         future = f2()
+ 843 |         with self.assertRaises(KeyError):
+ 844 |             yield future
+ 845 |         self.finished = True
+ 846 | 
+ 847 |     @gen_test
+ 848 |     def test_swallow_context_exception(self):
+ 849 |         # Test exception handling: exceptions thrown into the stack context
+ 850 |         # can be caught and ignored.
+ 851 |         @gen.coroutine
+ 852 |         def f2():
+ 853 |             (yield gen.Callback(1))()
+ 854 |             yield gen.Wait(1)
+ 855 |             self.io_loop.add_callback(lambda: 1 / 0)
+ 856 |             try:
+ 857 |                 yield gen.Task(self.io_loop.add_timeout,
+ 858 |                                self.io_loop.time() + 10)
+ 859 |             except ZeroDivisionError:
+ 860 |                 raise gen.Return(42)
+ 861 | 
+ 862 |         result = yield f2()
+ 863 |         self.assertEqual(result, 42)
+ 864 |         self.finished = True
+ 865 | 
+ 866 |     @gen_test
+ 867 |     def test_moment(self):
+ 868 |         calls = []
+ 869 | 
+ 870 |         @gen.coroutine
+ 871 |         def f(name, yieldable):
+ 872 |             for i in range(5):
+ 873 |                 calls.append(name)
+ 874 |                 yield yieldable
+ 875 |         # First, confirm the behavior without moment: each coroutine
+ 876 |         # monopolizes the event loop until it finishes.
+ 877 |         immediate = Future()
+ 878 |         immediate.set_result(None)
+ 879 |         yield [f('a', immediate), f('b', immediate)]
+ 880 |         self.assertEqual(''.join(calls), 'aaaaabbbbb')
+ 881 | 
+ 882 |         # With moment, they take turns.
+ 883 |         calls = []
+ 884 |         yield [f('a', gen.moment), f('b', gen.moment)]
+ 885 |         self.assertEqual(''.join(calls), 'ababababab')
+ 886 |         self.finished = True
+ 887 | 
+ 888 |         calls = []
+ 889 |         yield [f('a', gen.moment), f('b', immediate)]
+ 890 |         self.assertEqual(''.join(calls), 'abbbbbaaaa')
+ 891 | 
+ 892 |     @gen_test
+ 893 |     def test_sleep(self):
+ 894 |         yield gen.sleep(0.01)
+ 895 |         self.finished = True
+ 896 | 
+ 897 |     @skipBefore33
+ 898 |     @gen_test
+ 899 |     def test_py3_leak_exception_context(self):
+ 900 |         class LeakedException(Exception):
+ 901 |             pass
+ 902 | 
+ 903 |         @gen.coroutine
+ 904 |         def inner(iteration):
+ 905 |             raise LeakedException(iteration)
+ 906 | 
+ 907 |         try:
+ 908 |             yield inner(1)
+ 909 |         except LeakedException as e:
+ 910 |             self.assertEqual(str(e), "1")
+ 911 |             self.assertIsNone(e.__context__)
+ 912 | 
+ 913 |         try:
+ 914 |             yield inner(2)
+ 915 |         except LeakedException as e:
+ 916 |             self.assertEqual(str(e), "2")
+ 917 |             self.assertIsNone(e.__context__)
+ 918 | 
+ 919 |         self.finished = True
+ 920 | 
+ 921 | class GenSequenceHandler(RequestHandler):
+ 922 |     @asynchronous
+ 923 |     @gen.engine
+ 924 |     def get(self):
+ 925 |         self.io_loop = self.request.connection.stream.io_loop
+ 926 |         self.io_loop.add_callback((yield gen.Callback("k1")))
+ 927 |         yield gen.Wait("k1")
+ 928 |         self.write("1")
+ 929 |         self.io_loop.add_callback((yield gen.Callback("k2")))
+ 930 |         yield gen.Wait("k2")
+ 931 |         self.write("2")
+ 932 |         # reuse an old key
+ 933 |         self.io_loop.add_callback((yield gen.Callback("k1")))
+ 934 |         yield gen.Wait("k1")
+ 935 |         self.finish("3")
+ 936 | 
+ 937 | 
+ 938 | class GenCoroutineSequenceHandler(RequestHandler):
+ 939 |     @gen.coroutine
+ 940 |     def get(self):
+ 941 |         self.io_loop = self.request.connection.stream.io_loop
+ 942 |         self.io_loop.add_callback((yield gen.Callback("k1")))
+ 943 |         yield gen.Wait("k1")
+ 944 |         self.write("1")
+ 945 |         self.io_loop.add_callback((yield gen.Callback("k2")))
+ 946 |         yield gen.Wait("k2")
+ 947 |         self.write("2")
+ 948 |         # reuse an old key
+ 949 |         self.io_loop.add_callback((yield gen.Callback("k1")))
+ 950 |         yield gen.Wait("k1")
+ 951 |         self.finish("3")
+ 952 | 
+ 953 | 
+ 954 | class GenCoroutineUnfinishedSequenceHandler(RequestHandler):
+ 955 |     @asynchronous
+ 956 |     @gen.coroutine
+ 957 |     def get(self):
+ 958 |         self.io_loop = self.request.connection.stream.io_loop
+ 959 |         self.io_loop.add_callback((yield gen.Callback("k1")))
+ 960 |         yield gen.Wait("k1")
+ 961 |         self.write("1")
+ 962 |         self.io_loop.add_callback((yield gen.Callback("k2")))
+ 963 |         yield gen.Wait("k2")
+ 964 |         self.write("2")
+ 965 |         # reuse an old key
+ 966 |         self.io_loop.add_callback((yield gen.Callback("k1")))
+ 967 |         yield gen.Wait("k1")
+ 968 |         # just write, don't finish
+ 969 |         self.write("3")
+ 970 | 
+ 971 | 
+ 972 | class GenTaskHandler(RequestHandler):
+ 973 |     @asynchronous
+ 974 |     @gen.engine
+ 975 |     def get(self):
+ 976 |         io_loop = self.request.connection.stream.io_loop
+ 977 |         client = AsyncHTTPClient(io_loop=io_loop)
+ 978 |         response = yield gen.Task(client.fetch, self.get_argument('url'))
+ 979 |         response.rethrow()
+ 980 |         self.finish(b"got response: " + response.body)
+ 981 | 
+ 982 | 
+ 983 | class GenExceptionHandler(RequestHandler):
+ 984 |     @asynchronous
+ 985 |     @gen.engine
+ 986 |     def get(self):
+ 987 |         # This test depends on the order of the two decorators.
+ 988 |         io_loop = self.request.connection.stream.io_loop
+ 989 |         yield gen.Task(io_loop.add_callback)
+ 990 |         raise Exception("oops")
+ 991 | 
+ 992 | 
+ 993 | class GenCoroutineExceptionHandler(RequestHandler):
+ 994 |     @gen.coroutine
+ 995 |     def get(self):
+ 996 |         # This test depends on the order of the two decorators.
+ 997 |         io_loop = self.request.connection.stream.io_loop
+ 998 |         yield gen.Task(io_loop.add_callback)
+ 999 |         raise Exception("oops")
+1000 | 
+1001 | 
+1002 | class GenYieldExceptionHandler(RequestHandler):
+1003 |     @asynchronous
+1004 |     @gen.engine
+1005 |     def get(self):
+1006 |         io_loop = self.request.connection.stream.io_loop
+1007 |         # Test the interaction of the two stack_contexts.
+1008 | 
+1009 |         def fail_task(callback):
+1010 |             io_loop.add_callback(lambda: 1 / 0)
+1011 |         try:
+1012 |             yield gen.Task(fail_task)
+1013 |             raise Exception("did not get expected exception")
+1014 |         except ZeroDivisionError:
+1015 |             self.finish('ok')
+1016 | 
+1017 | 
+1018 | class UndecoratedCoroutinesHandler(RequestHandler):
+1019 |     @gen.coroutine
+1020 |     def prepare(self):
+1021 |         self.chunks = []
+1022 |         yield gen.Task(IOLoop.current().add_callback)
+1023 |         self.chunks.append('1')
+1024 | 
+1025 |     @gen.coroutine
+1026 |     def get(self):
+1027 |         self.chunks.append('2')
+1028 |         yield gen.Task(IOLoop.current().add_callback)
+1029 |         self.chunks.append('3')
+1030 |         yield gen.Task(IOLoop.current().add_callback)
+1031 |         self.write(''.join(self.chunks))
+1032 | 
+1033 | 
+1034 | class AsyncPrepareErrorHandler(RequestHandler):
+1035 |     @gen.coroutine
+1036 |     def prepare(self):
+1037 |         yield gen.Task(IOLoop.current().add_callback)
+1038 |         raise HTTPError(403)
+1039 | 
+1040 |     def get(self):
+1041 |         self.finish('ok')
+1042 | 
+1043 | 
+1044 | class GenWebTest(AsyncHTTPTestCase):
+1045 |     def get_app(self):
+1046 |         return Application([
+1047 |             ('/sequence', GenSequenceHandler),
+1048 |             ('/coroutine_sequence', GenCoroutineSequenceHandler),
+1049 |             ('/coroutine_unfinished_sequence',
+1050 |              GenCoroutineUnfinishedSequenceHandler),
+1051 |             ('/task', GenTaskHandler),
+1052 |             ('/exception', GenExceptionHandler),
+1053 |             ('/coroutine_exception', GenCoroutineExceptionHandler),
+1054 |             ('/yield_exception', GenYieldExceptionHandler),
+1055 |             ('/undecorated_coroutine', UndecoratedCoroutinesHandler),
+1056 |             ('/async_prepare_error', AsyncPrepareErrorHandler),
+1057 |         ])
+1058 | 
+1059 |     def test_sequence_handler(self):
+1060 |         response = self.fetch('/sequence')
+1061 |         self.assertEqual(response.body, b"123")
+1062 | 
+1063 |     def test_coroutine_sequence_handler(self):
+1064 |         response = self.fetch('/coroutine_sequence')
+1065 |         self.assertEqual(response.body, b"123")
+1066 | 
+1067 |     def test_coroutine_unfinished_sequence_handler(self):
+1068 |         response = self.fetch('/coroutine_unfinished_sequence')
+1069 |         self.assertEqual(response.body, b"123")
+1070 | 
+1071 |     def test_task_handler(self):
+1072 |         response = self.fetch('/task?url=%s' % url_escape(self.get_url('/sequence')))
+1073 |         self.assertEqual(response.body, b"got response: 123")
+1074 | 
+1075 |     def test_exception_handler(self):
+1076 |         # Make sure we get an error and not a timeout
+1077 |         with ExpectLog(app_log, "Uncaught exception GET /exception"):
+1078 |             response = self.fetch('/exception')
+1079 |         self.assertEqual(500, response.code)
+1080 | 
+1081 |     def test_coroutine_exception_handler(self):
+1082 |         # Make sure we get an error and not a timeout
+1083 |         with ExpectLog(app_log, "Uncaught exception GET /coroutine_exception"):
+1084 |             response = self.fetch('/coroutine_exception')
+1085 |         self.assertEqual(500, response.code)
+1086 | 
+1087 |     def test_yield_exception_handler(self):
+1088 |         response = self.fetch('/yield_exception')
+1089 |         self.assertEqual(response.body, b'ok')
+1090 | 
+1091 |     def test_undecorated_coroutines(self):
+1092 |         response = self.fetch('/undecorated_coroutine')
+1093 |         self.assertEqual(response.body, b'123')
+1094 | 
+1095 |     def test_async_prepare_error_handler(self):
+1096 |         response = self.fetch('/async_prepare_error')
+1097 |         self.assertEqual(response.code, 403)
+1098 | 
+1099 | 
+1100 | class WithTimeoutTest(AsyncTestCase):
+1101 |     @gen_test
+1102 |     def test_timeout(self):
+1103 |         with self.assertRaises(gen.TimeoutError):
+1104 |             yield gen.with_timeout(datetime.timedelta(seconds=0.1),
+1105 |                                    Future())
+1106 | 
+1107 |     @gen_test
+1108 |     def test_completes_before_timeout(self):
+1109 |         future = Future()
+1110 |         self.io_loop.add_timeout(datetime.timedelta(seconds=0.1),
+1111 |                                  lambda: future.set_result('asdf'))
+1112 |         result = yield gen.with_timeout(datetime.timedelta(seconds=3600),
+1113 |                                         future, io_loop=self.io_loop)
+1114 |         self.assertEqual(result, 'asdf')
+1115 | 
+1116 |     @gen_test
+1117 |     def test_fails_before_timeout(self):
+1118 |         future = Future()
+1119 |         self.io_loop.add_timeout(
+1120 |             datetime.timedelta(seconds=0.1),
+1121 |             lambda: future.set_exception(ZeroDivisionError()))
+1122 |         with self.assertRaises(ZeroDivisionError):
+1123 |             yield gen.with_timeout(datetime.timedelta(seconds=3600),
+1124 |                                    future, io_loop=self.io_loop)
+1125 | 
+1126 |     @gen_test
+1127 |     def test_already_resolved(self):
+1128 |         future = Future()
+1129 |         future.set_result('asdf')
+1130 |         result = yield gen.with_timeout(datetime.timedelta(seconds=3600),
+1131 |                                         future, io_loop=self.io_loop)
+1132 |         self.assertEqual(result, 'asdf')
+1133 | 
+1134 |     @unittest.skipIf(futures is None, 'futures module not present')
+1135 |     @gen_test
+1136 |     def test_timeout_concurrent_future(self):
+1137 |         with futures.ThreadPoolExecutor(1) as executor:
+1138 |             with self.assertRaises(gen.TimeoutError):
+1139 |                 yield gen.with_timeout(self.io_loop.time(),
+1140 |                                        executor.submit(time.sleep, 0.1))
+1141 | 
+1142 |     @unittest.skipIf(futures is None, 'futures module not present')
+1143 |     @gen_test
+1144 |     def test_completed_concurrent_future(self):
+1145 |         with futures.ThreadPoolExecutor(1) as executor:
+1146 |             yield gen.with_timeout(datetime.timedelta(seconds=3600),
+1147 |                                    executor.submit(lambda: None))
+1148 | 
+1149 | 
+1150 | class WaitIteratorTest(AsyncTestCase):
+1151 |     @gen_test
+1152 |     def test_empty_iterator(self):
+1153 |         g = gen.WaitIterator()
+1154 |         self.assertTrue(g.done(), 'empty generator iterated')
+1155 | 
+1156 |         with self.assertRaises(ValueError):
+1157 |             g = gen.WaitIterator(False, bar=False)
+1158 | 
+1159 |         self.assertEqual(g.current_index, None, "bad nil current index")
+1160 |         self.assertEqual(g.current_future, None, "bad nil current future")
+1161 | 
+1162 |     @gen_test
+1163 |     def test_already_done(self):
+1164 |         f1 = Future()
+1165 |         f2 = Future()
+1166 |         f3 = Future()
+1167 |         f1.set_result(24)
+1168 |         f2.set_result(42)
+1169 |         f3.set_result(84)
+1170 | 
+1171 |         g = gen.WaitIterator(f1, f2, f3)
+1172 |         i = 0
+1173 |         while not g.done():
+1174 |             r = yield g.next()
+1175 |             # Order is not guaranteed, but the current implementation
+1176 |             # preserves ordering of already-done Futures.
+1177 |             if i == 0:
+1178 |                 self.assertEqual(g.current_index, 0)
+1179 |                 self.assertIs(g.current_future, f1)
+1180 |                 self.assertEqual(r, 24)
+1181 |             elif i == 1:
+1182 |                 self.assertEqual(g.current_index, 1)
+1183 |                 self.assertIs(g.current_future, f2)
+1184 |                 self.assertEqual(r, 42)
+1185 |             elif i == 2:
+1186 |                 self.assertEqual(g.current_index, 2)
+1187 |                 self.assertIs(g.current_future, f3)
+1188 |                 self.assertEqual(r, 84)
+1189 |             i += 1
+1190 | 
+1191 |         self.assertEqual(g.current_index, None, "bad nil current index")
+1192 |         self.assertEqual(g.current_future, None, "bad nil current future")
+1193 | 
+1194 |         dg = gen.WaitIterator(f1=f1, f2=f2)
+1195 | 
+1196 |         while not dg.done():
+1197 |             dr = yield dg.next()
+1198 |             if dg.current_index == "f1":
+1199 |                 self.assertTrue(dg.current_future == f1 and dr == 24,
+1200 |                                 "WaitIterator dict status incorrect")
+1201 |             elif dg.current_index == "f2":
+1202 |                 self.assertTrue(dg.current_future == f2 and dr == 42,
+1203 |                                 "WaitIterator dict status incorrect")
+1204 |             else:
+1205 |                 self.fail("got bad WaitIterator index {}".format(
+1206 |                     dg.current_index))
+1207 | 
+1208 |             i += 1
+1209 | 
+1210 |         self.assertEqual(dg.current_index, None, "bad nil current index")
+1211 |         self.assertEqual(dg.current_future, None, "bad nil current future")
+1212 | 
+1213 |     def finish_coroutines(self, iteration, futures):
+1214 |         if iteration == 3:
+1215 |             futures[2].set_result(24)
+1216 |         elif iteration == 5:
+1217 |             futures[0].set_exception(ZeroDivisionError())
+1218 |         elif iteration == 8:
+1219 |             futures[1].set_result(42)
+1220 |             futures[3].set_result(84)
+1221 | 
+1222 |         if iteration < 8:
+1223 |             self.io_loop.add_callback(self.finish_coroutines, iteration + 1, futures)
+1224 | 
+1225 |     @gen_test
+1226 |     def test_iterator(self):
+1227 |         futures = [Future(), Future(), Future(), Future()]
+1228 | 
+1229 |         self.finish_coroutines(0, futures)
+1230 | 
+1231 |         g = gen.WaitIterator(*futures)
+1232 | 
+1233 |         i = 0
+1234 |         while not g.done():
+1235 |             try:
+1236 |                 r = yield g.next()
+1237 |             except ZeroDivisionError:
+1238 |                 self.assertIs(g.current_future, futures[0],
+1239 |                               'exception future invalid')
+1240 |             else:
+1241 |                 if i == 0:
+1242 |                     self.assertEqual(r, 24, 'iterator value incorrect')
+1243 |                     self.assertEqual(g.current_index, 2, 'wrong index')
+1244 |                 elif i == 2:
+1245 |                     self.assertEqual(r, 42, 'iterator value incorrect')
+1246 |                     self.assertEqual(g.current_index, 1, 'wrong index')
+1247 |                 elif i == 3:
+1248 |                     self.assertEqual(r, 84, 'iterator value incorrect')
+1249 |                     self.assertEqual(g.current_index, 3, 'wrong index')
+1250 |             i += 1
+1251 | 
+1252 |     @gen_test
+1253 |     def test_no_ref(self):
+1254 |         # In this usage, there is no direct hard reference to the
+1255 |         # WaitIterator itself, only the Future it returns. Since
+1256 |         # WaitIterator uses weak references internally to improve GC
+1257 |         # performance, this used to cause problems.
+1258 |         yield gen.with_timeout(datetime.timedelta(seconds=0.1),
+1259 |                                gen.WaitIterator(gen.sleep(0)).next())
+1260 | 
+1261 | 
+1262 | if __name__ == '__main__':
+1263 |     unittest.main()
+```

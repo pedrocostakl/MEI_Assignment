@@ -1,0 +1,2518 @@
+You are given buggy source files and failing test files.
+
+Your task is BUG LOCALIZATION ONLY.
+
+Return only valid JSON using this exact format:
+
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "relative/path.py",
+      "line_start": 1,
+      "line_end": 1,
+      "confidence": "low|medium|high",
+      "reason": "Max 2 sentences."
+    }
+  ]
+}
+
+Rules:
+- Do not propose fixes.
+- Do not rewrite code.
+- Do not explain outside JSON.
+- Line numbers must refer to the numbered buggy source file.
+- Include at most 3 suspected locations.
+- Prefer the smallest line range that identifies the origin of the bug.
+
+
+SOURCE FILES:
+
+[file_1] BugsInPy/workspace/tornado/tornado/websocket.py
+```python
+   1 | """Implementation of the WebSocket protocol.
+   2 | 
+   3 | `WebSockets <http://dev.w3.org/html5/websockets/>`_ allow for bidirectional
+   4 | communication between the browser and server.
+   5 | 
+   6 | WebSockets are supported in the current versions of all major browsers,
+   7 | although older versions that do not support WebSockets are still in use
+   8 | (refer to http://caniuse.com/websockets for details).
+   9 | 
+  10 | This module implements the final version of the WebSocket protocol as
+  11 | defined in `RFC 6455 <http://tools.ietf.org/html/rfc6455>`_.  Certain
+  12 | browser versions (notably Safari 5.x) implemented an earlier draft of
+  13 | the protocol (known as "draft 76") and are not compatible with this module.
+  14 | 
+  15 | .. versionchanged:: 4.0
+  16 |    Removed support for the draft 76 protocol version.
+  17 | """
+  18 | 
+  19 | import abc
+  20 | import asyncio
+  21 | import base64
+  22 | import hashlib
+  23 | import os
+  24 | import sys
+  25 | import struct
+  26 | import tornado.escape
+  27 | import tornado.web
+  28 | from urllib.parse import urlparse
+  29 | import zlib
+  30 | 
+  31 | from tornado.concurrent import Future, future_set_result_unless_cancelled
+  32 | from tornado.escape import utf8, native_str, to_unicode
+  33 | from tornado import gen, httpclient, httputil
+  34 | from tornado.ioloop import IOLoop, PeriodicCallback
+  35 | from tornado.iostream import StreamClosedError, IOStream
+  36 | from tornado.log import gen_log, app_log
+  37 | from tornado import simple_httpclient
+  38 | from tornado.queues import Queue
+  39 | from tornado.tcpclient import TCPClient
+  40 | from tornado.util import _websocket_mask
+  41 | 
+  42 | from typing import (
+  43 |     TYPE_CHECKING,
+  44 |     cast,
+  45 |     Any,
+  46 |     Optional,
+  47 |     Dict,
+  48 |     Union,
+  49 |     List,
+  50 |     Awaitable,
+  51 |     Callable,
+  52 |     Tuple,
+  53 |     Type,
+  54 | )
+  55 | from types import TracebackType
+  56 | 
+  57 | if TYPE_CHECKING:
+  58 |     from typing_extensions import Protocol
+  59 | 
+  60 |     # The zlib compressor types aren't actually exposed anywhere
+  61 |     # publicly, so declare protocols for the portions we use.
+  62 |     class _Compressor(Protocol):
+  63 |         def compress(self, data: bytes) -> bytes:
+  64 |             pass
+  65 | 
+  66 |         def flush(self, mode: int) -> bytes:
+  67 |             pass
+  68 | 
+  69 |     class _Decompressor(Protocol):
+  70 |         unconsumed_tail = b""  # type: bytes
+  71 | 
+  72 |         def decompress(self, data: bytes, max_length: int) -> bytes:
+  73 |             pass
+  74 | 
+  75 |     class _WebSocketDelegate(Protocol):
+  76 |         # The common base interface implemented by WebSocketHandler on
+  77 |         # the server side and WebSocketClientConnection on the client
+  78 |         # side.
+  79 |         def on_ws_connection_close(
+  80 |             self, close_code: int = None, close_reason: str = None
+  81 |         ) -> None:
+  82 |             pass
+  83 | 
+  84 |         def on_message(self, message: Union[str, bytes]) -> Optional["Awaitable[None]"]:
+  85 |             pass
+  86 | 
+  87 |         def on_ping(self, data: bytes) -> None:
+  88 |             pass
+  89 | 
+  90 |         def on_pong(self, data: bytes) -> None:
+  91 |             pass
+  92 | 
+  93 |         def log_exception(
+  94 |             self,
+  95 |             typ: Optional[Type[BaseException]],
+  96 |             value: Optional[BaseException],
+  97 |             tb: Optional[TracebackType],
+  98 |         ) -> None:
+  99 |             pass
+ 100 | 
+ 101 | 
+ 102 | _default_max_message_size = 10 * 1024 * 1024
+ 103 | 
+ 104 | 
+ 105 | class WebSocketError(Exception):
+ 106 |     pass
+ 107 | 
+ 108 | 
+ 109 | class WebSocketClosedError(WebSocketError):
+ 110 |     """Raised by operations on a closed connection.
+ 111 | 
+ 112 |     .. versionadded:: 3.2
+ 113 |     """
+ 114 | 
+ 115 |     pass
+ 116 | 
+ 117 | 
+ 118 | class _DecompressTooLargeError(Exception):
+ 119 |     pass
+ 120 | 
+ 121 | 
+ 122 | class _WebSocketParams(object):
+ 123 |     def __init__(
+ 124 |         self,
+ 125 |         ping_interval: float = None,
+ 126 |         ping_timeout: float = None,
+ 127 |         max_message_size: int = _default_max_message_size,
+ 128 |         compression_options: Dict[str, Any] = None,
+ 129 |     ) -> None:
+ 130 |         self.ping_interval = ping_interval
+ 131 |         self.ping_timeout = ping_timeout
+ 132 |         self.max_message_size = max_message_size
+ 133 |         self.compression_options = compression_options
+ 134 | 
+ 135 | 
+ 136 | class WebSocketHandler(tornado.web.RequestHandler):
+ 137 |     """Subclass this class to create a basic WebSocket handler.
+ 138 | 
+ 139 |     Override `on_message` to handle incoming messages, and use
+ 140 |     `write_message` to send messages to the client. You can also
+ 141 |     override `open` and `on_close` to handle opened and closed
+ 142 |     connections.
+ 143 | 
+ 144 |     Custom upgrade response headers can be sent by overriding
+ 145 |     `~tornado.web.RequestHandler.set_default_headers` or
+ 146 |     `~tornado.web.RequestHandler.prepare`.
+ 147 | 
+ 148 |     See http://dev.w3.org/html5/websockets/ for details on the
+ 149 |     JavaScript interface.  The protocol is specified at
+ 150 |     http://tools.ietf.org/html/rfc6455.
+ 151 | 
+ 152 |     Here is an example WebSocket handler that echos back all received messages
+ 153 |     back to the client:
+ 154 | 
+ 155 |     .. testcode::
+ 156 | 
+ 157 |       class EchoWebSocket(tornado.websocket.WebSocketHandler):
+ 158 |           def open(self):
+ 159 |               print("WebSocket opened")
+ 160 | 
+ 161 |           def on_message(self, message):
+ 162 |               self.write_message(u"You said: " + message)
+ 163 | 
+ 164 |           def on_close(self):
+ 165 |               print("WebSocket closed")
+ 166 | 
+ 167 |     .. testoutput::
+ 168 |        :hide:
+ 169 | 
+ 170 |     WebSockets are not standard HTTP connections. The "handshake" is
+ 171 |     HTTP, but after the handshake, the protocol is
+ 172 |     message-based. Consequently, most of the Tornado HTTP facilities
+ 173 |     are not available in handlers of this type. The only communication
+ 174 |     methods available to you are `write_message()`, `ping()`, and
+ 175 |     `close()`. Likewise, your request handler class should implement
+ 176 |     `open()` method rather than ``get()`` or ``post()``.
+ 177 | 
+ 178 |     If you map the handler above to ``/websocket`` in your application, you can
+ 179 |     invoke it in JavaScript with::
+ 180 | 
+ 181 |       var ws = new WebSocket("ws://localhost:8888/websocket");
+ 182 |       ws.onopen = function() {
+ 183 |          ws.send("Hello, world");
+ 184 |       };
+ 185 |       ws.onmessage = function (evt) {
+ 186 |          alert(evt.data);
+ 187 |       };
+ 188 | 
+ 189 |     This script pops up an alert box that says "You said: Hello, world".
+ 190 | 
+ 191 |     Web browsers allow any site to open a websocket connection to any other,
+ 192 |     instead of using the same-origin policy that governs other network
+ 193 |     access from javascript.  This can be surprising and is a potential
+ 194 |     security hole, so since Tornado 4.0 `WebSocketHandler` requires
+ 195 |     applications that wish to receive cross-origin websockets to opt in
+ 196 |     by overriding the `~WebSocketHandler.check_origin` method (see that
+ 197 |     method's docs for details).  Failure to do so is the most likely
+ 198 |     cause of 403 errors when making a websocket connection.
+ 199 | 
+ 200 |     When using a secure websocket connection (``wss://``) with a self-signed
+ 201 |     certificate, the connection from a browser may fail because it wants
+ 202 |     to show the "accept this certificate" dialog but has nowhere to show it.
+ 203 |     You must first visit a regular HTML page using the same certificate
+ 204 |     to accept it before the websocket connection will succeed.
+ 205 | 
+ 206 |     If the application setting ``websocket_ping_interval`` has a non-zero
+ 207 |     value, a ping will be sent periodically, and the connection will be
+ 208 |     closed if a response is not received before the ``websocket_ping_timeout``.
+ 209 | 
+ 210 |     Messages larger than the ``websocket_max_message_size`` application setting
+ 211 |     (default 10MiB) will not be accepted.
+ 212 | 
+ 213 |     .. versionchanged:: 4.5
+ 214 |        Added ``websocket_ping_interval``, ``websocket_ping_timeout``, and
+ 215 |        ``websocket_max_message_size``.
+ 216 |     """
+ 217 | 
+ 218 |     def __init__(
+ 219 |         self,
+ 220 |         application: tornado.web.Application,
+ 221 |         request: httputil.HTTPServerRequest,
+ 222 |         **kwargs: Any
+ 223 |     ) -> None:
+ 224 |         super(WebSocketHandler, self).__init__(application, request, **kwargs)
+ 225 |         self.ws_connection = None  # type: Optional[WebSocketProtocol]
+ 226 |         self.close_code = None  # type: Optional[int]
+ 227 |         self.close_reason = None  # type: Optional[str]
+ 228 |         self.stream = None  # type: Optional[IOStream]
+ 229 |         self._on_close_called = False
+ 230 | 
+ 231 |     async def get(self, *args: Any, **kwargs: Any) -> None:
+ 232 |         self.open_args = args
+ 233 |         self.open_kwargs = kwargs
+ 234 | 
+ 235 |         # Upgrade header should be present and should be equal to WebSocket
+ 236 |         if self.request.headers.get("Upgrade", "").lower() != "websocket":
+ 237 |             self.set_status(400)
+ 238 |             log_msg = 'Can "Upgrade" only to "WebSocket".'
+ 239 |             self.finish(log_msg)
+ 240 |             gen_log.debug(log_msg)
+ 241 |             return
+ 242 | 
+ 243 |         # Connection header should be upgrade.
+ 244 |         # Some proxy servers/load balancers
+ 245 |         # might mess with it.
+ 246 |         headers = self.request.headers
+ 247 |         connection = map(
+ 248 |             lambda s: s.strip().lower(), headers.get("Connection", "").split(",")
+ 249 |         )
+ 250 |         if "upgrade" not in connection:
+ 251 |             self.set_status(400)
+ 252 |             log_msg = '"Connection" must be "Upgrade".'
+ 253 |             self.finish(log_msg)
+ 254 |             gen_log.debug(log_msg)
+ 255 |             return
+ 256 | 
+ 257 |         # Handle WebSocket Origin naming convention differences
+ 258 |         # The difference between version 8 and 13 is that in 8 the
+ 259 |         # client sends a "Sec-Websocket-Origin" header and in 13 it's
+ 260 |         # simply "Origin".
+ 261 |         if "Origin" in self.request.headers:
+ 262 |             origin = self.request.headers.get("Origin")
+ 263 |         else:
+ 264 |             origin = self.request.headers.get("Sec-Websocket-Origin", None)
+ 265 | 
+ 266 |         # If there was an origin header, check to make sure it matches
+ 267 |         # according to check_origin. When the origin is None, we assume it
+ 268 |         # did not come from a browser and that it can be passed on.
+ 269 |         if origin is not None and not self.check_origin(origin):
+ 270 |             self.set_status(403)
+ 271 |             log_msg = "Cross origin websockets not allowed"
+ 272 |             self.finish(log_msg)
+ 273 |             gen_log.debug(log_msg)
+ 274 |             return
+ 275 | 
+ 276 |         self.ws_connection = self.get_websocket_protocol()
+ 277 |         if self.ws_connection:
+ 278 |             await self.ws_connection.accept_connection(self)
+ 279 |         else:
+ 280 |             self.set_status(426, "Upgrade Required")
+ 281 |             self.set_header("Sec-WebSocket-Version", "7, 8, 13")
+ 282 | 
+ 283 |     stream = None
+ 284 | 
+ 285 |     @property
+ 286 |     def ping_interval(self) -> Optional[float]:
+ 287 |         """The interval for websocket keep-alive pings.
+ 288 | 
+ 289 |         Set websocket_ping_interval = 0 to disable pings.
+ 290 |         """
+ 291 |         return self.settings.get("websocket_ping_interval", None)
+ 292 | 
+ 293 |     @property
+ 294 |     def ping_timeout(self) -> Optional[float]:
+ 295 |         """If no ping is received in this many seconds,
+ 296 |         close the websocket connection (VPNs, etc. can fail to cleanly close ws connections).
+ 297 |         Default is max of 3 pings or 30 seconds.
+ 298 |         """
+ 299 |         return self.settings.get("websocket_ping_timeout", None)
+ 300 | 
+ 301 |     @property
+ 302 |     def max_message_size(self) -> int:
+ 303 |         """Maximum allowed message size.
+ 304 | 
+ 305 |         If the remote peer sends a message larger than this, the connection
+ 306 |         will be closed.
+ 307 | 
+ 308 |         Default is 10MiB.
+ 309 |         """
+ 310 |         return self.settings.get(
+ 311 |             "websocket_max_message_size", _default_max_message_size
+ 312 |         )
+ 313 | 
+ 314 |     def write_message(
+ 315 |         self, message: Union[bytes, str, Dict[str, Any]], binary: bool = False
+ 316 |     ) -> "Future[None]":
+ 317 |         """Sends the given message to the client of this Web Socket.
+ 318 | 
+ 319 |         The message may be either a string or a dict (which will be
+ 320 |         encoded as json).  If the ``binary`` argument is false, the
+ 321 |         message will be sent as utf8; in binary mode any byte string
+ 322 |         is allowed.
+ 323 | 
+ 324 |         If the connection is already closed, raises `WebSocketClosedError`.
+ 325 |         Returns a `.Future` which can be used for flow control.
+ 326 | 
+ 327 |         .. versionchanged:: 3.2
+ 328 |            `WebSocketClosedError` was added (previously a closed connection
+ 329 |            would raise an `AttributeError`)
+ 330 | 
+ 331 |         .. versionchanged:: 4.3
+ 332 |            Returns a `.Future` which can be used for flow control.
+ 333 | 
+ 334 |         .. versionchanged:: 5.0
+ 335 |            Consistently raises `WebSocketClosedError`. Previously could
+ 336 |            sometimes raise `.StreamClosedError`.
+ 337 |         """
+ 338 |         if self.ws_connection is None or self.ws_connection.is_closing():
+ 339 |             raise WebSocketClosedError()
+ 340 |         if isinstance(message, dict):
+ 341 |             message = tornado.escape.json_encode(message)
+ 342 |         return self.ws_connection.write_message(message, binary=binary)
+ 343 | 
+ 344 |     def select_subprotocol(self, subprotocols: List[str]) -> Optional[str]:
+ 345 |         """Override to implement subprotocol negotiation.
+ 346 | 
+ 347 |         ``subprotocols`` is a list of strings identifying the
+ 348 |         subprotocols proposed by the client.  This method may be
+ 349 |         overridden to return one of those strings to select it, or
+ 350 |         ``None`` to not select a subprotocol.
+ 351 | 
+ 352 |         Failure to select a subprotocol does not automatically abort
+ 353 |         the connection, although clients may close the connection if
+ 354 |         none of their proposed subprotocols was selected.
+ 355 | 
+ 356 |         The list may be empty, in which case this method must return
+ 357 |         None. This method is always called exactly once even if no
+ 358 |         subprotocols were proposed so that the handler can be advised
+ 359 |         of this fact.
+ 360 | 
+ 361 |         .. versionchanged:: 5.1
+ 362 | 
+ 363 |            Previously, this method was called with a list containing
+ 364 |            an empty string instead of an empty list if no subprotocols
+ 365 |            were proposed by the client.
+ 366 |         """
+ 367 |         return None
+ 368 | 
+ 369 |     @property
+ 370 |     def selected_subprotocol(self) -> Optional[str]:
+ 371 |         """The subprotocol returned by `select_subprotocol`.
+ 372 | 
+ 373 |         .. versionadded:: 5.1
+ 374 |         """
+ 375 |         assert self.ws_connection is not None
+ 376 |         return self.ws_connection.selected_subprotocol
+ 377 | 
+ 378 |     def get_compression_options(self) -> Optional[Dict[str, Any]]:
+ 379 |         """Override to return compression options for the connection.
+ 380 | 
+ 381 |         If this method returns None (the default), compression will
+ 382 |         be disabled.  If it returns a dict (even an empty one), it
+ 383 |         will be enabled.  The contents of the dict may be used to
+ 384 |         control the following compression options:
+ 385 | 
+ 386 |         ``compression_level`` specifies the compression level.
+ 387 | 
+ 388 |         ``mem_level`` specifies the amount of memory used for the internal compression state.
+ 389 | 
+ 390 |          These parameters are documented in details here:
+ 391 |          https://docs.python.org/3.6/library/zlib.html#zlib.compressobj
+ 392 | 
+ 393 |         .. versionadded:: 4.1
+ 394 | 
+ 395 |         .. versionchanged:: 4.5
+ 396 | 
+ 397 |            Added ``compression_level`` and ``mem_level``.
+ 398 |         """
+ 399 |         # TODO: Add wbits option.
+ 400 |         return None
+ 401 | 
+ 402 |     def open(self, *args: str, **kwargs: str) -> Optional[Awaitable[None]]:
+ 403 |         """Invoked when a new WebSocket is opened.
+ 404 | 
+ 405 |         The arguments to `open` are extracted from the `tornado.web.URLSpec`
+ 406 |         regular expression, just like the arguments to
+ 407 |         `tornado.web.RequestHandler.get`.
+ 408 | 
+ 409 |         `open` may be a coroutine. `on_message` will not be called until
+ 410 |         `open` has returned.
+ 411 | 
+ 412 |         .. versionchanged:: 5.1
+ 413 | 
+ 414 |            ``open`` may be a coroutine.
+ 415 |         """
+ 416 |         pass
+ 417 | 
+ 418 |     def on_message(self, message: Union[str, bytes]) -> Optional[Awaitable[None]]:
+ 419 |         """Handle incoming messages on the WebSocket
+ 420 | 
+ 421 |         This method must be overridden.
+ 422 | 
+ 423 |         .. versionchanged:: 4.5
+ 424 | 
+ 425 |            ``on_message`` can be a coroutine.
+ 426 |         """
+ 427 |         raise NotImplementedError
+ 428 | 
+ 429 |     def ping(self, data: Union[str, bytes] = b"") -> None:
+ 430 |         """Send ping frame to the remote end.
+ 431 | 
+ 432 |         The data argument allows a small amount of data (up to 125
+ 433 |         bytes) to be sent as a part of the ping message. Note that not
+ 434 |         all websocket implementations expose this data to
+ 435 |         applications.
+ 436 | 
+ 437 |         Consider using the ``websocket_ping_interval`` application
+ 438 |         setting instead of sending pings manually.
+ 439 | 
+ 440 |         .. versionchanged:: 5.1
+ 441 | 
+ 442 |            The data argument is now optional.
+ 443 | 
+ 444 |         """
+ 445 |         data = utf8(data)
+ 446 |         if self.ws_connection is None or self.ws_connection.is_closing():
+ 447 |             raise WebSocketClosedError()
+ 448 |         self.ws_connection.write_ping(data)
+ 449 | 
+ 450 |     def on_pong(self, data: bytes) -> None:
+ 451 |         """Invoked when the response to a ping frame is received."""
+ 452 |         pass
+ 453 | 
+ 454 |     def on_ping(self, data: bytes) -> None:
+ 455 |         """Invoked when the a ping frame is received."""
+ 456 |         pass
+ 457 | 
+ 458 |     def on_close(self) -> None:
+ 459 |         """Invoked when the WebSocket is closed.
+ 460 | 
+ 461 |         If the connection was closed cleanly and a status code or reason
+ 462 |         phrase was supplied, these values will be available as the attributes
+ 463 |         ``self.close_code`` and ``self.close_reason``.
+ 464 | 
+ 465 |         .. versionchanged:: 4.0
+ 466 | 
+ 467 |            Added ``close_code`` and ``close_reason`` attributes.
+ 468 |         """
+ 469 |         pass
+ 470 | 
+ 471 |     def close(self, code: int = None, reason: str = None) -> None:
+ 472 |         """Closes this Web Socket.
+ 473 | 
+ 474 |         Once the close handshake is successful the socket will be closed.
+ 475 | 
+ 476 |         ``code`` may be a numeric status code, taken from the values
+ 477 |         defined in `RFC 6455 section 7.4.1
+ 478 |         <https://tools.ietf.org/html/rfc6455#section-7.4.1>`_.
+ 479 |         ``reason`` may be a textual message about why the connection is
+ 480 |         closing.  These values are made available to the client, but are
+ 481 |         not otherwise interpreted by the websocket protocol.
+ 482 | 
+ 483 |         .. versionchanged:: 4.0
+ 484 | 
+ 485 |            Added the ``code`` and ``reason`` arguments.
+ 486 |         """
+ 487 |         if self.ws_connection:
+ 488 |             self.ws_connection.close(code, reason)
+ 489 |             self.ws_connection = None
+ 490 | 
+ 491 |     def check_origin(self, origin: str) -> bool:
+ 492 |         """Override to enable support for allowing alternate origins.
+ 493 | 
+ 494 |         The ``origin`` argument is the value of the ``Origin`` HTTP
+ 495 |         header, the url responsible for initiating this request.  This
+ 496 |         method is not called for clients that do not send this header;
+ 497 |         such requests are always allowed (because all browsers that
+ 498 |         implement WebSockets support this header, and non-browser
+ 499 |         clients do not have the same cross-site security concerns).
+ 500 | 
+ 501 |         Should return ``True`` to accept the request or ``False`` to
+ 502 |         reject it. By default, rejects all requests with an origin on
+ 503 |         a host other than this one.
+ 504 | 
+ 505 |         This is a security protection against cross site scripting attacks on
+ 506 |         browsers, since WebSockets are allowed to bypass the usual same-origin
+ 507 |         policies and don't use CORS headers.
+ 508 | 
+ 509 |         .. warning::
+ 510 | 
+ 511 |            This is an important security measure; don't disable it
+ 512 |            without understanding the security implications. In
+ 513 |            particular, if your authentication is cookie-based, you
+ 514 |            must either restrict the origins allowed by
+ 515 |            ``check_origin()`` or implement your own XSRF-like
+ 516 |            protection for websocket connections. See `these
+ 517 |            <https://www.christian-schneider.net/CrossSiteWebSocketHijacking.html>`_
+ 518 |            `articles
+ 519 |            <https://devcenter.heroku.com/articles/websocket-security>`_
+ 520 |            for more.
+ 521 | 
+ 522 |         To accept all cross-origin traffic (which was the default prior to
+ 523 |         Tornado 4.0), simply override this method to always return ``True``::
+ 524 | 
+ 525 |             def check_origin(self, origin):
+ 526 |                 return True
+ 527 | 
+ 528 |         To allow connections from any subdomain of your site, you might
+ 529 |         do something like::
+ 530 | 
+ 531 |             def check_origin(self, origin):
+ 532 |                 parsed_origin = urllib.parse.urlparse(origin)
+ 533 |                 return parsed_origin.netloc.endswith(".mydomain.com")
+ 534 | 
+ 535 |         .. versionadded:: 4.0
+ 536 | 
+ 537 |         """
+ 538 |         parsed_origin = urlparse(origin)
+ 539 |         origin = parsed_origin.netloc
+ 540 |         origin = origin.lower()
+ 541 | 
+ 542 |         host = self.request.headers.get("Host")
+ 543 | 
+ 544 |         # Check to see that origin matches host directly, including ports
+ 545 |         return origin == host
+ 546 | 
+ 547 |     def set_nodelay(self, value: bool) -> None:
+ 548 |         """Set the no-delay flag for this stream.
+ 549 | 
+ 550 |         By default, small messages may be delayed and/or combined to minimize
+ 551 |         the number of packets sent.  This can sometimes cause 200-500ms delays
+ 552 |         due to the interaction between Nagle's algorithm and TCP delayed
+ 553 |         ACKs.  To reduce this delay (at the expense of possibly increasing
+ 554 |         bandwidth usage), call ``self.set_nodelay(True)`` once the websocket
+ 555 |         connection is established.
+ 556 | 
+ 557 |         See `.BaseIOStream.set_nodelay` for additional details.
+ 558 | 
+ 559 |         .. versionadded:: 3.1
+ 560 |         """
+ 561 |         assert self.stream is not None
+ 562 |         self.stream.set_nodelay(value)
+ 563 | 
+ 564 |     def on_connection_close(self) -> None:
+ 565 |         if self.ws_connection:
+ 566 |             self.ws_connection.on_connection_close()
+ 567 |             self.ws_connection = None
+ 568 |         if not self._on_close_called:
+ 569 |             self._on_close_called = True
+ 570 |             self.on_close()
+ 571 |             self._break_cycles()
+ 572 | 
+ 573 |     def on_ws_connection_close(
+ 574 |         self, close_code: int = None, close_reason: str = None
+ 575 |     ) -> None:
+ 576 |         self.close_code = close_code
+ 577 |         self.close_reason = close_reason
+ 578 |         self.on_connection_close()
+ 579 | 
+ 580 |     def _break_cycles(self) -> None:
+ 581 |         # WebSocketHandlers call finish() early, but we don't want to
+ 582 |         # break up reference cycles (which makes it impossible to call
+ 583 |         # self.render_string) until after we've really closed the
+ 584 |         # connection (if it was established in the first place,
+ 585 |         # indicated by status code 101).
+ 586 |         if self.get_status() != 101 or self._on_close_called:
+ 587 |             super(WebSocketHandler, self)._break_cycles()
+ 588 | 
+ 589 |     def send_error(self, *args: Any, **kwargs: Any) -> None:
+ 590 |         if self.stream is None:
+ 591 |             super(WebSocketHandler, self).send_error(*args, **kwargs)
+ 592 |         else:
+ 593 |             # If we get an uncaught exception during the handshake,
+ 594 |             # we have no choice but to abruptly close the connection.
+ 595 |             # TODO: for uncaught exceptions after the handshake,
+ 596 |             # we can close the connection more gracefully.
+ 597 |             self.stream.close()
+ 598 | 
+ 599 |     def get_websocket_protocol(self) -> Optional["WebSocketProtocol"]:
+ 600 |         websocket_version = self.request.headers.get("Sec-WebSocket-Version")
+ 601 |         if websocket_version in ("7", "8", "13"):
+ 602 |             params = _WebSocketParams(
+ 603 |                 ping_interval=self.ping_interval,
+ 604 |                 ping_timeout=self.ping_timeout,
+ 605 |                 max_message_size=self.max_message_size,
+ 606 |                 compression_options=self.get_compression_options(),
+ 607 |             )
+ 608 |             return WebSocketProtocol13(self, False, params)
+ 609 |         return None
+ 610 | 
+ 611 |     def _detach_stream(self) -> IOStream:
+ 612 |         # disable non-WS methods
+ 613 |         for method in [
+ 614 |             "write",
+ 615 |             "redirect",
+ 616 |             "set_header",
+ 617 |             "set_cookie",
+ 618 |             "set_status",
+ 619 |             "flush",
+ 620 |             "finish",
+ 621 |         ]:
+ 622 |             setattr(self, method, _raise_not_supported_for_websockets)
+ 623 |         return self.detach()
+ 624 | 
+ 625 | 
+ 626 | def _raise_not_supported_for_websockets(*args: Any, **kwargs: Any) -> None:
+ 627 |     raise RuntimeError("Method not supported for Web Sockets")
+ 628 | 
+ 629 | 
+ 630 | class WebSocketProtocol(abc.ABC):
+ 631 |     """Base class for WebSocket protocol versions.
+ 632 |     """
+ 633 | 
+ 634 |     def __init__(self, handler: "_WebSocketDelegate") -> None:
+ 635 |         self.handler = handler
+ 636 |         self.stream = None  # type: Optional[IOStream]
+ 637 |         self.client_terminated = False
+ 638 |         self.server_terminated = False
+ 639 | 
+ 640 |     def _run_callback(
+ 641 |         self, callback: Callable, *args: Any, **kwargs: Any
+ 642 |     ) -> "Optional[Future[Any]]":
+ 643 |         """Runs the given callback with exception handling.
+ 644 | 
+ 645 |         If the callback is a coroutine, returns its Future. On error, aborts the
+ 646 |         websocket connection and returns None.
+ 647 |         """
+ 648 |         try:
+ 649 |             result = callback(*args, **kwargs)
+ 650 |         except Exception:
+ 651 |             self.handler.log_exception(*sys.exc_info())
+ 652 |             self._abort()
+ 653 |             return None
+ 654 |         else:
+ 655 |             if result is not None:
+ 656 |                 result = gen.convert_yielded(result)
+ 657 |                 assert self.stream is not None
+ 658 |                 self.stream.io_loop.add_future(result, lambda f: f.result())
+ 659 |             return result
+ 660 | 
+ 661 |     def on_connection_close(self) -> None:
+ 662 |         self._abort()
+ 663 | 
+ 664 |     def _abort(self) -> None:
+ 665 |         """Instantly aborts the WebSocket connection by closing the socket"""
+ 666 |         self.client_terminated = True
+ 667 |         self.server_terminated = True
+ 668 |         if self.stream is not None:
+ 669 |             self.stream.close()  # forcibly tear down the connection
+ 670 |         self.close()  # let the subclass cleanup
+ 671 | 
+ 672 |     @abc.abstractmethod
+ 673 |     def close(self, code: int = None, reason: str = None) -> None:
+ 674 |         raise NotImplementedError()
+ 675 | 
+ 676 |     @abc.abstractmethod
+ 677 |     def is_closing(self) -> bool:
+ 678 |         raise NotImplementedError()
+ 679 | 
+ 680 |     @abc.abstractmethod
+ 681 |     async def accept_connection(self, handler: WebSocketHandler) -> None:
+ 682 |         raise NotImplementedError()
+ 683 | 
+ 684 |     @abc.abstractmethod
+ 685 |     def write_message(
+ 686 |         self, message: Union[str, bytes], binary: bool = False
+ 687 |     ) -> "Future[None]":
+ 688 |         raise NotImplementedError()
+ 689 | 
+ 690 |     @property
+ 691 |     @abc.abstractmethod
+ 692 |     def selected_subprotocol(self) -> Optional[str]:
+ 693 |         raise NotImplementedError()
+ 694 | 
+ 695 |     @abc.abstractmethod
+ 696 |     def write_ping(self, data: bytes) -> None:
+ 697 |         raise NotImplementedError()
+ 698 | 
+ 699 |     # The entry points below are used by WebSocketClientConnection,
+ 700 |     # which was introduced after we only supported a single version of
+ 701 |     # WebSocketProtocol. The WebSocketProtocol/WebSocketProtocol13
+ 702 |     # boundary is currently pretty ad-hoc.
+ 703 |     @abc.abstractmethod
+ 704 |     def _process_server_headers(
+ 705 |         self, key: Union[str, bytes], headers: httputil.HTTPHeaders
+ 706 |     ) -> None:
+ 707 |         raise NotImplementedError()
+ 708 | 
+ 709 |     @abc.abstractmethod
+ 710 |     def start_pinging(self) -> None:
+ 711 |         raise NotImplementedError()
+ 712 | 
+ 713 |     @abc.abstractmethod
+ 714 |     async def _receive_frame_loop(self) -> None:
+ 715 |         raise NotImplementedError()
+ 716 | 
+ 717 | 
+ 718 | class _PerMessageDeflateCompressor(object):
+ 719 |     def __init__(
+ 720 |         self,
+ 721 |         persistent: bool,
+ 722 |         max_wbits: Optional[int],
+ 723 |         compression_options: Dict[str, Any] = None,
+ 724 |     ) -> None:
+ 725 |         if max_wbits is None:
+ 726 |             max_wbits = zlib.MAX_WBITS
+ 727 |         # There is no symbolic constant for the minimum wbits value.
+ 728 |         if not (8 <= max_wbits <= zlib.MAX_WBITS):
+ 729 |             raise ValueError(
+ 730 |                 "Invalid max_wbits value %r; allowed range 8-%d",
+ 731 |                 max_wbits,
+ 732 |                 zlib.MAX_WBITS,
+ 733 |             )
+ 734 |         self._max_wbits = max_wbits
+ 735 | 
+ 736 |         if (
+ 737 |             compression_options is None
+ 738 |             or "compression_level" not in compression_options
+ 739 |         ):
+ 740 |             self._compression_level = tornado.web.GZipContentEncoding.GZIP_LEVEL
+ 741 |         else:
+ 742 |             self._compression_level = compression_options["compression_level"]
+ 743 | 
+ 744 |         if compression_options is None or "mem_level" not in compression_options:
+ 745 |             self._mem_level = 8
+ 746 |         else:
+ 747 |             self._mem_level = compression_options["mem_level"]
+ 748 | 
+ 749 |         if persistent:
+ 750 |             self._compressor = self._create_compressor()  # type: Optional[_Compressor]
+ 751 |         else:
+ 752 |             self._compressor = None
+ 753 | 
+ 754 |     def _create_compressor(self) -> "_Compressor":
+ 755 |         return zlib.compressobj(
+ 756 |             self._compression_level, zlib.DEFLATED, -self._max_wbits, self._mem_level
+ 757 |         )
+ 758 | 
+ 759 |     def compress(self, data: bytes) -> bytes:
+ 760 |         compressor = self._compressor or self._create_compressor()
+ 761 |         data = compressor.compress(data) + compressor.flush(zlib.Z_SYNC_FLUSH)
+ 762 |         assert data.endswith(b"\x00\x00\xff\xff")
+ 763 |         return data[:-4]
+ 764 | 
+ 765 | 
+ 766 | class _PerMessageDeflateDecompressor(object):
+ 767 |     def __init__(
+ 768 |         self,
+ 769 |         persistent: bool,
+ 770 |         max_wbits: Optional[int],
+ 771 |         max_message_size: int,
+ 772 |         compression_options: Dict[str, Any] = None,
+ 773 |     ) -> None:
+ 774 |         self._max_message_size = max_message_size
+ 775 |         if max_wbits is None:
+ 776 |             max_wbits = zlib.MAX_WBITS
+ 777 |         if not (8 <= max_wbits <= zlib.MAX_WBITS):
+ 778 |             raise ValueError(
+ 779 |                 "Invalid max_wbits value %r; allowed range 8-%d",
+ 780 |                 max_wbits,
+ 781 |                 zlib.MAX_WBITS,
+ 782 |             )
+ 783 |         self._max_wbits = max_wbits
+ 784 |         if persistent:
+ 785 |             self._decompressor = (
+ 786 |                 self._create_decompressor()
+ 787 |             )  # type: Optional[_Decompressor]
+ 788 |         else:
+ 789 |             self._decompressor = None
+ 790 | 
+ 791 |     def _create_decompressor(self) -> "_Decompressor":
+ 792 |         return zlib.decompressobj(-self._max_wbits)
+ 793 | 
+ 794 |     def decompress(self, data: bytes) -> bytes:
+ 795 |         decompressor = self._decompressor or self._create_decompressor()
+ 796 |         result = decompressor.decompress(
+ 797 |             data + b"\x00\x00\xff\xff", self._max_message_size
+ 798 |         )
+ 799 |         if decompressor.unconsumed_tail:
+ 800 |             raise _DecompressTooLargeError()
+ 801 |         return result
+ 802 | 
+ 803 | 
+ 804 | class WebSocketProtocol13(WebSocketProtocol):
+ 805 |     """Implementation of the WebSocket protocol from RFC 6455.
+ 806 | 
+ 807 |     This class supports versions 7 and 8 of the protocol in addition to the
+ 808 |     final version 13.
+ 809 |     """
+ 810 | 
+ 811 |     # Bit masks for the first byte of a frame.
+ 812 |     FIN = 0x80
+ 813 |     RSV1 = 0x40
+ 814 |     RSV2 = 0x20
+ 815 |     RSV3 = 0x10
+ 816 |     RSV_MASK = RSV1 | RSV2 | RSV3
+ 817 |     OPCODE_MASK = 0x0F
+ 818 | 
+ 819 |     stream = None  # type: IOStream
+ 820 | 
+ 821 |     def __init__(
+ 822 |         self,
+ 823 |         handler: "_WebSocketDelegate",
+ 824 |         mask_outgoing: bool,
+ 825 |         params: _WebSocketParams,
+ 826 |     ) -> None:
+ 827 |         WebSocketProtocol.__init__(self, handler)
+ 828 |         self.mask_outgoing = mask_outgoing
+ 829 |         self.params = params
+ 830 |         self._final_frame = False
+ 831 |         self._frame_opcode = None
+ 832 |         self._masked_frame = None
+ 833 |         self._frame_mask = None  # type: Optional[bytes]
+ 834 |         self._frame_length = None
+ 835 |         self._fragmented_message_buffer = None  # type: Optional[bytes]
+ 836 |         self._fragmented_message_opcode = None
+ 837 |         self._waiting = None  # type: object
+ 838 |         self._compression_options = params.compression_options
+ 839 |         self._decompressor = None  # type: Optional[_PerMessageDeflateDecompressor]
+ 840 |         self._compressor = None  # type: Optional[_PerMessageDeflateCompressor]
+ 841 |         self._frame_compressed = None  # type: Optional[bool]
+ 842 |         # The total uncompressed size of all messages received or sent.
+ 843 |         # Unicode messages are encoded to utf8.
+ 844 |         # Only for testing; subject to change.
+ 845 |         self._message_bytes_in = 0
+ 846 |         self._message_bytes_out = 0
+ 847 |         # The total size of all packets received or sent.  Includes
+ 848 |         # the effect of compression, frame overhead, and control frames.
+ 849 |         self._wire_bytes_in = 0
+ 850 |         self._wire_bytes_out = 0
+ 851 |         self.ping_callback = None  # type: Optional[PeriodicCallback]
+ 852 |         self.last_ping = 0.0
+ 853 |         self.last_pong = 0.0
+ 854 |         self.close_code = None  # type: Optional[int]
+ 855 |         self.close_reason = None  # type: Optional[str]
+ 856 | 
+ 857 |     # Use a property for this to satisfy the abc.
+ 858 |     @property
+ 859 |     def selected_subprotocol(self) -> Optional[str]:
+ 860 |         return self._selected_subprotocol
+ 861 | 
+ 862 |     @selected_subprotocol.setter
+ 863 |     def selected_subprotocol(self, value: Optional[str]) -> None:
+ 864 |         self._selected_subprotocol = value
+ 865 | 
+ 866 |     async def accept_connection(self, handler: WebSocketHandler) -> None:
+ 867 |         try:
+ 868 |             self._handle_websocket_headers(handler)
+ 869 |         except ValueError:
+ 870 |             handler.set_status(400)
+ 871 |             log_msg = "Missing/Invalid WebSocket headers"
+ 872 |             handler.finish(log_msg)
+ 873 |             gen_log.debug(log_msg)
+ 874 |             return
+ 875 | 
+ 876 |         try:
+ 877 |             await self._accept_connection(handler)
+ 878 |         except asyncio.CancelledError:
+ 879 |             self._abort()
+ 880 |             return
+ 881 |         except ValueError:
+ 882 |             gen_log.debug("Malformed WebSocket request received", exc_info=True)
+ 883 |             self._abort()
+ 884 |             return
+ 885 | 
+ 886 |     def _handle_websocket_headers(self, handler: WebSocketHandler) -> None:
+ 887 |         """Verifies all invariant- and required headers
+ 888 | 
+ 889 |         If a header is missing or have an incorrect value ValueError will be
+ 890 |         raised
+ 891 |         """
+ 892 |         fields = ("Host", "Sec-Websocket-Key", "Sec-Websocket-Version")
+ 893 |         if not all(map(lambda f: handler.request.headers.get(f), fields)):
+ 894 |             raise ValueError("Missing/Invalid WebSocket headers")
+ 895 | 
+ 896 |     @staticmethod
+ 897 |     def compute_accept_value(key: Union[str, bytes]) -> str:
+ 898 |         """Computes the value for the Sec-WebSocket-Accept header,
+ 899 |         given the value for Sec-WebSocket-Key.
+ 900 |         """
+ 901 |         sha1 = hashlib.sha1()
+ 902 |         sha1.update(utf8(key))
+ 903 |         sha1.update(b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11")  # Magic value
+ 904 |         return native_str(base64.b64encode(sha1.digest()))
+ 905 | 
+ 906 |     def _challenge_response(self, handler: WebSocketHandler) -> str:
+ 907 |         return WebSocketProtocol13.compute_accept_value(
+ 908 |             cast(str, handler.request.headers.get("Sec-Websocket-Key"))
+ 909 |         )
+ 910 | 
+ 911 |     async def _accept_connection(self, handler: WebSocketHandler) -> None:
+ 912 |         subprotocol_header = handler.request.headers.get("Sec-WebSocket-Protocol")
+ 913 |         if subprotocol_header:
+ 914 |             subprotocols = [s.strip() for s in subprotocol_header.split(",")]
+ 915 |         else:
+ 916 |             subprotocols = []
+ 917 |         self.selected_subprotocol = handler.select_subprotocol(subprotocols)
+ 918 |         if self.selected_subprotocol:
+ 919 |             assert self.selected_subprotocol in subprotocols
+ 920 |             handler.set_header("Sec-WebSocket-Protocol", self.selected_subprotocol)
+ 921 | 
+ 922 |         extensions = self._parse_extensions_header(handler.request.headers)
+ 923 |         for ext in extensions:
+ 924 |             if ext[0] == "permessage-deflate" and self._compression_options is not None:
+ 925 |                 # TODO: negotiate parameters if compression_options
+ 926 |                 # specifies limits.
+ 927 |                 self._create_compressors("server", ext[1], self._compression_options)
+ 928 |                 if (
+ 929 |                     "client_max_window_bits" in ext[1]
+ 930 |                     and ext[1]["client_max_window_bits"] is None
+ 931 |                 ):
+ 932 |                     # Don't echo an offered client_max_window_bits
+ 933 |                     # parameter with no value.
+ 934 |                     del ext[1]["client_max_window_bits"]
+ 935 |                 handler.set_header(
+ 936 |                     "Sec-WebSocket-Extensions",
+ 937 |                     httputil._encode_header("permessage-deflate", ext[1]),
+ 938 |                 )
+ 939 |                 break
+ 940 | 
+ 941 |         handler.clear_header("Content-Type")
+ 942 |         handler.set_status(101)
+ 943 |         handler.set_header("Upgrade", "websocket")
+ 944 |         handler.set_header("Connection", "Upgrade")
+ 945 |         handler.set_header("Sec-WebSocket-Accept", self._challenge_response(handler))
+ 946 |         handler.finish()
+ 947 | 
+ 948 |         self.stream = handler._detach_stream()
+ 949 | 
+ 950 |         self.start_pinging()
+ 951 |         try:
+ 952 |             open_result = handler.open(*handler.open_args, **handler.open_kwargs)
+ 953 |             if open_result is not None:
+ 954 |                 await open_result
+ 955 |         except Exception:
+ 956 |             handler.log_exception(*sys.exc_info())
+ 957 |             self._abort()
+ 958 |             return
+ 959 | 
+ 960 |         await self._receive_frame_loop()
+ 961 | 
+ 962 |     def _parse_extensions_header(
+ 963 |         self, headers: httputil.HTTPHeaders
+ 964 |     ) -> List[Tuple[str, Dict[str, str]]]:
+ 965 |         extensions = headers.get("Sec-WebSocket-Extensions", "")
+ 966 |         if extensions:
+ 967 |             return [httputil._parse_header(e.strip()) for e in extensions.split(",")]
+ 968 |         return []
+ 969 | 
+ 970 |     def _process_server_headers(
+ 971 |         self, key: Union[str, bytes], headers: httputil.HTTPHeaders
+ 972 |     ) -> None:
+ 973 |         """Process the headers sent by the server to this client connection.
+ 974 | 
+ 975 |         'key' is the websocket handshake challenge/response key.
+ 976 |         """
+ 977 |         assert headers["Upgrade"].lower() == "websocket"
+ 978 |         assert headers["Connection"].lower() == "upgrade"
+ 979 |         accept = self.compute_accept_value(key)
+ 980 |         assert headers["Sec-Websocket-Accept"] == accept
+ 981 | 
+ 982 |         extensions = self._parse_extensions_header(headers)
+ 983 |         for ext in extensions:
+ 984 |             if ext[0] == "permessage-deflate" and self._compression_options is not None:
+ 985 |                 self._create_compressors("client", ext[1])
+ 986 |             else:
+ 987 |                 raise ValueError("unsupported extension %r", ext)
+ 988 | 
+ 989 |         self.selected_subprotocol = headers.get("Sec-WebSocket-Protocol", None)
+ 990 | 
+ 991 |     def _get_compressor_options(
+ 992 |         self,
+ 993 |         side: str,
+ 994 |         agreed_parameters: Dict[str, Any],
+ 995 |         compression_options: Dict[str, Any] = None,
+ 996 |     ) -> Dict[str, Any]:
+ 997 |         """Converts a websocket agreed_parameters set to keyword arguments
+ 998 |         for our compressor objects.
+ 999 |         """
+1000 |         options = dict(
+1001 |             persistent=(side + "_no_context_takeover") not in agreed_parameters
+1002 |         )  # type: Dict[str, Any]
+1003 |         wbits_header = agreed_parameters.get(side + "_max_window_bits", None)
+1004 |         if wbits_header is None:
+1005 |             options["max_wbits"] = zlib.MAX_WBITS
+1006 |         else:
+1007 |             options["max_wbits"] = int(wbits_header)
+1008 |         options["compression_options"] = compression_options
+1009 |         return options
+1010 | 
+1011 |     def _create_compressors(
+1012 |         self,
+1013 |         side: str,
+1014 |         agreed_parameters: Dict[str, Any],
+1015 |         compression_options: Dict[str, Any] = None,
+1016 |     ) -> None:
+1017 |         # TODO: handle invalid parameters gracefully
+1018 |         allowed_keys = set(
+1019 |             [
+1020 |                 "server_no_context_takeover",
+1021 |                 "client_no_context_takeover",
+1022 |                 "server_max_window_bits",
+1023 |                 "client_max_window_bits",
+1024 |             ]
+1025 |         )
+1026 |         for key in agreed_parameters:
+1027 |             if key not in allowed_keys:
+1028 |                 raise ValueError("unsupported compression parameter %r" % key)
+1029 |         other_side = "client" if (side == "server") else "server"
+1030 |         self._compressor = _PerMessageDeflateCompressor(
+1031 |             **self._get_compressor_options(side, agreed_parameters, compression_options)
+1032 |         )
+1033 |         self._decompressor = _PerMessageDeflateDecompressor(
+1034 |             max_message_size=self.params.max_message_size,
+1035 |             **self._get_compressor_options(
+1036 |                 other_side, agreed_parameters, compression_options
+1037 |             )
+1038 |         )
+1039 | 
+1040 |     def _write_frame(
+1041 |         self, fin: bool, opcode: int, data: bytes, flags: int = 0
+1042 |     ) -> "Future[None]":
+1043 |         data_len = len(data)
+1044 |         if opcode & 0x8:
+1045 |             # All control frames MUST have a payload length of 125
+1046 |             # bytes or less and MUST NOT be fragmented.
+1047 |             if not fin:
+1048 |                 raise ValueError("control frames may not be fragmented")
+1049 |             if data_len > 125:
+1050 |                 raise ValueError("control frame payloads may not exceed 125 bytes")
+1051 |         if fin:
+1052 |             finbit = self.FIN
+1053 |         else:
+1054 |             finbit = 0
+1055 |         frame = struct.pack("B", finbit | opcode | flags)
+1056 |         if self.mask_outgoing:
+1057 |             mask_bit = 0x80
+1058 |         else:
+1059 |             mask_bit = 0
+1060 |         if data_len < 126:
+1061 |             frame += struct.pack("B", data_len | mask_bit)
+1062 |         elif data_len <= 0xFFFF:
+1063 |             frame += struct.pack("!BH", 126 | mask_bit, data_len)
+1064 |         else:
+1065 |             frame += struct.pack("!BQ", 127 | mask_bit, data_len)
+1066 |         if self.mask_outgoing:
+1067 |             mask = os.urandom(4)
+1068 |             data = mask + _websocket_mask(mask, data)
+1069 |         frame += data
+1070 |         self._wire_bytes_out += len(frame)
+1071 |         return self.stream.write(frame)
+1072 | 
+1073 |     def write_message(
+1074 |         self, message: Union[str, bytes], binary: bool = False
+1075 |     ) -> "Future[None]":
+1076 |         """Sends the given message to the client of this Web Socket."""
+1077 |         if binary:
+1078 |             opcode = 0x2
+1079 |         else:
+1080 |             opcode = 0x1
+1081 |         message = tornado.escape.utf8(message)
+1082 |         assert isinstance(message, bytes)
+1083 |         self._message_bytes_out += len(message)
+1084 |         flags = 0
+1085 |         if self._compressor:
+1086 |             message = self._compressor.compress(message)
+1087 |             flags |= self.RSV1
+1088 |         # For historical reasons, write methods in Tornado operate in a semi-synchronous
+1089 |         # mode in which awaiting the Future they return is optional (But errors can
+1090 |         # still be raised). This requires us to go through an awkward dance here
+1091 |         # to transform the errors that may be returned while presenting the same
+1092 |         # semi-synchronous interface.
+1093 |         try:
+1094 |             fut = self._write_frame(True, opcode, message, flags=flags)
+1095 |         except StreamClosedError:
+1096 |             raise WebSocketClosedError()
+1097 | 
+1098 |         async def wrapper() -> None:
+1099 |             try:
+1100 |                 await fut
+1101 |             except StreamClosedError:
+1102 |                 raise WebSocketClosedError()
+1103 | 
+1104 |         return asyncio.ensure_future(wrapper())
+1105 | 
+1106 |     def write_ping(self, data: bytes) -> None:
+1107 |         """Send ping frame."""
+1108 |         assert isinstance(data, bytes)
+1109 |         self._write_frame(True, 0x9, data)
+1110 | 
+1111 |     async def _receive_frame_loop(self) -> None:
+1112 |         try:
+1113 |             while not self.client_terminated:
+1114 |                 await self._receive_frame()
+1115 |         except StreamClosedError:
+1116 |             self._abort()
+1117 |         self.handler.on_ws_connection_close(self.close_code, self.close_reason)
+1118 | 
+1119 |     async def _read_bytes(self, n: int) -> bytes:
+1120 |         data = await self.stream.read_bytes(n)
+1121 |         self._wire_bytes_in += n
+1122 |         return data
+1123 | 
+1124 |     async def _receive_frame(self) -> None:
+1125 |         # Read the frame header.
+1126 |         data = await self._read_bytes(2)
+1127 |         header, mask_payloadlen = struct.unpack("BB", data)
+1128 |         is_final_frame = header & self.FIN
+1129 |         reserved_bits = header & self.RSV_MASK
+1130 |         opcode = header & self.OPCODE_MASK
+1131 |         opcode_is_control = opcode & 0x8
+1132 |         if self._decompressor is not None and opcode != 0:
+1133 |             # Compression flag is present in the first frame's header,
+1134 |             # but we can't decompress until we have all the frames of
+1135 |             # the message.
+1136 |             self._frame_compressed = bool(reserved_bits & self.RSV1)
+1137 |             reserved_bits &= ~self.RSV1
+1138 |         if reserved_bits:
+1139 |             # client is using as-yet-undefined extensions; abort
+1140 |             self._abort()
+1141 |             return
+1142 |         is_masked = bool(mask_payloadlen & 0x80)
+1143 |         payloadlen = mask_payloadlen & 0x7F
+1144 | 
+1145 |         # Parse and validate the length.
+1146 |         if opcode_is_control and payloadlen >= 126:
+1147 |             # control frames must have payload < 126
+1148 |             self._abort()
+1149 |             return
+1150 |         if payloadlen < 126:
+1151 |             self._frame_length = payloadlen
+1152 |         elif payloadlen == 126:
+1153 |             data = await self._read_bytes(2)
+1154 |             payloadlen = struct.unpack("!H", data)[0]
+1155 |         elif payloadlen == 127:
+1156 |             data = await self._read_bytes(8)
+1157 |             payloadlen = struct.unpack("!Q", data)[0]
+1158 |         new_len = payloadlen
+1159 |         if self._fragmented_message_buffer is not None:
+1160 |             new_len += len(self._fragmented_message_buffer)
+1161 |         if new_len > self.params.max_message_size:
+1162 |             self.close(1009, "message too big")
+1163 |             self._abort()
+1164 |             return
+1165 | 
+1166 |         # Read the payload, unmasking if necessary.
+1167 |         if is_masked:
+1168 |             self._frame_mask = await self._read_bytes(4)
+1169 |         data = await self._read_bytes(payloadlen)
+1170 |         if is_masked:
+1171 |             assert self._frame_mask is not None
+1172 |             data = _websocket_mask(self._frame_mask, data)
+1173 | 
+1174 |         # Decide what to do with this frame.
+1175 |         if opcode_is_control:
+1176 |             # control frames may be interleaved with a series of fragmented
+1177 |             # data frames, so control frames must not interact with
+1178 |             # self._fragmented_*
+1179 |             if not is_final_frame:
+1180 |                 # control frames must not be fragmented
+1181 |                 self._abort()
+1182 |                 return
+1183 |         elif opcode == 0:  # continuation frame
+1184 |             if self._fragmented_message_buffer is None:
+1185 |                 # nothing to continue
+1186 |                 self._abort()
+1187 |                 return
+1188 |             self._fragmented_message_buffer += data
+1189 |             if is_final_frame:
+1190 |                 opcode = self._fragmented_message_opcode
+1191 |                 data = self._fragmented_message_buffer
+1192 |                 self._fragmented_message_buffer = None
+1193 |         else:  # start of new data message
+1194 |             if self._fragmented_message_buffer is not None:
+1195 |                 # can't start new message until the old one is finished
+1196 |                 self._abort()
+1197 |                 return
+1198 |             if not is_final_frame:
+1199 |                 self._fragmented_message_opcode = opcode
+1200 |                 self._fragmented_message_buffer = data
+1201 | 
+1202 |         if is_final_frame:
+1203 |             handled_future = self._handle_message(opcode, data)
+1204 |             if handled_future is not None:
+1205 |                 await handled_future
+1206 | 
+1207 |     def _handle_message(self, opcode: int, data: bytes) -> "Optional[Future[None]]":
+1208 |         """Execute on_message, returning its Future if it is a coroutine."""
+1209 |         if self.client_terminated:
+1210 |             return None
+1211 | 
+1212 |         if self._frame_compressed:
+1213 |             assert self._decompressor is not None
+1214 |             try:
+1215 |                 data = self._decompressor.decompress(data)
+1216 |             except _DecompressTooLargeError:
+1217 |                 self.close(1009, "message too big after decompression")
+1218 |                 self._abort()
+1219 |                 return None
+1220 | 
+1221 |         if opcode == 0x1:
+1222 |             # UTF-8 data
+1223 |             self._message_bytes_in += len(data)
+1224 |             try:
+1225 |                 decoded = data.decode("utf-8")
+1226 |             except UnicodeDecodeError:
+1227 |                 self._abort()
+1228 |                 return None
+1229 |             return self._run_callback(self.handler.on_message, decoded)
+1230 |         elif opcode == 0x2:
+1231 |             # Binary data
+1232 |             self._message_bytes_in += len(data)
+1233 |             return self._run_callback(self.handler.on_message, data)
+1234 |         elif opcode == 0x8:
+1235 |             # Close
+1236 |             self.client_terminated = True
+1237 |             if len(data) >= 2:
+1238 |                 self.close_code = struct.unpack(">H", data[:2])[0]
+1239 |             if len(data) > 2:
+1240 |                 self.close_reason = to_unicode(data[2:])
+1241 |             # Echo the received close code, if any (RFC 6455 section 5.5.1).
+1242 |             self.close(self.close_code)
+1243 |         elif opcode == 0x9:
+1244 |             # Ping
+1245 |             try:
+1246 |                 self._write_frame(True, 0xA, data)
+1247 |             except StreamClosedError:
+1248 |                 self._abort()
+1249 |             self._run_callback(self.handler.on_ping, data)
+1250 |         elif opcode == 0xA:
+1251 |             # Pong
+1252 |             self.last_pong = IOLoop.current().time()
+1253 |             return self._run_callback(self.handler.on_pong, data)
+1254 |         else:
+1255 |             self._abort()
+1256 |         return None
+1257 | 
+1258 |     def close(self, code: int = None, reason: str = None) -> None:
+1259 |         """Closes the WebSocket connection."""
+1260 |         if not self.server_terminated:
+1261 |             if not self.stream.closed():
+1262 |                 if code is None and reason is not None:
+1263 |                     code = 1000  # "normal closure" status code
+1264 |                 if code is None:
+1265 |                     close_data = b""
+1266 |                 else:
+1267 |                     close_data = struct.pack(">H", code)
+1268 |                 if reason is not None:
+1269 |                     close_data += utf8(reason)
+1270 |                 try:
+1271 |                     self._write_frame(True, 0x8, close_data)
+1272 |                 except StreamClosedError:
+1273 |                     self._abort()
+1274 |             self.server_terminated = True
+1275 |         if self.client_terminated:
+1276 |             if self._waiting is not None:
+1277 |                 self.stream.io_loop.remove_timeout(self._waiting)
+1278 |                 self._waiting = None
+1279 |             self.stream.close()
+1280 |         elif self._waiting is None:
+1281 |             # Give the client a few seconds to complete a clean shutdown,
+1282 |             # otherwise just close the connection.
+1283 |             self._waiting = self.stream.io_loop.add_timeout(
+1284 |                 self.stream.io_loop.time() + 5, self._abort
+1285 |             )
+1286 | 
+1287 |     def is_closing(self) -> bool:
+1288 |         """Return ``True`` if this connection is closing.
+1289 | 
+1290 |         The connection is considered closing if either side has
+1291 |         initiated its closing handshake or if the stream has been
+1292 |         shut down uncleanly.
+1293 |         """
+1294 |         return self.stream.closed() or self.client_terminated or self.server_terminated
+1295 | 
+1296 |     @property
+1297 |     def ping_interval(self) -> Optional[float]:
+1298 |         interval = self.params.ping_interval
+1299 |         if interval is not None:
+1300 |             return interval
+1301 |         return 0
+1302 | 
+1303 |     @property
+1304 |     def ping_timeout(self) -> Optional[float]:
+1305 |         timeout = self.params.ping_timeout
+1306 |         if timeout is not None:
+1307 |             return timeout
+1308 |         assert self.ping_interval is not None
+1309 |         return max(3 * self.ping_interval, 30)
+1310 | 
+1311 |     def start_pinging(self) -> None:
+1312 |         """Start sending periodic pings to keep the connection alive"""
+1313 |         assert self.ping_interval is not None
+1314 |         if self.ping_interval > 0:
+1315 |             self.last_ping = self.last_pong = IOLoop.current().time()
+1316 |             self.ping_callback = PeriodicCallback(
+1317 |                 self.periodic_ping, self.ping_interval * 1000
+1318 |             )
+1319 |             self.ping_callback.start()
+1320 | 
+1321 |     def periodic_ping(self) -> None:
+1322 |         """Send a ping to keep the websocket alive
+1323 | 
+1324 |         Called periodically if the websocket_ping_interval is set and non-zero.
+1325 |         """
+1326 |         if self.is_closing() and self.ping_callback is not None:
+1327 |             self.ping_callback.stop()
+1328 |             return
+1329 | 
+1330 |         # Check for timeout on pong. Make sure that we really have
+1331 |         # sent a recent ping in case the machine with both server and
+1332 |         # client has been suspended since the last ping.
+1333 |         now = IOLoop.current().time()
+1334 |         since_last_pong = now - self.last_pong
+1335 |         since_last_ping = now - self.last_ping
+1336 |         assert self.ping_interval is not None
+1337 |         assert self.ping_timeout is not None
+1338 |         if (
+1339 |             since_last_ping < 2 * self.ping_interval
+1340 |             and since_last_pong > self.ping_timeout
+1341 |         ):
+1342 |             self.close()
+1343 |             return
+1344 | 
+1345 |         self.write_ping(b"")
+1346 |         self.last_ping = now
+1347 | 
+1348 | 
+1349 | class WebSocketClientConnection(simple_httpclient._HTTPConnection):
+1350 |     """WebSocket client connection.
+1351 | 
+1352 |     This class should not be instantiated directly; use the
+1353 |     `websocket_connect` function instead.
+1354 |     """
+1355 | 
+1356 |     protocol = None  # type: WebSocketProtocol
+1357 | 
+1358 |     def __init__(
+1359 |         self,
+1360 |         request: httpclient.HTTPRequest,
+1361 |         on_message_callback: Callable[[Union[None, str, bytes]], None] = None,
+1362 |         compression_options: Dict[str, Any] = None,
+1363 |         ping_interval: float = None,
+1364 |         ping_timeout: float = None,
+1365 |         max_message_size: int = _default_max_message_size,
+1366 |         subprotocols: Optional[List[str]] = [],
+1367 |     ) -> None:
+1368 |         self.connect_future = Future()  # type: Future[WebSocketClientConnection]
+1369 |         self.read_queue = Queue(1)  # type: Queue[Union[None, str, bytes]]
+1370 |         self.key = base64.b64encode(os.urandom(16))
+1371 |         self._on_message_callback = on_message_callback
+1372 |         self.close_code = None  # type: Optional[int]
+1373 |         self.close_reason = None  # type: Optional[str]
+1374 |         self.params = _WebSocketParams(
+1375 |             ping_interval=ping_interval,
+1376 |             ping_timeout=ping_timeout,
+1377 |             max_message_size=max_message_size,
+1378 |             compression_options=compression_options,
+1379 |         )
+1380 | 
+1381 |         scheme, sep, rest = request.url.partition(":")
+1382 |         scheme = {"ws": "http", "wss": "https"}[scheme]
+1383 |         request.url = scheme + sep + rest
+1384 |         request.headers.update(
+1385 |             {
+1386 |                 "Upgrade": "websocket",
+1387 |                 "Connection": "Upgrade",
+1388 |                 "Sec-WebSocket-Key": self.key,
+1389 |                 "Sec-WebSocket-Version": "13",
+1390 |             }
+1391 |         )
+1392 |         if subprotocols is not None:
+1393 |             request.headers["Sec-WebSocket-Protocol"] = ",".join(subprotocols)
+1394 |         if compression_options is not None:
+1395 |             # Always offer to let the server set our max_wbits (and even though
+1396 |             # we don't offer it, we will accept a client_no_context_takeover
+1397 |             # from the server).
+1398 |             # TODO: set server parameters for deflate extension
+1399 |             # if requested in self.compression_options.
+1400 |             request.headers[
+1401 |                 "Sec-WebSocket-Extensions"
+1402 |             ] = "permessage-deflate; client_max_window_bits"
+1403 | 
+1404 |         self.tcp_client = TCPClient()
+1405 |         super(WebSocketClientConnection, self).__init__(
+1406 |             None,
+1407 |             request,
+1408 |             lambda: None,
+1409 |             self._on_http_response,
+1410 |             104857600,
+1411 |             self.tcp_client,
+1412 |             65536,
+1413 |             104857600,
+1414 |         )
+1415 | 
+1416 |     def close(self, code: int = None, reason: str = None) -> None:
+1417 |         """Closes the websocket connection.
+1418 | 
+1419 |         ``code`` and ``reason`` are documented under
+1420 |         `WebSocketHandler.close`.
+1421 | 
+1422 |         .. versionadded:: 3.2
+1423 | 
+1424 |         .. versionchanged:: 4.0
+1425 | 
+1426 |            Added the ``code`` and ``reason`` arguments.
+1427 |         """
+1428 |         if self.protocol is not None:
+1429 |             self.protocol.close(code, reason)
+1430 |             self.protocol = None  # type: ignore
+1431 | 
+1432 |     def on_connection_close(self) -> None:
+1433 |         if not self.connect_future.done():
+1434 |             self.connect_future.set_exception(StreamClosedError())
+1435 |         self._on_message(None)
+1436 |         self.tcp_client.close()
+1437 |         super(WebSocketClientConnection, self).on_connection_close()
+1438 | 
+1439 |     def on_ws_connection_close(
+1440 |         self, close_code: int = None, close_reason: str = None
+1441 |     ) -> None:
+1442 |         self.close_code = close_code
+1443 |         self.close_reason = close_reason
+1444 |         self.on_connection_close()
+1445 | 
+1446 |     def _on_http_response(self, response: httpclient.HTTPResponse) -> None:
+1447 |         if not self.connect_future.done():
+1448 |             if response.error:
+1449 |                 self.connect_future.set_exception(response.error)
+1450 |             else:
+1451 |                 self.connect_future.set_exception(
+1452 |                     WebSocketError("Non-websocket response")
+1453 |                 )
+1454 | 
+1455 |     async def headers_received(
+1456 |         self,
+1457 |         start_line: Union[httputil.RequestStartLine, httputil.ResponseStartLine],
+1458 |         headers: httputil.HTTPHeaders,
+1459 |     ) -> None:
+1460 |         assert isinstance(start_line, httputil.ResponseStartLine)
+1461 |         if start_line.code != 101:
+1462 |             await super(WebSocketClientConnection, self).headers_received(
+1463 |                 start_line, headers
+1464 |             )
+1465 |             return
+1466 | 
+1467 |         if self._timeout is not None:
+1468 |             self.io_loop.remove_timeout(self._timeout)
+1469 |             self._timeout = None
+1470 | 
+1471 |         self.headers = headers
+1472 |         self.protocol = self.get_websocket_protocol()
+1473 |         self.protocol._process_server_headers(self.key, self.headers)
+1474 |         self.protocol.stream = self.connection.detach()
+1475 | 
+1476 |         IOLoop.current().add_callback(self.protocol._receive_frame_loop)
+1477 |         self.protocol.start_pinging()
+1478 | 
+1479 |         # Once we've taken over the connection, clear the final callback
+1480 |         # we set on the http request.  This deactivates the error handling
+1481 |         # in simple_httpclient that would otherwise interfere with our
+1482 |         # ability to see exceptions.
+1483 |         self.final_callback = None  # type: ignore
+1484 | 
+1485 |         future_set_result_unless_cancelled(self.connect_future, self)
+1486 | 
+1487 |     def write_message(
+1488 |         self, message: Union[str, bytes], binary: bool = False
+1489 |     ) -> "Future[None]":
+1490 |         """Sends a message to the WebSocket server.
+1491 | 
+1492 |         If the stream is closed, raises `WebSocketClosedError`.
+1493 |         Returns a `.Future` which can be used for flow control.
+1494 | 
+1495 |         .. versionchanged:: 5.0
+1496 |            Exception raised on a closed stream changed from `.StreamClosedError`
+1497 |            to `WebSocketClosedError`.
+1498 |         """
+1499 |         return self.protocol.write_message(message, binary=binary)
+1500 | 
+1501 |     def read_message(
+1502 |         self, callback: Callable[["Future[Union[None, str, bytes]]"], None] = None
+1503 |     ) -> Awaitable[Union[None, str, bytes]]:
+1504 |         """Reads a message from the WebSocket server.
+1505 | 
+1506 |         If on_message_callback was specified at WebSocket
+1507 |         initialization, this function will never return messages
+1508 | 
+1509 |         Returns a future whose result is the message, or None
+1510 |         if the connection is closed.  If a callback argument
+1511 |         is given it will be called with the future when it is
+1512 |         ready.
+1513 |         """
+1514 | 
+1515 |         awaitable = self.read_queue.get()
+1516 |         if callback is not None:
+1517 |             self.io_loop.add_future(asyncio.ensure_future(awaitable), callback)
+1518 |         return awaitable
+1519 | 
+1520 |     def on_message(self, message: Union[str, bytes]) -> Optional[Awaitable[None]]:
+1521 |         return self._on_message(message)
+1522 | 
+1523 |     def _on_message(
+1524 |         self, message: Union[None, str, bytes]
+1525 |     ) -> Optional[Awaitable[None]]:
+1526 |         if self._on_message_callback:
+1527 |             self._on_message_callback(message)
+1528 |             return None
+1529 |         else:
+1530 |             return self.read_queue.put(message)
+1531 | 
+1532 |     def ping(self, data: bytes = b"") -> None:
+1533 |         """Send ping frame to the remote end.
+1534 | 
+1535 |         The data argument allows a small amount of data (up to 125
+1536 |         bytes) to be sent as a part of the ping message. Note that not
+1537 |         all websocket implementations expose this data to
+1538 |         applications.
+1539 | 
+1540 |         Consider using the ``ping_interval`` argument to
+1541 |         `websocket_connect` instead of sending pings manually.
+1542 | 
+1543 |         .. versionadded:: 5.1
+1544 | 
+1545 |         """
+1546 |         data = utf8(data)
+1547 |         if self.protocol is None:
+1548 |             raise WebSocketClosedError()
+1549 |         self.protocol.write_ping(data)
+1550 | 
+1551 |     def on_pong(self, data: bytes) -> None:
+1552 |         pass
+1553 | 
+1554 |     def on_ping(self, data: bytes) -> None:
+1555 |         pass
+1556 | 
+1557 |     def get_websocket_protocol(self) -> WebSocketProtocol:
+1558 |         return WebSocketProtocol13(self, mask_outgoing=True, params=self.params)
+1559 | 
+1560 |     @property
+1561 |     def selected_subprotocol(self) -> Optional[str]:
+1562 |         """The subprotocol selected by the server.
+1563 | 
+1564 |         .. versionadded:: 5.1
+1565 |         """
+1566 |         return self.protocol.selected_subprotocol
+1567 | 
+1568 |     def log_exception(
+1569 |         self,
+1570 |         typ: "Optional[Type[BaseException]]",
+1571 |         value: Optional[BaseException],
+1572 |         tb: Optional[TracebackType],
+1573 |     ) -> None:
+1574 |         assert typ is not None
+1575 |         assert value is not None
+1576 |         app_log.error("Uncaught exception %s", value, exc_info=(typ, value, tb))
+1577 | 
+1578 | 
+1579 | def websocket_connect(
+1580 |     url: Union[str, httpclient.HTTPRequest],
+1581 |     callback: Callable[["Future[WebSocketClientConnection]"], None] = None,
+1582 |     connect_timeout: float = None,
+1583 |     on_message_callback: Callable[[Union[None, str, bytes]], None] = None,
+1584 |     compression_options: Dict[str, Any] = None,
+1585 |     ping_interval: float = None,
+1586 |     ping_timeout: float = None,
+1587 |     max_message_size: int = _default_max_message_size,
+1588 |     subprotocols: List[str] = None,
+1589 | ) -> "Awaitable[WebSocketClientConnection]":
+1590 |     """Client-side websocket support.
+1591 | 
+1592 |     Takes a url and returns a Future whose result is a
+1593 |     `WebSocketClientConnection`.
+1594 | 
+1595 |     ``compression_options`` is interpreted in the same way as the
+1596 |     return value of `.WebSocketHandler.get_compression_options`.
+1597 | 
+1598 |     The connection supports two styles of operation. In the coroutine
+1599 |     style, the application typically calls
+1600 |     `~.WebSocketClientConnection.read_message` in a loop::
+1601 | 
+1602 |         conn = yield websocket_connect(url)
+1603 |         while True:
+1604 |             msg = yield conn.read_message()
+1605 |             if msg is None: break
+1606 |             # Do something with msg
+1607 | 
+1608 |     In the callback style, pass an ``on_message_callback`` to
+1609 |     ``websocket_connect``. In both styles, a message of ``None``
+1610 |     indicates that the connection has been closed.
+1611 | 
+1612 |     ``subprotocols`` may be a list of strings specifying proposed
+1613 |     subprotocols. The selected protocol may be found on the
+1614 |     ``selected_subprotocol`` attribute of the connection object
+1615 |     when the connection is complete.
+1616 | 
+1617 |     .. versionchanged:: 3.2
+1618 |        Also accepts ``HTTPRequest`` objects in place of urls.
+1619 | 
+1620 |     .. versionchanged:: 4.1
+1621 |        Added ``compression_options`` and ``on_message_callback``.
+1622 | 
+1623 |     .. versionchanged:: 4.5
+1624 |        Added the ``ping_interval``, ``ping_timeout``, and ``max_message_size``
+1625 |        arguments, which have the same meaning as in `WebSocketHandler`.
+1626 | 
+1627 |     .. versionchanged:: 5.0
+1628 |        The ``io_loop`` argument (deprecated since version 4.1) has been removed.
+1629 | 
+1630 |     .. versionchanged:: 5.1
+1631 |        Added the ``subprotocols`` argument.
+1632 |     """
+1633 |     if isinstance(url, httpclient.HTTPRequest):
+1634 |         assert connect_timeout is None
+1635 |         request = url
+1636 |         # Copy and convert the headers dict/object (see comments in
+1637 |         # AsyncHTTPClient.fetch)
+1638 |         request.headers = httputil.HTTPHeaders(request.headers)
+1639 |     else:
+1640 |         request = httpclient.HTTPRequest(url, connect_timeout=connect_timeout)
+1641 |     request = cast(
+1642 |         httpclient.HTTPRequest,
+1643 |         httpclient._RequestProxy(request, httpclient.HTTPRequest._DEFAULTS),
+1644 |     )
+1645 |     conn = WebSocketClientConnection(
+1646 |         request,
+1647 |         on_message_callback=on_message_callback,
+1648 |         compression_options=compression_options,
+1649 |         ping_interval=ping_interval,
+1650 |         ping_timeout=ping_timeout,
+1651 |         max_message_size=max_message_size,
+1652 |         subprotocols=subprotocols,
+1653 |     )
+1654 |     if callback is not None:
+1655 |         IOLoop.current().add_future(conn.connect_future, callback)
+1656 |     return conn.connect_future
+```
+
+
+FAILING TEST FILES:
+
+[test_file_1] BugsInPy/workspace/tornado/tornado/test/websocket_test.py
+```python
+  1 | import asyncio
+  2 | import functools
+  3 | import traceback
+  4 | import unittest
+  5 | 
+  6 | from tornado.concurrent import Future
+  7 | from tornado import gen
+  8 | from tornado.httpclient import HTTPError, HTTPRequest
+  9 | from tornado.locks import Event
+ 10 | from tornado.log import gen_log, app_log
+ 11 | from tornado.simple_httpclient import SimpleAsyncHTTPClient
+ 12 | from tornado.template import DictLoader
+ 13 | from tornado.testing import AsyncHTTPTestCase, gen_test, bind_unused_port, ExpectLog
+ 14 | from tornado.web import Application, RequestHandler
+ 15 | 
+ 16 | try:
+ 17 |     import tornado.websocket  # noqa: F401
+ 18 |     from tornado.util import _websocket_mask_python
+ 19 | except ImportError:
+ 20 |     # The unittest module presents misleading errors on ImportError
+ 21 |     # (it acts as if websocket_test could not be found, hiding the underlying
+ 22 |     # error).  If we get an ImportError here (which could happen due to
+ 23 |     # TORNADO_EXTENSION=1), print some extra information before failing.
+ 24 |     traceback.print_exc()
+ 25 |     raise
+ 26 | 
+ 27 | from tornado.websocket import (
+ 28 |     WebSocketHandler,
+ 29 |     websocket_connect,
+ 30 |     WebSocketError,
+ 31 |     WebSocketClosedError,
+ 32 | )
+ 33 | 
+ 34 | try:
+ 35 |     from tornado import speedups
+ 36 | except ImportError:
+ 37 |     speedups = None  # type: ignore
+ 38 | 
+ 39 | 
+ 40 | class TestWebSocketHandler(WebSocketHandler):
+ 41 |     """Base class for testing handlers that exposes the on_close event.
+ 42 | 
+ 43 |     This allows for tests to see the close code and reason on the
+ 44 |     server side.
+ 45 | 
+ 46 |     """
+ 47 | 
+ 48 |     def initialize(self, close_future=None, compression_options=None):
+ 49 |         self.close_future = close_future
+ 50 |         self.compression_options = compression_options
+ 51 | 
+ 52 |     def get_compression_options(self):
+ 53 |         return self.compression_options
+ 54 | 
+ 55 |     def on_close(self):
+ 56 |         if self.close_future is not None:
+ 57 |             self.close_future.set_result((self.close_code, self.close_reason))
+ 58 | 
+ 59 | 
+ 60 | class EchoHandler(TestWebSocketHandler):
+ 61 |     @gen.coroutine
+ 62 |     def on_message(self, message):
+ 63 |         try:
+ 64 |             yield self.write_message(message, isinstance(message, bytes))
+ 65 |         except asyncio.CancelledError:
+ 66 |             pass
+ 67 |         except WebSocketClosedError:
+ 68 |             pass
+ 69 | 
+ 70 | 
+ 71 | class ErrorInOnMessageHandler(TestWebSocketHandler):
+ 72 |     def on_message(self, message):
+ 73 |         1 / 0
+ 74 | 
+ 75 | 
+ 76 | class HeaderHandler(TestWebSocketHandler):
+ 77 |     def open(self):
+ 78 |         methods_to_test = [
+ 79 |             functools.partial(self.write, "This should not work"),
+ 80 |             functools.partial(self.redirect, "http://localhost/elsewhere"),
+ 81 |             functools.partial(self.set_header, "X-Test", ""),
+ 82 |             functools.partial(self.set_cookie, "Chocolate", "Chip"),
+ 83 |             functools.partial(self.set_status, 503),
+ 84 |             self.flush,
+ 85 |             self.finish,
+ 86 |         ]
+ 87 |         for method in methods_to_test:
+ 88 |             try:
+ 89 |                 # In a websocket context, many RequestHandler methods
+ 90 |                 # raise RuntimeErrors.
+ 91 |                 method()
+ 92 |                 raise Exception("did not get expected exception")
+ 93 |             except RuntimeError:
+ 94 |                 pass
+ 95 |         self.write_message(self.request.headers.get("X-Test", ""))
+ 96 | 
+ 97 | 
+ 98 | class HeaderEchoHandler(TestWebSocketHandler):
+ 99 |     def set_default_headers(self):
+100 |         self.set_header("X-Extra-Response-Header", "Extra-Response-Value")
+101 | 
+102 |     def prepare(self):
+103 |         for k, v in self.request.headers.get_all():
+104 |             if k.lower().startswith("x-test"):
+105 |                 self.set_header(k, v)
+106 | 
+107 | 
+108 | class NonWebSocketHandler(RequestHandler):
+109 |     def get(self):
+110 |         self.write("ok")
+111 | 
+112 | 
+113 | class CloseReasonHandler(TestWebSocketHandler):
+114 |     def open(self):
+115 |         self.on_close_called = False
+116 |         self.close(1001, "goodbye")
+117 | 
+118 | 
+119 | class AsyncPrepareHandler(TestWebSocketHandler):
+120 |     @gen.coroutine
+121 |     def prepare(self):
+122 |         yield gen.moment
+123 | 
+124 |     def on_message(self, message):
+125 |         self.write_message(message)
+126 | 
+127 | 
+128 | class PathArgsHandler(TestWebSocketHandler):
+129 |     def open(self, arg):
+130 |         self.write_message(arg)
+131 | 
+132 | 
+133 | class CoroutineOnMessageHandler(TestWebSocketHandler):
+134 |     def initialize(self, **kwargs):
+135 |         super(CoroutineOnMessageHandler, self).initialize(**kwargs)
+136 |         self.sleeping = 0
+137 | 
+138 |     @gen.coroutine
+139 |     def on_message(self, message):
+140 |         if self.sleeping > 0:
+141 |             self.write_message("another coroutine is already sleeping")
+142 |         self.sleeping += 1
+143 |         yield gen.sleep(0.01)
+144 |         self.sleeping -= 1
+145 |         self.write_message(message)
+146 | 
+147 | 
+148 | class RenderMessageHandler(TestWebSocketHandler):
+149 |     def on_message(self, message):
+150 |         self.write_message(self.render_string("message.html", message=message))
+151 | 
+152 | 
+153 | class SubprotocolHandler(TestWebSocketHandler):
+154 |     def initialize(self, **kwargs):
+155 |         super(SubprotocolHandler, self).initialize(**kwargs)
+156 |         self.select_subprotocol_called = False
+157 | 
+158 |     def select_subprotocol(self, subprotocols):
+159 |         if self.select_subprotocol_called:
+160 |             raise Exception("select_subprotocol called twice")
+161 |         self.select_subprotocol_called = True
+162 |         if "goodproto" in subprotocols:
+163 |             return "goodproto"
+164 |         return None
+165 | 
+166 |     def open(self):
+167 |         if not self.select_subprotocol_called:
+168 |             raise Exception("select_subprotocol not called")
+169 |         self.write_message("subprotocol=%s" % self.selected_subprotocol)
+170 | 
+171 | 
+172 | class OpenCoroutineHandler(TestWebSocketHandler):
+173 |     def initialize(self, test, **kwargs):
+174 |         super(OpenCoroutineHandler, self).initialize(**kwargs)
+175 |         self.test = test
+176 |         self.open_finished = False
+177 | 
+178 |     @gen.coroutine
+179 |     def open(self):
+180 |         yield self.test.message_sent.wait()
+181 |         yield gen.sleep(0.010)
+182 |         self.open_finished = True
+183 | 
+184 |     def on_message(self, message):
+185 |         if not self.open_finished:
+186 |             raise Exception("on_message called before open finished")
+187 |         self.write_message("ok")
+188 | 
+189 | 
+190 | class ErrorInOpenHandler(TestWebSocketHandler):
+191 |     def open(self):
+192 |         raise Exception("boom")
+193 | 
+194 | 
+195 | class ErrorInAsyncOpenHandler(TestWebSocketHandler):
+196 |     async def open(self):
+197 |         await asyncio.sleep(0)
+198 |         raise Exception("boom")
+199 | 
+200 | 
+201 | class NoDelayHandler(TestWebSocketHandler):
+202 |     def open(self):
+203 |         self.set_nodelay(True)
+204 |         self.write_message("hello")
+205 | 
+206 | 
+207 | class WebSocketBaseTestCase(AsyncHTTPTestCase):
+208 |     @gen.coroutine
+209 |     def ws_connect(self, path, **kwargs):
+210 |         ws = yield websocket_connect(
+211 |             "ws://127.0.0.1:%d%s" % (self.get_http_port(), path), **kwargs
+212 |         )
+213 |         raise gen.Return(ws)
+214 | 
+215 | 
+216 | class WebSocketTest(WebSocketBaseTestCase):
+217 |     def get_app(self):
+218 |         self.close_future = Future()  # type: Future[None]
+219 |         return Application(
+220 |             [
+221 |                 ("/echo", EchoHandler, dict(close_future=self.close_future)),
+222 |                 ("/non_ws", NonWebSocketHandler),
+223 |                 ("/header", HeaderHandler, dict(close_future=self.close_future)),
+224 |                 (
+225 |                     "/header_echo",
+226 |                     HeaderEchoHandler,
+227 |                     dict(close_future=self.close_future),
+228 |                 ),
+229 |                 (
+230 |                     "/close_reason",
+231 |                     CloseReasonHandler,
+232 |                     dict(close_future=self.close_future),
+233 |                 ),
+234 |                 (
+235 |                     "/error_in_on_message",
+236 |                     ErrorInOnMessageHandler,
+237 |                     dict(close_future=self.close_future),
+238 |                 ),
+239 |                 (
+240 |                     "/async_prepare",
+241 |                     AsyncPrepareHandler,
+242 |                     dict(close_future=self.close_future),
+243 |                 ),
+244 |                 (
+245 |                     "/path_args/(.*)",
+246 |                     PathArgsHandler,
+247 |                     dict(close_future=self.close_future),
+248 |                 ),
+249 |                 (
+250 |                     "/coroutine",
+251 |                     CoroutineOnMessageHandler,
+252 |                     dict(close_future=self.close_future),
+253 |                 ),
+254 |                 ("/render", RenderMessageHandler, dict(close_future=self.close_future)),
+255 |                 (
+256 |                     "/subprotocol",
+257 |                     SubprotocolHandler,
+258 |                     dict(close_future=self.close_future),
+259 |                 ),
+260 |                 (
+261 |                     "/open_coroutine",
+262 |                     OpenCoroutineHandler,
+263 |                     dict(close_future=self.close_future, test=self),
+264 |                 ),
+265 |                 ("/error_in_open", ErrorInOpenHandler),
+266 |                 ("/error_in_async_open", ErrorInAsyncOpenHandler),
+267 |                 ("/nodelay", NoDelayHandler),
+268 |             ],
+269 |             template_loader=DictLoader({"message.html": "<b>{{ message }}</b>"}),
+270 |         )
+271 | 
+272 |     def get_http_client(self):
+273 |         # These tests require HTTP/1; force the use of SimpleAsyncHTTPClient.
+274 |         return SimpleAsyncHTTPClient()
+275 | 
+276 |     def tearDown(self):
+277 |         super(WebSocketTest, self).tearDown()
+278 |         RequestHandler._template_loaders.clear()
+279 | 
+280 |     def test_http_request(self):
+281 |         # WS server, HTTP client.
+282 |         response = self.fetch("/echo")
+283 |         self.assertEqual(response.code, 400)
+284 | 
+285 |     def test_missing_websocket_key(self):
+286 |         response = self.fetch(
+287 |             "/echo",
+288 |             headers={
+289 |                 "Connection": "Upgrade",
+290 |                 "Upgrade": "WebSocket",
+291 |                 "Sec-WebSocket-Version": "13",
+292 |             },
+293 |         )
+294 |         self.assertEqual(response.code, 400)
+295 | 
+296 |     def test_bad_websocket_version(self):
+297 |         response = self.fetch(
+298 |             "/echo",
+299 |             headers={
+300 |                 "Connection": "Upgrade",
+301 |                 "Upgrade": "WebSocket",
+302 |                 "Sec-WebSocket-Version": "12",
+303 |             },
+304 |         )
+305 |         self.assertEqual(response.code, 426)
+306 | 
+307 |     @gen_test
+308 |     def test_websocket_gen(self):
+309 |         ws = yield self.ws_connect("/echo")
+310 |         yield ws.write_message("hello")
+311 |         response = yield ws.read_message()
+312 |         self.assertEqual(response, "hello")
+313 | 
+314 |     def test_websocket_callbacks(self):
+315 |         websocket_connect(
+316 |             "ws://127.0.0.1:%d/echo" % self.get_http_port(), callback=self.stop
+317 |         )
+318 |         ws = self.wait().result()
+319 |         ws.write_message("hello")
+320 |         ws.read_message(self.stop)
+321 |         response = self.wait().result()
+322 |         self.assertEqual(response, "hello")
+323 |         self.close_future.add_done_callback(lambda f: self.stop())
+324 |         ws.close()
+325 |         self.wait()
+326 | 
+327 |     @gen_test
+328 |     def test_binary_message(self):
+329 |         ws = yield self.ws_connect("/echo")
+330 |         ws.write_message(b"hello \xe9", binary=True)
+331 |         response = yield ws.read_message()
+332 |         self.assertEqual(response, b"hello \xe9")
+333 | 
+334 |     @gen_test
+335 |     def test_unicode_message(self):
+336 |         ws = yield self.ws_connect("/echo")
+337 |         ws.write_message(u"hello \u00e9")
+338 |         response = yield ws.read_message()
+339 |         self.assertEqual(response, u"hello \u00e9")
+340 | 
+341 |     @gen_test
+342 |     def test_render_message(self):
+343 |         ws = yield self.ws_connect("/render")
+344 |         ws.write_message("hello")
+345 |         response = yield ws.read_message()
+346 |         self.assertEqual(response, "<b>hello</b>")
+347 | 
+348 |     @gen_test
+349 |     def test_error_in_on_message(self):
+350 |         ws = yield self.ws_connect("/error_in_on_message")
+351 |         ws.write_message("hello")
+352 |         with ExpectLog(app_log, "Uncaught exception"):
+353 |             response = yield ws.read_message()
+354 |         self.assertIs(response, None)
+355 | 
+356 |     @gen_test
+357 |     def test_websocket_http_fail(self):
+358 |         with self.assertRaises(HTTPError) as cm:
+359 |             yield self.ws_connect("/notfound")
+360 |         self.assertEqual(cm.exception.code, 404)
+361 | 
+362 |     @gen_test
+363 |     def test_websocket_http_success(self):
+364 |         with self.assertRaises(WebSocketError):
+365 |             yield self.ws_connect("/non_ws")
+366 | 
+367 |     @gen_test
+368 |     def test_websocket_network_fail(self):
+369 |         sock, port = bind_unused_port()
+370 |         sock.close()
+371 |         with self.assertRaises(IOError):
+372 |             with ExpectLog(gen_log, ".*"):
+373 |                 yield websocket_connect(
+374 |                     "ws://127.0.0.1:%d/" % port, connect_timeout=3600
+375 |                 )
+376 | 
+377 |     @gen_test
+378 |     def test_websocket_close_buffered_data(self):
+379 |         ws = yield websocket_connect("ws://127.0.0.1:%d/echo" % self.get_http_port())
+380 |         ws.write_message("hello")
+381 |         ws.write_message("world")
+382 |         # Close the underlying stream.
+383 |         ws.stream.close()
+384 | 
+385 |     @gen_test
+386 |     def test_websocket_headers(self):
+387 |         # Ensure that arbitrary headers can be passed through websocket_connect.
+388 |         ws = yield websocket_connect(
+389 |             HTTPRequest(
+390 |                 "ws://127.0.0.1:%d/header" % self.get_http_port(),
+391 |                 headers={"X-Test": "hello"},
+392 |             )
+393 |         )
+394 |         response = yield ws.read_message()
+395 |         self.assertEqual(response, "hello")
+396 | 
+397 |     @gen_test
+398 |     def test_websocket_header_echo(self):
+399 |         # Ensure that headers can be returned in the response.
+400 |         # Specifically, that arbitrary headers passed through websocket_connect
+401 |         # can be returned.
+402 |         ws = yield websocket_connect(
+403 |             HTTPRequest(
+404 |                 "ws://127.0.0.1:%d/header_echo" % self.get_http_port(),
+405 |                 headers={"X-Test-Hello": "hello"},
+406 |             )
+407 |         )
+408 |         self.assertEqual(ws.headers.get("X-Test-Hello"), "hello")
+409 |         self.assertEqual(
+410 |             ws.headers.get("X-Extra-Response-Header"), "Extra-Response-Value"
+411 |         )
+412 | 
+413 |     @gen_test
+414 |     def test_server_close_reason(self):
+415 |         ws = yield self.ws_connect("/close_reason")
+416 |         msg = yield ws.read_message()
+417 |         # A message of None means the other side closed the connection.
+418 |         self.assertIs(msg, None)
+419 |         self.assertEqual(ws.close_code, 1001)
+420 |         self.assertEqual(ws.close_reason, "goodbye")
+421 |         # The on_close callback is called no matter which side closed.
+422 |         code, reason = yield self.close_future
+423 |         # The client echoed the close code it received to the server,
+424 |         # so the server's close code (returned via close_future) is
+425 |         # the same.
+426 |         self.assertEqual(code, 1001)
+427 | 
+428 |     @gen_test
+429 |     def test_client_close_reason(self):
+430 |         ws = yield self.ws_connect("/echo")
+431 |         ws.close(1001, "goodbye")
+432 |         code, reason = yield self.close_future
+433 |         self.assertEqual(code, 1001)
+434 |         self.assertEqual(reason, "goodbye")
+435 | 
+436 |     @gen_test
+437 |     def test_write_after_close(self):
+438 |         ws = yield self.ws_connect("/close_reason")
+439 |         msg = yield ws.read_message()
+440 |         self.assertIs(msg, None)
+441 |         with self.assertRaises(WebSocketClosedError):
+442 |             ws.write_message("hello")
+443 | 
+444 |     @gen_test
+445 |     def test_async_prepare(self):
+446 |         # Previously, an async prepare method triggered a bug that would
+447 |         # result in a timeout on test shutdown (and a memory leak).
+448 |         ws = yield self.ws_connect("/async_prepare")
+449 |         ws.write_message("hello")
+450 |         res = yield ws.read_message()
+451 |         self.assertEqual(res, "hello")
+452 | 
+453 |     @gen_test
+454 |     def test_path_args(self):
+455 |         ws = yield self.ws_connect("/path_args/hello")
+456 |         res = yield ws.read_message()
+457 |         self.assertEqual(res, "hello")
+458 | 
+459 |     @gen_test
+460 |     def test_coroutine(self):
+461 |         ws = yield self.ws_connect("/coroutine")
+462 |         # Send both messages immediately, coroutine must process one at a time.
+463 |         yield ws.write_message("hello1")
+464 |         yield ws.write_message("hello2")
+465 |         res = yield ws.read_message()
+466 |         self.assertEqual(res, "hello1")
+467 |         res = yield ws.read_message()
+468 |         self.assertEqual(res, "hello2")
+469 | 
+470 |     @gen_test
+471 |     def test_check_origin_valid_no_path(self):
+472 |         port = self.get_http_port()
+473 | 
+474 |         url = "ws://127.0.0.1:%d/echo" % port
+475 |         headers = {"Origin": "http://127.0.0.1:%d" % port}
+476 | 
+477 |         ws = yield websocket_connect(HTTPRequest(url, headers=headers))
+478 |         ws.write_message("hello")
+479 |         response = yield ws.read_message()
+480 |         self.assertEqual(response, "hello")
+481 | 
+482 |     @gen_test
+483 |     def test_check_origin_valid_with_path(self):
+484 |         port = self.get_http_port()
+485 | 
+486 |         url = "ws://127.0.0.1:%d/echo" % port
+487 |         headers = {"Origin": "http://127.0.0.1:%d/something" % port}
+488 | 
+489 |         ws = yield websocket_connect(HTTPRequest(url, headers=headers))
+490 |         ws.write_message("hello")
+491 |         response = yield ws.read_message()
+492 |         self.assertEqual(response, "hello")
+493 | 
+494 |     @gen_test
+495 |     def test_check_origin_invalid_partial_url(self):
+496 |         port = self.get_http_port()
+497 | 
+498 |         url = "ws://127.0.0.1:%d/echo" % port
+499 |         headers = {"Origin": "127.0.0.1:%d" % port}
+500 | 
+501 |         with self.assertRaises(HTTPError) as cm:
+502 |             yield websocket_connect(HTTPRequest(url, headers=headers))
+503 |         self.assertEqual(cm.exception.code, 403)
+504 | 
+505 |     @gen_test
+506 |     def test_check_origin_invalid(self):
+507 |         port = self.get_http_port()
+508 | 
+509 |         url = "ws://127.0.0.1:%d/echo" % port
+510 |         # Host is 127.0.0.1, which should not be accessible from some other
+511 |         # domain
+512 |         headers = {"Origin": "http://somewhereelse.com"}
+513 | 
+514 |         with self.assertRaises(HTTPError) as cm:
+515 |             yield websocket_connect(HTTPRequest(url, headers=headers))
+516 | 
+517 |         self.assertEqual(cm.exception.code, 403)
+518 | 
+519 |     @gen_test
+520 |     def test_check_origin_invalid_subdomains(self):
+521 |         port = self.get_http_port()
+522 | 
+523 |         url = "ws://localhost:%d/echo" % port
+524 |         # Subdomains should be disallowed by default.  If we could pass a
+525 |         # resolver to websocket_connect we could test sibling domains as well.
+526 |         headers = {"Origin": "http://subtenant.localhost"}
+527 | 
+528 |         with self.assertRaises(HTTPError) as cm:
+529 |             yield websocket_connect(HTTPRequest(url, headers=headers))
+530 | 
+531 |         self.assertEqual(cm.exception.code, 403)
+532 | 
+533 |     @gen_test
+534 |     def test_subprotocols(self):
+535 |         ws = yield self.ws_connect(
+536 |             "/subprotocol", subprotocols=["badproto", "goodproto"]
+537 |         )
+538 |         self.assertEqual(ws.selected_subprotocol, "goodproto")
+539 |         res = yield ws.read_message()
+540 |         self.assertEqual(res, "subprotocol=goodproto")
+541 | 
+542 |     @gen_test
+543 |     def test_subprotocols_not_offered(self):
+544 |         ws = yield self.ws_connect("/subprotocol")
+545 |         self.assertIs(ws.selected_subprotocol, None)
+546 |         res = yield ws.read_message()
+547 |         self.assertEqual(res, "subprotocol=None")
+548 | 
+549 |     @gen_test
+550 |     def test_open_coroutine(self):
+551 |         self.message_sent = Event()
+552 |         ws = yield self.ws_connect("/open_coroutine")
+553 |         yield ws.write_message("hello")
+554 |         self.message_sent.set()
+555 |         res = yield ws.read_message()
+556 |         self.assertEqual(res, "ok")
+557 | 
+558 |     @gen_test
+559 |     def test_error_in_open(self):
+560 |         with ExpectLog(app_log, "Uncaught exception"):
+561 |             ws = yield self.ws_connect("/error_in_open")
+562 |             res = yield ws.read_message()
+563 |         self.assertIsNone(res)
+564 | 
+565 |     @gen_test
+566 |     def test_error_in_async_open(self):
+567 |         with ExpectLog(app_log, "Uncaught exception"):
+568 |             ws = yield self.ws_connect("/error_in_async_open")
+569 |             res = yield ws.read_message()
+570 |         self.assertIsNone(res)
+571 | 
+572 |     @gen_test
+573 |     def test_nodelay(self):
+574 |         ws = yield self.ws_connect("/nodelay")
+575 |         res = yield ws.read_message()
+576 |         self.assertEqual(res, "hello")
+577 | 
+578 | 
+579 | class NativeCoroutineOnMessageHandler(TestWebSocketHandler):
+580 |     def initialize(self, **kwargs):
+581 |         super().initialize(**kwargs)
+582 |         self.sleeping = 0
+583 | 
+584 |     async def on_message(self, message):
+585 |         if self.sleeping > 0:
+586 |             self.write_message("another coroutine is already sleeping")
+587 |         self.sleeping += 1
+588 |         await gen.sleep(0.01)
+589 |         self.sleeping -= 1
+590 |         self.write_message(message)
+591 | 
+592 | 
+593 | class WebSocketNativeCoroutineTest(WebSocketBaseTestCase):
+594 |     def get_app(self):
+595 |         return Application([("/native", NativeCoroutineOnMessageHandler)])
+596 | 
+597 |     @gen_test
+598 |     def test_native_coroutine(self):
+599 |         ws = yield self.ws_connect("/native")
+600 |         # Send both messages immediately, coroutine must process one at a time.
+601 |         yield ws.write_message("hello1")
+602 |         yield ws.write_message("hello2")
+603 |         res = yield ws.read_message()
+604 |         self.assertEqual(res, "hello1")
+605 |         res = yield ws.read_message()
+606 |         self.assertEqual(res, "hello2")
+607 | 
+608 | 
+609 | class CompressionTestMixin(object):
+610 |     MESSAGE = "Hello world. Testing 123 123"
+611 | 
+612 |     def get_app(self):
+613 |         class LimitedHandler(TestWebSocketHandler):
+614 |             @property
+615 |             def max_message_size(self):
+616 |                 return 1024
+617 | 
+618 |             def on_message(self, message):
+619 |                 self.write_message(str(len(message)))
+620 | 
+621 |         return Application(
+622 |             [
+623 |                 (
+624 |                     "/echo",
+625 |                     EchoHandler,
+626 |                     dict(compression_options=self.get_server_compression_options()),
+627 |                 ),
+628 |                 (
+629 |                     "/limited",
+630 |                     LimitedHandler,
+631 |                     dict(compression_options=self.get_server_compression_options()),
+632 |                 ),
+633 |             ]
+634 |         )
+635 | 
+636 |     def get_server_compression_options(self):
+637 |         return None
+638 | 
+639 |     def get_client_compression_options(self):
+640 |         return None
+641 | 
+642 |     @gen_test
+643 |     def test_message_sizes(self):
+644 |         ws = yield self.ws_connect(
+645 |             "/echo", compression_options=self.get_client_compression_options()
+646 |         )
+647 |         # Send the same message three times so we can measure the
+648 |         # effect of the context_takeover options.
+649 |         for i in range(3):
+650 |             ws.write_message(self.MESSAGE)
+651 |             response = yield ws.read_message()
+652 |             self.assertEqual(response, self.MESSAGE)
+653 |         self.assertEqual(ws.protocol._message_bytes_out, len(self.MESSAGE) * 3)
+654 |         self.assertEqual(ws.protocol._message_bytes_in, len(self.MESSAGE) * 3)
+655 |         self.verify_wire_bytes(ws.protocol._wire_bytes_in, ws.protocol._wire_bytes_out)
+656 | 
+657 |     @gen_test
+658 |     def test_size_limit(self):
+659 |         ws = yield self.ws_connect(
+660 |             "/limited", compression_options=self.get_client_compression_options()
+661 |         )
+662 |         # Small messages pass through.
+663 |         ws.write_message("a" * 128)
+664 |         response = yield ws.read_message()
+665 |         self.assertEqual(response, "128")
+666 |         # This message is too big after decompression, but it compresses
+667 |         # down to a size that will pass the initial checks.
+668 |         ws.write_message("a" * 2048)
+669 |         response = yield ws.read_message()
+670 |         self.assertIsNone(response)
+671 | 
+672 | 
+673 | class UncompressedTestMixin(CompressionTestMixin):
+674 |     """Specialization of CompressionTestMixin when we expect no compression."""
+675 | 
+676 |     def verify_wire_bytes(self, bytes_in, bytes_out):
+677 |         # Bytes out includes the 4-byte mask key per message.
+678 |         self.assertEqual(bytes_out, 3 * (len(self.MESSAGE) + 6))
+679 |         self.assertEqual(bytes_in, 3 * (len(self.MESSAGE) + 2))
+680 | 
+681 | 
+682 | class NoCompressionTest(UncompressedTestMixin, WebSocketBaseTestCase):
+683 |     pass
+684 | 
+685 | 
+686 | # If only one side tries to compress, the extension is not negotiated.
+687 | class ServerOnlyCompressionTest(UncompressedTestMixin, WebSocketBaseTestCase):
+688 |     def get_server_compression_options(self):
+689 |         return {}
+690 | 
+691 | 
+692 | class ClientOnlyCompressionTest(UncompressedTestMixin, WebSocketBaseTestCase):
+693 |     def get_client_compression_options(self):
+694 |         return {}
+695 | 
+696 | 
+697 | class DefaultCompressionTest(CompressionTestMixin, WebSocketBaseTestCase):
+698 |     def get_server_compression_options(self):
+699 |         return {}
+700 | 
+701 |     def get_client_compression_options(self):
+702 |         return {}
+703 | 
+704 |     def verify_wire_bytes(self, bytes_in, bytes_out):
+705 |         self.assertLess(bytes_out, 3 * (len(self.MESSAGE) + 6))
+706 |         self.assertLess(bytes_in, 3 * (len(self.MESSAGE) + 2))
+707 |         # Bytes out includes the 4 bytes mask key per message.
+708 |         self.assertEqual(bytes_out, bytes_in + 12)
+709 | 
+710 | 
+711 | class MaskFunctionMixin(object):
+712 |     # Subclasses should define self.mask(mask, data)
+713 |     def test_mask(self):
+714 |         self.assertEqual(self.mask(b"abcd", b""), b"")
+715 |         self.assertEqual(self.mask(b"abcd", b"b"), b"\x03")
+716 |         self.assertEqual(self.mask(b"abcd", b"54321"), b"TVPVP")
+717 |         self.assertEqual(self.mask(b"ZXCV", b"98765432"), b"c`t`olpd")
+718 |         # Include test cases with \x00 bytes (to ensure that the C
+719 |         # extension isn't depending on null-terminated strings) and
+720 |         # bytes with the high bit set (to smoke out signedness issues).
+721 |         self.assertEqual(
+722 |             self.mask(b"\x00\x01\x02\x03", b"\xff\xfb\xfd\xfc\xfe\xfa"),
+723 |             b"\xff\xfa\xff\xff\xfe\xfb",
+724 |         )
+725 |         self.assertEqual(
+726 |             self.mask(b"\xff\xfb\xfd\xfc", b"\x00\x01\x02\x03\x04\x05"),
+727 |             b"\xff\xfa\xff\xff\xfb\xfe",
+728 |         )
+729 | 
+730 | 
+731 | class PythonMaskFunctionTest(MaskFunctionMixin, unittest.TestCase):
+732 |     def mask(self, mask, data):
+733 |         return _websocket_mask_python(mask, data)
+734 | 
+735 | 
+736 | @unittest.skipIf(speedups is None, "tornado.speedups module not present")
+737 | class CythonMaskFunctionTest(MaskFunctionMixin, unittest.TestCase):
+738 |     def mask(self, mask, data):
+739 |         return speedups.websocket_mask(mask, data)
+740 | 
+741 | 
+742 | class ServerPeriodicPingTest(WebSocketBaseTestCase):
+743 |     def get_app(self):
+744 |         class PingHandler(TestWebSocketHandler):
+745 |             def on_pong(self, data):
+746 |                 self.write_message("got pong")
+747 | 
+748 |         return Application([("/", PingHandler)], websocket_ping_interval=0.01)
+749 | 
+750 |     @gen_test
+751 |     def test_server_ping(self):
+752 |         ws = yield self.ws_connect("/")
+753 |         for i in range(3):
+754 |             response = yield ws.read_message()
+755 |             self.assertEqual(response, "got pong")
+756 |         # TODO: test that the connection gets closed if ping responses stop.
+757 | 
+758 | 
+759 | class ClientPeriodicPingTest(WebSocketBaseTestCase):
+760 |     def get_app(self):
+761 |         class PingHandler(TestWebSocketHandler):
+762 |             def on_ping(self, data):
+763 |                 self.write_message("got ping")
+764 | 
+765 |         return Application([("/", PingHandler)])
+766 | 
+767 |     @gen_test
+768 |     def test_client_ping(self):
+769 |         ws = yield self.ws_connect("/", ping_interval=0.01)
+770 |         for i in range(3):
+771 |             response = yield ws.read_message()
+772 |             self.assertEqual(response, "got ping")
+773 |         # TODO: test that the connection gets closed if ping responses stop.
+774 | 
+775 | 
+776 | class ManualPingTest(WebSocketBaseTestCase):
+777 |     def get_app(self):
+778 |         class PingHandler(TestWebSocketHandler):
+779 |             def on_ping(self, data):
+780 |                 self.write_message(data, binary=isinstance(data, bytes))
+781 | 
+782 |         return Application([("/", PingHandler)])
+783 | 
+784 |     @gen_test
+785 |     def test_manual_ping(self):
+786 |         ws = yield self.ws_connect("/")
+787 | 
+788 |         self.assertRaises(ValueError, ws.ping, "a" * 126)
+789 | 
+790 |         ws.ping("hello")
+791 |         resp = yield ws.read_message()
+792 |         # on_ping always sees bytes.
+793 |         self.assertEqual(resp, b"hello")
+794 | 
+795 |         ws.ping(b"binary hello")
+796 |         resp = yield ws.read_message()
+797 |         self.assertEqual(resp, b"binary hello")
+798 | 
+799 | 
+800 | class MaxMessageSizeTest(WebSocketBaseTestCase):
+801 |     def get_app(self):
+802 |         return Application([("/", EchoHandler)], websocket_max_message_size=1024)
+803 | 
+804 |     @gen_test
+805 |     def test_large_message(self):
+806 |         ws = yield self.ws_connect("/")
+807 | 
+808 |         # Write a message that is allowed.
+809 |         msg = "a" * 1024
+810 |         ws.write_message(msg)
+811 |         resp = yield ws.read_message()
+812 |         self.assertEqual(resp, msg)
+813 | 
+814 |         # Write a message that is too large.
+815 |         ws.write_message(msg + "b")
+816 |         resp = yield ws.read_message()
+817 |         # A message of None means the other side closed the connection.
+818 |         self.assertIs(resp, None)
+819 |         self.assertEqual(ws.close_code, 1009)
+820 |         self.assertEqual(ws.close_reason, "message too big")
+821 |         # TODO: Needs tests of messages split over multiple
+822 |         # continuation frames.
+```

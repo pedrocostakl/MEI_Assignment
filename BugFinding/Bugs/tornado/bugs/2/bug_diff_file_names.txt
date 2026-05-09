@@ -1,0 +1,5 @@
+# git diff <buggy_version> <patched_version>
+# git diff --name-only 2ca8821d006f6693f920a4b183a3a7c985a5c8ad 4f486a4aec746e9d66441600ee3b0743228b061c
+# change from buggy → fixed.
+tornado/http1connection.py
+tornado/test/httpclient_test.py
