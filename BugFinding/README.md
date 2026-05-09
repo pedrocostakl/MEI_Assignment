@@ -15,3 +15,13 @@ Below are the 50 selected bugs and theirs respective projects:
 After selecting these bugs, the generate_llm_prompt.py was used to generate a prompt file for each bug scenario, based on the LLM_prompt.txt file example. These prompts contain the buggy files and the respective failing test files.
 
 Thes prompts can be found in the /prompts folder, sorted by project.
+
+# How to use the prompts
+1. Open the llm and attach the prompt file in /prompts
+2. Download the output as .JSON and store it in its respective folder
+
+Example:
+1. Select the prompt_fastapi_1.txt prompt in the /prompts folder and attach it to the llm prompt ![alt text](image-2.png)![alt text](image.png)
+2. Copy the output and paste it to a .JSON file ![alt text](image-3.png)
+![alt text](image-4.png)
+3. Store the file in /ChatGPT_outputs as ChatGPT_output_fastapi_1.json ![alt text](image-1.png)
