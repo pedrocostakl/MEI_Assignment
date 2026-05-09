@@ -1,0 +1,2773 @@
+You are given buggy source files and failing test files.
+
+Your task is BUG LOCALIZATION ONLY.
+
+Return only valid JSON using this exact format:
+
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "relative/path.py",
+      "line_start": 1,
+      "line_end": 1,
+      "confidence": "low|medium|high",
+      "reason": "Max 2 sentences."
+    }
+  ]
+}
+
+Rules:
+- Do not propose fixes.
+- Do not rewrite code.
+- Do not explain outside JSON.
+- Line numbers must refer to the numbered buggy source file.
+- Include at most 3 suspected locations.
+- Prefer the smallest line range that identifies the origin of the bug.
+
+
+SOURCE FILES:
+
+[file_1] BugsInPy/workspace/sanic/sanic/request.py
+```python
+  1 | import asyncio
+  2 | import email.utils
+  3 | import warnings
+  4 | 
+  5 | from collections import defaultdict, namedtuple
+  6 | from http.cookies import SimpleCookie
+  7 | from types import SimpleNamespace
+  8 | from urllib.parse import parse_qs, parse_qsl, unquote, urlunparse
+  9 | 
+ 10 | from httptools import parse_url  # type: ignore
+ 11 | 
+ 12 | from sanic.exceptions import InvalidUsage
+ 13 | from sanic.headers import (
+ 14 |     parse_content_header,
+ 15 |     parse_forwarded,
+ 16 |     parse_host,
+ 17 |     parse_xforwarded,
+ 18 | )
+ 19 | from sanic.log import error_logger, logger
+ 20 | 
+ 21 | 
+ 22 | try:
+ 23 |     from ujson import loads as json_loads  # type: ignore
+ 24 | except ImportError:
+ 25 |     from json import loads as json_loads  # type: ignore
+ 26 | 
+ 27 | DEFAULT_HTTP_CONTENT_TYPE = "application/octet-stream"
+ 28 | EXPECT_HEADER = "EXPECT"
+ 29 | 
+ 30 | # HTTP/1.1: https://www.w3.org/Protocols/rfc2616/rfc2616-sec7.html#sec7.2.1
+ 31 | # > If the media type remains unknown, the recipient SHOULD treat it
+ 32 | # > as type "application/octet-stream"
+ 33 | 
+ 34 | 
+ 35 | class RequestParameters(dict):
+ 36 |     """Hosts a dict with lists as values where get returns the first
+ 37 |     value of the list and getlist returns the whole shebang
+ 38 |     """
+ 39 | 
+ 40 |     def get(self, name, default=None):
+ 41 |         """Return the first value, either the default or actual"""
+ 42 |         return super().get(name, [default])[0]
+ 43 | 
+ 44 |     def getlist(self, name, default=None):
+ 45 |         """Return the entire list"""
+ 46 |         return super().get(name, default)
+ 47 | 
+ 48 | 
+ 49 | class StreamBuffer:
+ 50 |     def __init__(self, buffer_size=100):
+ 51 |         self._queue = asyncio.Queue(buffer_size)
+ 52 | 
+ 53 |     async def read(self):
+ 54 |         """ Stop reading when gets None """
+ 55 |         payload = await self._queue.get()
+ 56 |         self._queue.task_done()
+ 57 |         return payload
+ 58 | 
+ 59 |     async def put(self, payload):
+ 60 |         await self._queue.put(payload)
+ 61 | 
+ 62 |     def is_full(self):
+ 63 |         return self._queue.full()
+ 64 | 
+ 65 | 
+ 66 | class Request:
+ 67 |     """Properties of an HTTP request such as URL, headers, etc."""
+ 68 | 
+ 69 |     __slots__ = (
+ 70 |         "__weakref__",
+ 71 |         "_cookies",
+ 72 |         "_ip",
+ 73 |         "_parsed_url",
+ 74 |         "_port",
+ 75 |         "_remote_addr",
+ 76 |         "_socket",
+ 77 |         "app",
+ 78 |         "body",
+ 79 |         "ctx",
+ 80 |         "endpoint",
+ 81 |         "headers",
+ 82 |         "method",
+ 83 |         "parsed_args",
+ 84 |         "parsed_not_grouped_args",
+ 85 |         "parsed_files",
+ 86 |         "parsed_form",
+ 87 |         "parsed_json",
+ 88 |         "parsed_forwarded",
+ 89 |         "raw_url",
+ 90 |         "stream",
+ 91 |         "transport",
+ 92 |         "uri_template",
+ 93 |         "version",
+ 94 |     )
+ 95 | 
+ 96 |     def __init__(self, url_bytes, headers, version, method, transport, app):
+ 97 |         self.raw_url = url_bytes
+ 98 |         # TODO: Content-Encoding detection
+ 99 |         self._parsed_url = parse_url(url_bytes)
+100 |         self.app = app
+101 | 
+102 |         self.headers = headers
+103 |         self.version = version
+104 |         self.method = method
+105 |         self.transport = transport
+106 | 
+107 |         # Init but do not inhale
+108 |         self.body_init()
+109 |         self.ctx = SimpleNamespace()
+110 |         self.parsed_forwarded = None
+111 |         self.parsed_json = None
+112 |         self.parsed_form = None
+113 |         self.parsed_files = None
+114 |         self.parsed_args = defaultdict(RequestParameters)
+115 |         self.parsed_not_grouped_args = defaultdict(list)
+116 |         self.uri_template = None
+117 |         self._cookies = None
+118 |         self.stream = None
+119 |         self.endpoint = None
+120 | 
+121 |     def __repr__(self):
+122 |         return "<{0}: {1} {2}>".format(
+123 |             self.__class__.__name__, self.method, self.path
+124 |         )
+125 | 
+126 |     def get(self, key, default=None):
+127 |         """.. deprecated:: 19.9
+128 |            Custom context is now stored in `request.custom_context.yourkey`"""
+129 |         return self.ctx.__dict__.get(key, default)
+130 | 
+131 |     def __contains__(self, key):
+132 |         """.. deprecated:: 19.9
+133 |            Custom context is now stored in `request.custom_context.yourkey`"""
+134 |         return key in self.ctx.__dict__
+135 | 
+136 |     def __getitem__(self, key):
+137 |         """.. deprecated:: 19.9
+138 |            Custom context is now stored in `request.custom_context.yourkey`"""
+139 |         return self.ctx.__dict__[key]
+140 | 
+141 |     def __delitem__(self, key):
+142 |         """.. deprecated:: 19.9
+143 |            Custom context is now stored in `request.custom_context.yourkey`"""
+144 |         del self.ctx.__dict__[key]
+145 | 
+146 |     def __setitem__(self, key, value):
+147 |         """.. deprecated:: 19.9
+148 |            Custom context is now stored in `request.custom_context.yourkey`"""
+149 |         setattr(self.ctx, key, value)
+150 | 
+151 |     def body_init(self):
+152 |         self.body = []
+153 | 
+154 |     def body_push(self, data):
+155 |         self.body.append(data)
+156 | 
+157 |     def body_finish(self):
+158 |         self.body = b"".join(self.body)
+159 | 
+160 |     @property
+161 |     def json(self):
+162 |         if self.parsed_json is None:
+163 |             self.load_json()
+164 | 
+165 |         return self.parsed_json
+166 | 
+167 |     def load_json(self, loads=json_loads):
+168 |         try:
+169 |             self.parsed_json = loads(self.body)
+170 |         except Exception:
+171 |             if not self.body:
+172 |                 return None
+173 |             raise InvalidUsage("Failed when parsing body as json")
+174 | 
+175 |         return self.parsed_json
+176 | 
+177 |     @property
+178 |     def token(self):
+179 |         """Attempt to return the auth header token.
+180 | 
+181 |         :return: token related to request
+182 |         """
+183 |         prefixes = ("Bearer", "Token")
+184 |         auth_header = self.headers.get("Authorization")
+185 | 
+186 |         if auth_header is not None:
+187 |             for prefix in prefixes:
+188 |                 if prefix in auth_header:
+189 |                     return auth_header.partition(prefix)[-1].strip()
+190 | 
+191 |         return auth_header
+192 | 
+193 |     @property
+194 |     def form(self):
+195 |         if self.parsed_form is None:
+196 |             self.parsed_form = RequestParameters()
+197 |             self.parsed_files = RequestParameters()
+198 |             content_type = self.headers.get(
+199 |                 "Content-Type", DEFAULT_HTTP_CONTENT_TYPE
+200 |             )
+201 |             content_type, parameters = parse_content_header(content_type)
+202 |             try:
+203 |                 if content_type == "application/x-www-form-urlencoded":
+204 |                     self.parsed_form = RequestParameters(
+205 |                         parse_qs(self.body.decode("utf-8"))
+206 |                     )
+207 |                 elif content_type == "multipart/form-data":
+208 |                     # TODO: Stream this instead of reading to/from memory
+209 |                     boundary = parameters["boundary"].encode("utf-8")
+210 |                     self.parsed_form, self.parsed_files = parse_multipart_form(
+211 |                         self.body, boundary
+212 |                     )
+213 |             except Exception:
+214 |                 error_logger.exception("Failed when parsing form")
+215 | 
+216 |         return self.parsed_form
+217 | 
+218 |     @property
+219 |     def files(self):
+220 |         if self.parsed_files is None:
+221 |             self.form  # compute form to get files
+222 | 
+223 |         return self.parsed_files
+224 | 
+225 |     def get_args(
+226 |         self,
+227 |         keep_blank_values: bool = False,
+228 |         strict_parsing: bool = False,
+229 |         encoding: str = "utf-8",
+230 |         errors: str = "replace",
+231 |     ) -> RequestParameters:
+232 |         """
+233 |         Method to parse `query_string` using `urllib.parse.parse_qs`.
+234 |         This methods is used by `args` property.
+235 |         Can be used directly if you need to change default parameters.
+236 | 
+237 |         :param keep_blank_values:
+238 |             flag indicating whether blank values in
+239 |             percent-encoded queries should be treated as blank strings.
+240 |             A true value indicates that blanks should be retained as blank
+241 |             strings.  The default false value indicates that blank values
+242 |             are to be ignored and treated as if they were  not included.
+243 |         :type keep_blank_values: bool
+244 |         :param strict_parsing:
+245 |             flag indicating what to do with parsing errors.
+246 |             If false (the default), errors are silently ignored. If true,
+247 |             errors raise a ValueError exception.
+248 |         :type strict_parsing: bool
+249 |         :param encoding:
+250 |             specify how to decode percent-encoded sequences
+251 |             into Unicode characters, as accepted by the bytes.decode() method.
+252 |         :type encoding: str
+253 |         :param errors:
+254 |             specify how to decode percent-encoded sequences
+255 |             into Unicode characters, as accepted by the bytes.decode() method.
+256 |         :type errors: str
+257 |         :return: RequestParameters
+258 |         """
+259 |         if not self.parsed_args[
+260 |             (keep_blank_values, strict_parsing, encoding, errors)
+261 |         ]:
+262 |             if self.query_string:
+263 |                 self.parsed_args[
+264 |                     (keep_blank_values, strict_parsing, encoding, errors)
+265 |                 ] = RequestParameters(
+266 |                     parse_qs(
+267 |                         qs=self.query_string,
+268 |                         keep_blank_values=keep_blank_values,
+269 |                         strict_parsing=strict_parsing,
+270 |                         encoding=encoding,
+271 |                         errors=errors,
+272 |                     )
+273 |                 )
+274 | 
+275 |         return self.parsed_args[
+276 |             (keep_blank_values, strict_parsing, encoding, errors)
+277 |         ]
+278 | 
+279 |     args = property(get_args)
+280 | 
+281 |     @property
+282 |     def raw_args(self) -> dict:
+283 |         if self.app.debug:  # pragma: no cover
+284 |             warnings.simplefilter("default")
+285 |         warnings.warn(
+286 |             "Use of raw_args will be deprecated in "
+287 |             "the future versions. Please use args or query_args "
+288 |             "properties instead",
+289 |             DeprecationWarning,
+290 |         )
+291 |         return {k: v[0] for k, v in self.args.items()}
+292 | 
+293 |     def get_query_args(
+294 |         self,
+295 |         keep_blank_values: bool = False,
+296 |         strict_parsing: bool = False,
+297 |         encoding: str = "utf-8",
+298 |         errors: str = "replace",
+299 |     ) -> list:
+300 |         """
+301 |         Method to parse `query_string` using `urllib.parse.parse_qsl`.
+302 |         This methods is used by `query_args` property.
+303 |         Can be used directly if you need to change default parameters.
+304 | 
+305 |         :param keep_blank_values:
+306 |             flag indicating whether blank values in
+307 |             percent-encoded queries should be treated as blank strings.
+308 |             A true value indicates that blanks should be retained as blank
+309 |             strings.  The default false value indicates that blank values
+310 |             are to be ignored and treated as if they were  not included.
+311 |         :type keep_blank_values: bool
+312 |         :param strict_parsing:
+313 |             flag indicating what to do with parsing errors.
+314 |             If false (the default), errors are silently ignored. If true,
+315 |             errors raise a ValueError exception.
+316 |         :type strict_parsing: bool
+317 |         :param encoding:
+318 |             specify how to decode percent-encoded sequences
+319 |             into Unicode characters, as accepted by the bytes.decode() method.
+320 |         :type encoding: str
+321 |         :param errors:
+322 |             specify how to decode percent-encoded sequences
+323 |             into Unicode characters, as accepted by the bytes.decode() method.
+324 |         :type errors: str
+325 |         :return: list
+326 |         """
+327 |         if not self.parsed_not_grouped_args[
+328 |             (keep_blank_values, strict_parsing, encoding, errors)
+329 |         ]:
+330 |             if self.query_string:
+331 |                 self.parsed_not_grouped_args[
+332 |                     (keep_blank_values, strict_parsing, encoding, errors)
+333 |                 ] = parse_qsl(
+334 |                     qs=self.query_string,
+335 |                     keep_blank_values=keep_blank_values,
+336 |                     strict_parsing=strict_parsing,
+337 |                     encoding=encoding,
+338 |                     errors=errors,
+339 |                 )
+340 |         return self.parsed_not_grouped_args[
+341 |             (keep_blank_values, strict_parsing, encoding, errors)
+342 |         ]
+343 | 
+344 |     query_args = property(get_query_args)
+345 | 
+346 |     @property
+347 |     def cookies(self):
+348 |         if self._cookies is None:
+349 |             cookie = self.headers.get("Cookie")
+350 |             if cookie is not None:
+351 |                 cookies = SimpleCookie()
+352 |                 cookies.load(cookie)
+353 |                 self._cookies = {
+354 |                     name: cookie.value for name, cookie in cookies.items()
+355 |                 }
+356 |             else:
+357 |                 self._cookies = {}
+358 |         return self._cookies
+359 | 
+360 |     @property
+361 |     def ip(self):
+362 |         """
+363 |         :return: peer ip of the socket
+364 |         """
+365 |         if not hasattr(self, "_socket"):
+366 |             self._get_address()
+367 |         return self._ip
+368 | 
+369 |     @property
+370 |     def port(self):
+371 |         """
+372 |         :return: peer port of the socket
+373 |         """
+374 |         if not hasattr(self, "_socket"):
+375 |             self._get_address()
+376 |         return self._port
+377 | 
+378 |     @property
+379 |     def socket(self):
+380 |         if not hasattr(self, "_socket"):
+381 |             self._get_address()
+382 |         return self._socket
+383 | 
+384 |     def _get_address(self):
+385 |         self._socket = self.transport.get_extra_info("peername") or (
+386 |             None,
+387 |             None,
+388 |         )
+389 |         self._ip = self._socket[0]
+390 |         self._port = self._socket[1]
+391 | 
+392 |     @property
+393 |     def server_name(self):
+394 |         """
+395 |         Attempt to get the server's external hostname in this order:
+396 |         `config.SERVER_NAME`, proxied or direct Host headers
+397 |         :func:`Request.host`
+398 | 
+399 |         :return: the server name without port number
+400 |         :rtype: str
+401 |         """
+402 |         server_name = self.app.config.get("SERVER_NAME")
+403 |         if server_name:
+404 |             host = server_name.split("//", 1)[-1].split("/", 1)[0]
+405 |             return parse_host(host)[0]
+406 |         return parse_host(self.host)[0]
+407 | 
+408 |     @property
+409 |     def forwarded(self):
+410 |         if self.parsed_forwarded is None:
+411 |             self.parsed_forwarded = (
+412 |                 parse_forwarded(self.headers, self.app.config)
+413 |                 or parse_xforwarded(self.headers, self.app.config)
+414 |                 or {}
+415 |             )
+416 |         return self.parsed_forwarded
+417 | 
+418 |     @property
+419 |     def server_port(self):
+420 |         """
+421 |         Attempt to get the server's external port number in this order:
+422 |         `config.SERVER_NAME`, proxied or direct Host headers
+423 |         :func:`Request.host`,
+424 |         actual port used by the transport layer socket.
+425 |         :return: server port
+426 |         :rtype: int
+427 |         """
+428 |         if self.forwarded:
+429 |             return self.forwarded.get("port") or (
+430 |                 80 if self.scheme in ("http", "ws") else 443
+431 |             )
+432 |         return (
+433 |             parse_host(self.host)[1]
+434 |             or self.transport.get_extra_info("sockname")[1]
+435 |         )
+436 | 
+437 |     @property
+438 |     def remote_addr(self):
+439 |         """Attempt to return the original client ip based on `forwarded`,
+440 |         `x-forwarded-for` or `x-real-ip`. If HTTP headers are unavailable or
+441 |         untrusted, returns an empty string.
+442 | 
+443 |         :return: original client ip.
+444 |         """
+445 |         if not hasattr(self, "_remote_addr"):
+446 |             self._remote_addr = self.forwarded.get("for", "")
+447 |         return self._remote_addr
+448 | 
+449 |     @property
+450 |     def scheme(self):
+451 |         """
+452 |         Attempt to get the request scheme.
+453 |         Seeking the value in this order:
+454 |         `forwarded` header, `x-forwarded-proto` header,
+455 |         `x-scheme` header, the sanic app itself.
+456 | 
+457 |         :return: http|https|ws|wss or arbitrary value given by the headers.
+458 |         :rtype: str
+459 |         """
+460 |         forwarded_proto = self.forwarded.get("proto")
+461 |         if forwarded_proto:
+462 |             return forwarded_proto
+463 | 
+464 |         if (
+465 |             self.app.websocket_enabled
+466 |             and self.headers.get("upgrade") == "websocket"
+467 |         ):
+468 |             scheme = "ws"
+469 |         else:
+470 |             scheme = "http"
+471 | 
+472 |         if self.transport.get_extra_info("sslcontext"):
+473 |             scheme += "s"
+474 | 
+475 |         return scheme
+476 | 
+477 |     @property
+478 |     def host(self):
+479 |         """
+480 |         :return: proxied or direct Host header. Hostname and port number may be
+481 |           separated by sanic.headers.parse_host(request.host).
+482 |         """
+483 |         return self.forwarded.get("host", self.headers.get("Host", ""))
+484 | 
+485 |     @property
+486 |     def content_type(self):
+487 |         return self.headers.get("Content-Type", DEFAULT_HTTP_CONTENT_TYPE)
+488 | 
+489 |     @property
+490 |     def match_info(self):
+491 |         """return matched info after resolving route"""
+492 |         return self.app.router.get(self)[2]
+493 | 
+494 |     @property
+495 |     def path(self):
+496 |         return self._parsed_url.path.decode("utf-8")
+497 | 
+498 |     @property
+499 |     def query_string(self):
+500 |         if self._parsed_url.query:
+501 |             return self._parsed_url.query.decode("utf-8")
+502 |         else:
+503 |             return ""
+504 | 
+505 |     @property
+506 |     def url(self):
+507 |         return urlunparse(
+508 |             (self.scheme, self.host, self.path, None, self.query_string, None)
+509 |         )
+510 | 
+511 |     def url_for(self, view_name, **kwargs):
+512 |         """
+513 |         Same as :func:`sanic.Sanic.url_for`, but automatically determine
+514 |         `scheme` and `netloc` base on the request. Since this method is aiming
+515 |         to generate correct schema & netloc, `_external` is implied.
+516 | 
+517 |         :param kwargs: takes same parameters as in :func:`sanic.Sanic.url_for`
+518 |         :return: an absolute url to the given view
+519 |         :rtype: str
+520 |         """
+521 |         # Full URL SERVER_NAME can only be handled in app.url_for
+522 |         if "//" in self.app.config.SERVER_NAME:
+523 |             return self.app.url_for(view_name, _external=True, **kwargs)
+524 | 
+525 |         scheme = self.scheme
+526 |         host = self.server_name
+527 |         port = self.server_port
+528 | 
+529 |         if (scheme.lower() in ("http", "ws") and port == 80) or (
+530 |             scheme.lower() in ("https", "wss") and port == 443
+531 |         ):
+532 |             netloc = host
+533 |         else:
+534 |             netloc = "{}:{}".format(host, port)
+535 | 
+536 |         return self.app.url_for(
+537 |             view_name, _external=True, _scheme=scheme, _server=netloc, **kwargs
+538 |         )
+539 | 
+540 | 
+541 | File = namedtuple("File", ["type", "body", "name"])
+542 | 
+543 | 
+544 | def parse_multipart_form(body, boundary):
+545 |     """Parse a request body and returns fields and files
+546 | 
+547 |     :param body: bytes request body
+548 |     :param boundary: bytes multipart boundary
+549 |     :return: fields (RequestParameters), files (RequestParameters)
+550 |     """
+551 |     files = RequestParameters()
+552 |     fields = RequestParameters()
+553 | 
+554 |     form_parts = body.split(boundary)
+555 |     for form_part in form_parts[1:-1]:
+556 |         file_name = None
+557 |         content_type = "text/plain"
+558 |         content_charset = "utf-8"
+559 |         field_name = None
+560 |         line_index = 2
+561 |         line_end_index = 0
+562 |         while not line_end_index == -1:
+563 |             line_end_index = form_part.find(b"\r\n", line_index)
+564 |             form_line = form_part[line_index:line_end_index].decode("utf-8")
+565 |             line_index = line_end_index + 2
+566 | 
+567 |             if not form_line:
+568 |                 break
+569 | 
+570 |             colon_index = form_line.index(":")
+571 |             form_header_field = form_line[0:colon_index].lower()
+572 |             form_header_value, form_parameters = parse_content_header(
+573 |                 form_line[colon_index + 2 :]
+574 |             )
+575 | 
+576 |             if form_header_field == "content-disposition":
+577 |                 field_name = form_parameters.get("name")
+578 |                 file_name = form_parameters.get("filename")
+579 | 
+580 |                 # non-ASCII filenames in RFC2231, "filename*" format
+581 |                 if file_name is None and form_parameters.get("filename*"):
+582 |                     encoding, _, value = email.utils.decode_rfc2231(
+583 |                         form_parameters["filename*"]
+584 |                     )
+585 |                     file_name = unquote(value, encoding=encoding)
+586 |             elif form_header_field == "content-type":
+587 |                 content_type = form_header_value
+588 |                 content_charset = form_parameters.get("charset", "utf-8")
+589 | 
+590 |         if field_name:
+591 |             post_data = form_part[line_index:-4]
+592 |             if file_name is None:
+593 |                 value = post_data.decode(content_charset)
+594 |                 if field_name in fields:
+595 |                     fields[field_name].append(value)
+596 |                 else:
+597 |                     fields[field_name] = [value]
+598 |             else:
+599 |                 form_file = File(
+600 |                     type=content_type, name=file_name, body=post_data
+601 |                 )
+602 |                 if field_name in files:
+603 |                     files[field_name].append(form_file)
+604 |                 else:
+605 |                     files[field_name] = [form_file]
+606 |         else:
+607 |             logger.debug(
+608 |                 "Form-data field does not have a 'name' parameter "
+609 |                 "in the Content-Disposition header"
+610 |             )
+611 | 
+612 |     return fields, files
+```
+
+
+FAILING TEST FILES:
+
+[test_file_1] BugsInPy/workspace/sanic/tests/test_requests.py
+```python
+   1 | import logging
+   2 | import os
+   3 | import ssl
+   4 | 
+   5 | from json import dumps as json_dumps
+   6 | from json import loads as json_loads
+   7 | from urllib.parse import urlparse
+   8 | 
+   9 | import pytest
+  10 | 
+  11 | from sanic import Blueprint, Sanic
+  12 | from sanic.exceptions import ServerError
+  13 | from sanic.request import DEFAULT_HTTP_CONTENT_TYPE, RequestParameters
+  14 | from sanic.response import json, text
+  15 | from sanic.testing import ASGI_HOST, HOST, PORT
+  16 | 
+  17 | 
+  18 | # ------------------------------------------------------------ #
+  19 | #  GET
+  20 | # ------------------------------------------------------------ #
+  21 | 
+  22 | 
+  23 | def test_sync(app):
+  24 |     @app.route("/")
+  25 |     def handler(request):
+  26 |         return text("Hello")
+  27 | 
+  28 |     request, response = app.test_client.get("/")
+  29 | 
+  30 |     assert response.text == "Hello"
+  31 | 
+  32 | 
+  33 | @pytest.mark.asyncio
+  34 | async def test_sync_asgi(app):
+  35 |     @app.route("/")
+  36 |     def handler(request):
+  37 |         return text("Hello")
+  38 | 
+  39 |     request, response = await app.asgi_client.get("/")
+  40 | 
+  41 |     assert response.text == "Hello"
+  42 | 
+  43 | 
+  44 | def test_ip(app):
+  45 |     @app.route("/")
+  46 |     def handler(request):
+  47 |         return text("{}".format(request.ip))
+  48 | 
+  49 |     request, response = app.test_client.get("/")
+  50 | 
+  51 |     assert response.text == "127.0.0.1"
+  52 | 
+  53 | 
+  54 | @pytest.mark.asyncio
+  55 | async def test_ip_asgi(app):
+  56 |     @app.route("/")
+  57 |     def handler(request):
+  58 |         return text("{}".format(request.ip))
+  59 | 
+  60 |     request, response = await app.asgi_client.get("/")
+  61 | 
+  62 |     assert response.text == "mockserver"
+  63 | 
+  64 | 
+  65 | def test_text(app):
+  66 |     @app.route("/")
+  67 |     async def handler(request):
+  68 |         return text("Hello")
+  69 | 
+  70 |     request, response = app.test_client.get("/")
+  71 | 
+  72 |     assert response.text == "Hello"
+  73 | 
+  74 | 
+  75 | @pytest.mark.asyncio
+  76 | async def test_text_asgi(app):
+  77 |     @app.route("/")
+  78 |     async def handler(request):
+  79 |         return text("Hello")
+  80 | 
+  81 |     request, response = await app.asgi_client.get("/")
+  82 | 
+  83 |     assert response.text == "Hello"
+  84 | 
+  85 | 
+  86 | def test_headers(app):
+  87 |     @app.route("/")
+  88 |     async def handler(request):
+  89 |         headers = {"spam": "great"}
+  90 |         return text("Hello", headers=headers)
+  91 | 
+  92 |     request, response = app.test_client.get("/")
+  93 | 
+  94 |     assert response.headers.get("spam") == "great"
+  95 | 
+  96 | 
+  97 | @pytest.mark.asyncio
+  98 | async def test_headers_asgi(app):
+  99 |     @app.route("/")
+ 100 |     async def handler(request):
+ 101 |         headers = {"spam": "great"}
+ 102 |         return text("Hello", headers=headers)
+ 103 | 
+ 104 |     request, response = await app.asgi_client.get("/")
+ 105 | 
+ 106 |     assert response.headers.get("spam") == "great"
+ 107 | 
+ 108 | 
+ 109 | def test_non_str_headers(app):
+ 110 |     @app.route("/")
+ 111 |     async def handler(request):
+ 112 |         headers = {"answer": 42}
+ 113 |         return text("Hello", headers=headers)
+ 114 | 
+ 115 |     request, response = app.test_client.get("/")
+ 116 | 
+ 117 |     assert response.headers.get("answer") == "42"
+ 118 | 
+ 119 | 
+ 120 | @pytest.mark.asyncio
+ 121 | async def test_non_str_headers_asgi(app):
+ 122 |     @app.route("/")
+ 123 |     async def handler(request):
+ 124 |         headers = {"answer": 42}
+ 125 |         return text("Hello", headers=headers)
+ 126 | 
+ 127 |     request, response = await app.asgi_client.get("/")
+ 128 | 
+ 129 |     assert response.headers.get("answer") == "42"
+ 130 | 
+ 131 | 
+ 132 | def test_invalid_response(app):
+ 133 |     @app.exception(ServerError)
+ 134 |     def handler_exception(request, exception):
+ 135 |         return text("Internal Server Error.", 500)
+ 136 | 
+ 137 |     @app.route("/")
+ 138 |     async def handler(request):
+ 139 |         return "This should fail"
+ 140 | 
+ 141 |     request, response = app.test_client.get("/")
+ 142 |     assert response.status == 500
+ 143 |     assert response.text == "Internal Server Error."
+ 144 | 
+ 145 | 
+ 146 | @pytest.mark.asyncio
+ 147 | async def test_invalid_response_asgi(app):
+ 148 |     @app.exception(ServerError)
+ 149 |     def handler_exception(request, exception):
+ 150 |         return text("Internal Server Error.", 500)
+ 151 | 
+ 152 |     @app.route("/")
+ 153 |     async def handler(request):
+ 154 |         return "This should fail"
+ 155 | 
+ 156 |     request, response = await app.asgi_client.get("/")
+ 157 |     assert response.status == 500
+ 158 |     assert response.text == "Internal Server Error."
+ 159 | 
+ 160 | 
+ 161 | def test_json(app):
+ 162 |     @app.route("/")
+ 163 |     async def handler(request):
+ 164 |         return json({"test": True})
+ 165 | 
+ 166 |     request, response = app.test_client.get("/")
+ 167 | 
+ 168 |     results = json_loads(response.text)
+ 169 | 
+ 170 |     assert results.get("test") is True
+ 171 | 
+ 172 | 
+ 173 | @pytest.mark.asyncio
+ 174 | async def test_json_asgi(app):
+ 175 |     @app.route("/")
+ 176 |     async def handler(request):
+ 177 |         return json({"test": True})
+ 178 | 
+ 179 |     request, response = await app.asgi_client.get("/")
+ 180 | 
+ 181 |     results = json_loads(response.text)
+ 182 | 
+ 183 |     assert results.get("test") is True
+ 184 | 
+ 185 | 
+ 186 | def test_empty_json(app):
+ 187 |     @app.route("/")
+ 188 |     async def handler(request):
+ 189 |         assert request.json is None
+ 190 |         return json(request.json)
+ 191 | 
+ 192 |     request, response = app.test_client.get("/")
+ 193 |     assert response.status == 200
+ 194 |     assert response.text == "null"
+ 195 | 
+ 196 | 
+ 197 | @pytest.mark.asyncio
+ 198 | async def test_empty_json_asgi(app):
+ 199 |     @app.route("/")
+ 200 |     async def handler(request):
+ 201 |         assert request.json is None
+ 202 |         return json(request.json)
+ 203 | 
+ 204 |     request, response = await app.asgi_client.get("/")
+ 205 |     assert response.status == 200
+ 206 |     assert response.text == "null"
+ 207 | 
+ 208 | 
+ 209 | def test_invalid_json(app):
+ 210 |     @app.route("/")
+ 211 |     async def handler(request):
+ 212 |         return json(request.json)
+ 213 | 
+ 214 |     data = "I am not json"
+ 215 |     request, response = app.test_client.get("/", data=data)
+ 216 | 
+ 217 |     assert response.status == 400
+ 218 | 
+ 219 | 
+ 220 | @pytest.mark.asyncio
+ 221 | async def test_invalid_json_asgi(app):
+ 222 |     @app.route("/")
+ 223 |     async def handler(request):
+ 224 |         return json(request.json)
+ 225 | 
+ 226 |     data = "I am not json"
+ 227 |     request, response = await app.asgi_client.get("/", data=data)
+ 228 | 
+ 229 |     assert response.status == 400
+ 230 | 
+ 231 | 
+ 232 | def test_query_string(app):
+ 233 |     @app.route("/")
+ 234 |     async def handler(request):
+ 235 |         return text("OK")
+ 236 | 
+ 237 |     request, response = app.test_client.get(
+ 238 |         "/", params=[("test1", "1"), ("test2", "false"), ("test2", "true")]
+ 239 |     )
+ 240 | 
+ 241 |     assert request.args.get("test1") == "1"
+ 242 |     assert request.args.get("test2") == "false"
+ 243 |     assert request.args.getlist("test2") == ["false", "true"]
+ 244 |     assert request.args.getlist("test1") == ["1"]
+ 245 |     assert request.args.get("test3", default="My value") == "My value"
+ 246 | 
+ 247 | 
+ 248 | @pytest.mark.asyncio
+ 249 | async def test_query_string_asgi(app):
+ 250 |     @app.route("/")
+ 251 |     async def handler(request):
+ 252 |         return text("OK")
+ 253 | 
+ 254 |     request, response = await app.asgi_client.get(
+ 255 |         "/", params=[("test1", "1"), ("test2", "false"), ("test2", "true")]
+ 256 |     )
+ 257 | 
+ 258 |     assert request.args.get("test1") == "1"
+ 259 |     assert request.args.get("test2") == "false"
+ 260 |     assert request.args.getlist("test2") == ["false", "true"]
+ 261 |     assert request.args.getlist("test1") == ["1"]
+ 262 |     assert request.args.get("test3", default="My value") == "My value"
+ 263 | 
+ 264 | 
+ 265 | def test_uri_template(app):
+ 266 |     @app.route("/foo/<id:int>/bar/<name:[A-z]+>")
+ 267 |     async def handler(request, id, name):
+ 268 |         return text("OK")
+ 269 | 
+ 270 |     request, response = app.test_client.get("/foo/123/bar/baz")
+ 271 |     assert request.uri_template == "/foo/<id:int>/bar/<name:[A-z]+>"
+ 272 | 
+ 273 | 
+ 274 | @pytest.mark.asyncio
+ 275 | async def test_uri_template_asgi(app):
+ 276 |     @app.route("/foo/<id:int>/bar/<name:[A-z]+>")
+ 277 |     async def handler(request, id, name):
+ 278 |         return text("OK")
+ 279 | 
+ 280 |     request, response = await app.asgi_client.get("/foo/123/bar/baz")
+ 281 |     assert request.uri_template == "/foo/<id:int>/bar/<name:[A-z]+>"
+ 282 | 
+ 283 | 
+ 284 | def test_token(app):
+ 285 |     @app.route("/")
+ 286 |     async def handler(request):
+ 287 |         return text("OK")
+ 288 | 
+ 289 |     # uuid4 generated token.
+ 290 |     token = "a1d895e0-553a-421a-8e22-5ff8ecb48cbf"
+ 291 |     headers = {
+ 292 |         "content-type": "application/json",
+ 293 |         "Authorization": "{}".format(token),
+ 294 |     }
+ 295 | 
+ 296 |     request, response = app.test_client.get("/", headers=headers)
+ 297 | 
+ 298 |     assert request.token == token
+ 299 | 
+ 300 |     token = "a1d895e0-553a-421a-8e22-5ff8ecb48cbf"
+ 301 |     headers = {
+ 302 |         "content-type": "application/json",
+ 303 |         "Authorization": "Token {}".format(token),
+ 304 |     }
+ 305 | 
+ 306 |     request, response = app.test_client.get("/", headers=headers)
+ 307 | 
+ 308 |     assert request.token == token
+ 309 | 
+ 310 |     token = "a1d895e0-553a-421a-8e22-5ff8ecb48cbf"
+ 311 |     headers = {
+ 312 |         "content-type": "application/json",
+ 313 |         "Authorization": "Bearer {}".format(token),
+ 314 |     }
+ 315 | 
+ 316 |     request, response = app.test_client.get("/", headers=headers)
+ 317 | 
+ 318 |     assert request.token == token
+ 319 | 
+ 320 |     # no Authorization headers
+ 321 |     headers = {"content-type": "application/json"}
+ 322 | 
+ 323 |     request, response = app.test_client.get("/", headers=headers)
+ 324 | 
+ 325 |     assert request.token is None
+ 326 | 
+ 327 | 
+ 328 | @pytest.mark.asyncio
+ 329 | async def test_token_asgi(app):
+ 330 |     @app.route("/")
+ 331 |     async def handler(request):
+ 332 |         return text("OK")
+ 333 | 
+ 334 |     # uuid4 generated token.
+ 335 |     token = "a1d895e0-553a-421a-8e22-5ff8ecb48cbf"
+ 336 |     headers = {
+ 337 |         "content-type": "application/json",
+ 338 |         "Authorization": "{}".format(token),
+ 339 |     }
+ 340 | 
+ 341 |     request, response = await app.asgi_client.get("/", headers=headers)
+ 342 | 
+ 343 |     assert request.token == token
+ 344 | 
+ 345 |     token = "a1d895e0-553a-421a-8e22-5ff8ecb48cbf"
+ 346 |     headers = {
+ 347 |         "content-type": "application/json",
+ 348 |         "Authorization": "Token {}".format(token),
+ 349 |     }
+ 350 | 
+ 351 |     request, response = await app.asgi_client.get("/", headers=headers)
+ 352 | 
+ 353 |     assert request.token == token
+ 354 | 
+ 355 |     token = "a1d895e0-553a-421a-8e22-5ff8ecb48cbf"
+ 356 |     headers = {
+ 357 |         "content-type": "application/json",
+ 358 |         "Authorization": "Bearer {}".format(token),
+ 359 |     }
+ 360 | 
+ 361 |     request, response = await app.asgi_client.get("/", headers=headers)
+ 362 | 
+ 363 |     assert request.token == token
+ 364 | 
+ 365 |     # no Authorization headers
+ 366 |     headers = {"content-type": "application/json"}
+ 367 | 
+ 368 |     request, response = await app.asgi_client.get("/", headers=headers)
+ 369 | 
+ 370 |     assert request.token is None
+ 371 | 
+ 372 | 
+ 373 | def test_content_type(app):
+ 374 |     @app.route("/")
+ 375 |     async def handler(request):
+ 376 |         return text(request.content_type)
+ 377 | 
+ 378 |     request, response = app.test_client.get("/")
+ 379 |     assert request.content_type == DEFAULT_HTTP_CONTENT_TYPE
+ 380 |     assert response.text == DEFAULT_HTTP_CONTENT_TYPE
+ 381 | 
+ 382 |     headers = {"content-type": "application/json"}
+ 383 |     request, response = app.test_client.get("/", headers=headers)
+ 384 |     assert request.content_type == "application/json"
+ 385 |     assert response.text == "application/json"
+ 386 | 
+ 387 | 
+ 388 | @pytest.mark.asyncio
+ 389 | async def test_content_type_asgi(app):
+ 390 |     @app.route("/")
+ 391 |     async def handler(request):
+ 392 |         return text(request.content_type)
+ 393 | 
+ 394 |     request, response = await app.asgi_client.get("/")
+ 395 |     assert request.content_type == DEFAULT_HTTP_CONTENT_TYPE
+ 396 |     assert response.text == DEFAULT_HTTP_CONTENT_TYPE
+ 397 | 
+ 398 |     headers = {"content-type": "application/json"}
+ 399 |     request, response = await app.asgi_client.get("/", headers=headers)
+ 400 |     assert request.content_type == "application/json"
+ 401 |     assert response.text == "application/json"
+ 402 | 
+ 403 | 
+ 404 | def test_standard_forwarded(app):
+ 405 |     @app.route("/")
+ 406 |     async def handler(request):
+ 407 |         return json(request.forwarded)
+ 408 | 
+ 409 |     # Without configured FORWARDED_SECRET, x-headers should be respected
+ 410 |     app.config.PROXIES_COUNT = 1
+ 411 |     app.config.REAL_IP_HEADER = "x-real-ip"
+ 412 |     headers = {
+ 413 |         "Forwarded": (
+ 414 |             'for=1.1.1.1, for=injected;host="'
+ 415 |             ', for="[::2]";proto=https;host=me.tld;path="/app/";secret=mySecret'
+ 416 |             ",for=broken;;secret=b0rked"
+ 417 |             ", for=127.0.0.3;scheme=http;port=1234"
+ 418 |         ),
+ 419 |         "X-Real-IP": "127.0.0.2",
+ 420 |         "X-Forwarded-For": "127.0.1.1",
+ 421 |         "X-Scheme": "ws",
+ 422 |     }
+ 423 |     request, response = app.test_client.get("/", headers=headers)
+ 424 |     assert response.json == {"for": "127.0.0.2", "proto": "ws"}
+ 425 |     assert request.remote_addr == "127.0.0.2"
+ 426 |     assert request.scheme == "ws"
+ 427 |     assert request.server_port == 80
+ 428 | 
+ 429 |     app.config.FORWARDED_SECRET = "mySecret"
+ 430 |     request, response = app.test_client.get("/", headers=headers)
+ 431 |     assert response.json == {
+ 432 |         "for": "[::2]",
+ 433 |         "proto": "https",
+ 434 |         "host": "me.tld",
+ 435 |         "path": "/app/",
+ 436 |         "secret": "mySecret",
+ 437 |     }
+ 438 |     assert request.remote_addr == "[::2]"
+ 439 |     assert request.server_name == "me.tld"
+ 440 |     assert request.scheme == "https"
+ 441 |     assert request.server_port == 443
+ 442 | 
+ 443 |     # Empty Forwarded header -> use X-headers
+ 444 |     headers["Forwarded"] = ""
+ 445 |     request, response = app.test_client.get("/", headers=headers)
+ 446 |     assert response.json == {"for": "127.0.0.2", "proto": "ws"}
+ 447 | 
+ 448 |     # Header present but not matching anything
+ 449 |     request, response = app.test_client.get("/", headers={"Forwarded": "."})
+ 450 |     assert response.json == {}
+ 451 | 
+ 452 |     # Forwarded header present but no matching secret -> use X-headers
+ 453 |     headers = {
+ 454 |         "Forwarded": "for=1.1.1.1;secret=x, for=127.0.0.1",
+ 455 |         "X-Real-IP": "127.0.0.2",
+ 456 |     }
+ 457 |     request, response = app.test_client.get("/", headers=headers)
+ 458 |     assert response.json == {"for": "127.0.0.2"}
+ 459 |     assert request.remote_addr == "127.0.0.2"
+ 460 | 
+ 461 |     # Different formatting and hitting both ends of the header
+ 462 |     headers = {"Forwarded": 'Secret="mySecret";For=127.0.0.4;Port=1234'}
+ 463 |     request, response = app.test_client.get("/", headers=headers)
+ 464 |     assert response.json == {
+ 465 |         "for": "127.0.0.4",
+ 466 |         "port": 1234,
+ 467 |         "secret": "mySecret",
+ 468 |     }
+ 469 | 
+ 470 |     # Test escapes (modify this if you see anyone implementing quoted-pairs)
+ 471 |     headers = {"Forwarded": 'for=test;quoted="\\,x=x;y=\\";secret=mySecret'}
+ 472 |     request, response = app.test_client.get("/", headers=headers)
+ 473 |     assert response.json == {
+ 474 |         "for": "test",
+ 475 |         "quoted": "\\,x=x;y=\\",
+ 476 |         "secret": "mySecret",
+ 477 |     }
+ 478 | 
+ 479 |     # Secret insulated by malformed field #1
+ 480 |     headers = {"Forwarded": "for=test;secret=mySecret;b0rked;proto=wss;"}
+ 481 |     request, response = app.test_client.get("/", headers=headers)
+ 482 |     assert response.json == {"for": "test", "secret": "mySecret"}
+ 483 | 
+ 484 |     # Secret insulated by malformed field #2
+ 485 |     headers = {"Forwarded": "for=test;b0rked;secret=mySecret;proto=wss"}
+ 486 |     request, response = app.test_client.get("/", headers=headers)
+ 487 |     assert response.json == {"proto": "wss", "secret": "mySecret"}
+ 488 | 
+ 489 |     # Unexpected termination should not lose existing acceptable values
+ 490 |     headers = {"Forwarded": "b0rked;secret=mySecret;proto=wss"}
+ 491 |     request, response = app.test_client.get("/", headers=headers)
+ 492 |     assert response.json == {"proto": "wss", "secret": "mySecret"}
+ 493 | 
+ 494 |     # Field normalization
+ 495 |     headers = {
+ 496 |         "Forwarded": 'PROTO=WSS;BY="CAFE::8000";FOR=unknown;PORT=X;HOST="A:2";'
+ 497 |         'PATH="/With%20Spaces%22Quoted%22/sanicApp?key=val";SECRET=mySecret'
+ 498 |     }
+ 499 |     request, response = app.test_client.get("/", headers=headers)
+ 500 |     assert response.json == {
+ 501 |         "proto": "wss",
+ 502 |         "by": "[cafe::8000]",
+ 503 |         "host": "a:2",
+ 504 |         "path": '/With Spaces"Quoted"/sanicApp?key=val',
+ 505 |         "secret": "mySecret",
+ 506 |     }
+ 507 | 
+ 508 |     # Using "by" field as secret
+ 509 |     app.config.FORWARDED_SECRET = "_proxySecret"
+ 510 |     headers = {"Forwarded": "for=1.2.3.4; by=_proxySecret"}
+ 511 |     request, response = app.test_client.get("/", headers=headers)
+ 512 |     assert response.json == {"for": "1.2.3.4", "by": "_proxySecret"}
+ 513 | 
+ 514 | 
+ 515 | @pytest.mark.asyncio
+ 516 | async def test_standard_forwarded_asgi(app):
+ 517 |     @app.route("/")
+ 518 |     async def handler(request):
+ 519 |         return json(request.forwarded)
+ 520 | 
+ 521 |     # Without configured FORWARDED_SECRET, x-headers should be respected
+ 522 |     app.config.PROXIES_COUNT = 1
+ 523 |     app.config.REAL_IP_HEADER = "x-real-ip"
+ 524 |     headers = {
+ 525 |         "Forwarded": (
+ 526 |             'for=1.1.1.1, for=injected;host="'
+ 527 |             ', for="[::2]";proto=https;host=me.tld;path="/app/";secret=mySecret'
+ 528 |             ",for=broken;;secret=b0rked"
+ 529 |             ", for=127.0.0.3;scheme=http;port=1234"
+ 530 |         ),
+ 531 |         "X-Real-IP": "127.0.0.2",
+ 532 |         "X-Forwarded-For": "127.0.1.1",
+ 533 |         "X-Scheme": "ws",
+ 534 |     }
+ 535 |     request, response = await app.asgi_client.get("/", headers=headers)
+ 536 |     assert response.json() == {"for": "127.0.0.2", "proto": "ws"}
+ 537 |     assert request.remote_addr == "127.0.0.2"
+ 538 |     assert request.scheme == "ws"
+ 539 |     assert request.server_port == 80
+ 540 | 
+ 541 |     app.config.FORWARDED_SECRET = "mySecret"
+ 542 |     request, response = await app.asgi_client.get("/", headers=headers)
+ 543 |     assert response.json() == {
+ 544 |         "for": "[::2]",
+ 545 |         "proto": "https",
+ 546 |         "host": "me.tld",
+ 547 |         "path": "/app/",
+ 548 |         "secret": "mySecret",
+ 549 |     }
+ 550 |     assert request.remote_addr == "[::2]"
+ 551 |     assert request.server_name == "me.tld"
+ 552 |     assert request.scheme == "https"
+ 553 |     assert request.server_port == 443
+ 554 | 
+ 555 |     # Empty Forwarded header -> use X-headers
+ 556 |     headers["Forwarded"] = ""
+ 557 |     request, response = await app.asgi_client.get("/", headers=headers)
+ 558 |     assert response.json() == {"for": "127.0.0.2", "proto": "ws"}
+ 559 | 
+ 560 |     # Header present but not matching anything
+ 561 |     request, response = await app.asgi_client.get(
+ 562 |         "/", headers={"Forwarded": "."}
+ 563 |     )
+ 564 |     assert response.json() == {}
+ 565 | 
+ 566 |     # Forwarded header present but no matching secret -> use X-headers
+ 567 |     headers = {
+ 568 |         "Forwarded": "for=1.1.1.1;secret=x, for=127.0.0.1",
+ 569 |         "X-Real-IP": "127.0.0.2",
+ 570 |     }
+ 571 |     request, response = await app.asgi_client.get("/", headers=headers)
+ 572 |     assert response.json() == {"for": "127.0.0.2"}
+ 573 |     assert request.remote_addr == "127.0.0.2"
+ 574 | 
+ 575 |     # Different formatting and hitting both ends of the header
+ 576 |     headers = {"Forwarded": 'Secret="mySecret";For=127.0.0.4;Port=1234'}
+ 577 |     request, response = await app.asgi_client.get("/", headers=headers)
+ 578 |     assert response.json() == {
+ 579 |         "for": "127.0.0.4",
+ 580 |         "port": 1234,
+ 581 |         "secret": "mySecret",
+ 582 |     }
+ 583 | 
+ 584 |     # Test escapes (modify this if you see anyone implementing quoted-pairs)
+ 585 |     headers = {"Forwarded": 'for=test;quoted="\\,x=x;y=\\";secret=mySecret'}
+ 586 |     request, response = await app.asgi_client.get("/", headers=headers)
+ 587 |     assert response.json() == {
+ 588 |         "for": "test",
+ 589 |         "quoted": "\\,x=x;y=\\",
+ 590 |         "secret": "mySecret",
+ 591 |     }
+ 592 | 
+ 593 |     # Secret insulated by malformed field #1
+ 594 |     headers = {"Forwarded": "for=test;secret=mySecret;b0rked;proto=wss;"}
+ 595 |     request, response = await app.asgi_client.get("/", headers=headers)
+ 596 |     assert response.json() == {"for": "test", "secret": "mySecret"}
+ 597 | 
+ 598 |     # Secret insulated by malformed field #2
+ 599 |     headers = {"Forwarded": "for=test;b0rked;secret=mySecret;proto=wss"}
+ 600 |     request, response = await app.asgi_client.get("/", headers=headers)
+ 601 |     assert response.json() == {"proto": "wss", "secret": "mySecret"}
+ 602 | 
+ 603 |     # Unexpected termination should not lose existing acceptable values
+ 604 |     headers = {"Forwarded": "b0rked;secret=mySecret;proto=wss"}
+ 605 |     request, response = await app.asgi_client.get("/", headers=headers)
+ 606 |     assert response.json() == {"proto": "wss", "secret": "mySecret"}
+ 607 | 
+ 608 |     # Field normalization
+ 609 |     headers = {
+ 610 |         "Forwarded": 'PROTO=WSS;BY="CAFE::8000";FOR=unknown;PORT=X;HOST="A:2";'
+ 611 |         'PATH="/With%20Spaces%22Quoted%22/sanicApp?key=val";SECRET=mySecret'
+ 612 |     }
+ 613 |     request, response = await app.asgi_client.get("/", headers=headers)
+ 614 |     assert response.json() == {
+ 615 |         "proto": "wss",
+ 616 |         "by": "[cafe::8000]",
+ 617 |         "host": "a:2",
+ 618 |         "path": '/With Spaces"Quoted"/sanicApp?key=val',
+ 619 |         "secret": "mySecret",
+ 620 |     }
+ 621 | 
+ 622 |     # Using "by" field as secret
+ 623 |     app.config.FORWARDED_SECRET = "_proxySecret"
+ 624 |     headers = {"Forwarded": "for=1.2.3.4; by=_proxySecret"}
+ 625 |     request, response = await app.asgi_client.get("/", headers=headers)
+ 626 |     assert response.json() == {"for": "1.2.3.4", "by": "_proxySecret"}
+ 627 | 
+ 628 | 
+ 629 | def test_remote_addr_with_two_proxies(app):
+ 630 |     app.config.PROXIES_COUNT = 2
+ 631 |     app.config.REAL_IP_HEADER = "x-real-ip"
+ 632 | 
+ 633 |     @app.route("/")
+ 634 |     async def handler(request):
+ 635 |         return text(request.remote_addr)
+ 636 | 
+ 637 |     headers = {"X-Real-IP": "127.0.0.2", "X-Forwarded-For": "127.0.1.1"}
+ 638 |     request, response = app.test_client.get("/", headers=headers)
+ 639 |     assert request.remote_addr == "127.0.0.2"
+ 640 |     assert response.text == "127.0.0.2"
+ 641 | 
+ 642 |     headers = {"X-Forwarded-For": "127.0.1.1"}
+ 643 |     request, response = app.test_client.get("/", headers=headers)
+ 644 |     assert request.remote_addr == ""
+ 645 |     assert response.text == ""
+ 646 | 
+ 647 |     headers = {"X-Forwarded-For": "127.0.0.1, 127.0.1.2"}
+ 648 |     request, response = app.test_client.get("/", headers=headers)
+ 649 |     assert request.remote_addr == "127.0.0.1"
+ 650 |     assert response.text == "127.0.0.1"
+ 651 | 
+ 652 |     request, response = app.test_client.get("/")
+ 653 |     assert request.remote_addr == ""
+ 654 |     assert response.text == ""
+ 655 | 
+ 656 |     headers = {"X-Forwarded-For": "127.0.0.1, ,   ,,127.0.1.2"}
+ 657 |     request, response = app.test_client.get("/", headers=headers)
+ 658 |     assert request.remote_addr == "127.0.0.1"
+ 659 |     assert response.text == "127.0.0.1"
+ 660 | 
+ 661 |     headers = {
+ 662 |         "X-Forwarded-For": ", 127.0.2.2, ,  ,127.0.0.1, ,   ,,127.0.1.2"
+ 663 |     }
+ 664 |     request, response = app.test_client.get("/", headers=headers)
+ 665 |     assert request.remote_addr == "127.0.0.1"
+ 666 |     assert response.text == "127.0.0.1"
+ 667 | 
+ 668 | 
+ 669 | @pytest.mark.asyncio
+ 670 | async def test_remote_addr_with_two_proxies_asgi(app):
+ 671 |     app.config.PROXIES_COUNT = 2
+ 672 |     app.config.REAL_IP_HEADER = "x-real-ip"
+ 673 | 
+ 674 |     @app.route("/")
+ 675 |     async def handler(request):
+ 676 |         return text(request.remote_addr)
+ 677 | 
+ 678 |     headers = {"X-Real-IP": "127.0.0.2", "X-Forwarded-For": "127.0.1.1"}
+ 679 |     request, response = await app.asgi_client.get("/", headers=headers)
+ 680 |     assert request.remote_addr == "127.0.0.2"
+ 681 |     assert response.text == "127.0.0.2"
+ 682 | 
+ 683 |     headers = {"X-Forwarded-For": "127.0.1.1"}
+ 684 |     request, response = await app.asgi_client.get("/", headers=headers)
+ 685 |     assert request.remote_addr == ""
+ 686 |     assert response.text == ""
+ 687 | 
+ 688 |     headers = {"X-Forwarded-For": "127.0.0.1, 127.0.1.2"}
+ 689 |     request, response = await app.asgi_client.get("/", headers=headers)
+ 690 |     assert request.remote_addr == "127.0.0.1"
+ 691 |     assert response.text == "127.0.0.1"
+ 692 | 
+ 693 |     request, response = await app.asgi_client.get("/")
+ 694 |     assert request.remote_addr == ""
+ 695 |     assert response.text == ""
+ 696 | 
+ 697 |     headers = {"X-Forwarded-For": "127.0.0.1, ,   ,,127.0.1.2"}
+ 698 |     request, response = await app.asgi_client.get("/", headers=headers)
+ 699 |     assert request.remote_addr == "127.0.0.1"
+ 700 |     assert response.text == "127.0.0.1"
+ 701 | 
+ 702 |     headers = {
+ 703 |         "X-Forwarded-For": ", 127.0.2.2, ,  ,127.0.0.1, ,   ,,127.0.1.2"
+ 704 |     }
+ 705 |     request, response = await app.asgi_client.get("/", headers=headers)
+ 706 |     assert request.remote_addr == "127.0.0.1"
+ 707 |     assert response.text == "127.0.0.1"
+ 708 | 
+ 709 | 
+ 710 | def test_remote_addr_without_proxy(app):
+ 711 |     app.config.PROXIES_COUNT = 0
+ 712 | 
+ 713 |     @app.route("/")
+ 714 |     async def handler(request):
+ 715 |         return text(request.remote_addr)
+ 716 | 
+ 717 |     headers = {"X-Real-IP": "127.0.0.2", "X-Forwarded-For": "127.0.1.1"}
+ 718 |     request, response = app.test_client.get("/", headers=headers)
+ 719 |     assert request.remote_addr == ""
+ 720 |     assert response.text == ""
+ 721 | 
+ 722 |     headers = {"X-Forwarded-For": "127.0.1.1"}
+ 723 |     request, response = app.test_client.get("/", headers=headers)
+ 724 |     assert request.remote_addr == ""
+ 725 |     assert response.text == ""
+ 726 | 
+ 727 |     headers = {"X-Forwarded-For": "127.0.0.1, 127.0.1.2"}
+ 728 |     request, response = app.test_client.get("/", headers=headers)
+ 729 |     assert request.remote_addr == ""
+ 730 |     assert response.text == ""
+ 731 | 
+ 732 | 
+ 733 | @pytest.mark.asyncio
+ 734 | async def test_remote_addr_without_proxy_asgi(app):
+ 735 |     app.config.PROXIES_COUNT = 0
+ 736 | 
+ 737 |     @app.route("/")
+ 738 |     async def handler(request):
+ 739 |         return text(request.remote_addr)
+ 740 | 
+ 741 |     headers = {"X-Real-IP": "127.0.0.2", "X-Forwarded-For": "127.0.1.1"}
+ 742 |     request, response = await app.asgi_client.get("/", headers=headers)
+ 743 |     assert request.remote_addr == ""
+ 744 |     assert response.text == ""
+ 745 | 
+ 746 |     headers = {"X-Forwarded-For": "127.0.1.1"}
+ 747 |     request, response = await app.asgi_client.get("/", headers=headers)
+ 748 |     assert request.remote_addr == ""
+ 749 |     assert response.text == ""
+ 750 | 
+ 751 |     headers = {"X-Forwarded-For": "127.0.0.1, 127.0.1.2"}
+ 752 |     request, response = await app.asgi_client.get("/", headers=headers)
+ 753 |     assert request.remote_addr == ""
+ 754 |     assert response.text == ""
+ 755 | 
+ 756 | 
+ 757 | def test_remote_addr_custom_headers(app):
+ 758 |     app.config.PROXIES_COUNT = 1
+ 759 |     app.config.REAL_IP_HEADER = "Client-IP"
+ 760 |     app.config.FORWARDED_FOR_HEADER = "Forwarded"
+ 761 | 
+ 762 |     @app.route("/")
+ 763 |     async def handler(request):
+ 764 |         return text(request.remote_addr)
+ 765 | 
+ 766 |     headers = {"X-Real-IP": "127.0.0.2", "Forwarded": "127.0.1.1"}
+ 767 |     request, response = app.test_client.get("/", headers=headers)
+ 768 |     assert request.remote_addr == "127.0.1.1"
+ 769 |     assert response.text == "127.0.1.1"
+ 770 | 
+ 771 |     headers = {"X-Forwarded-For": "127.0.1.1"}
+ 772 |     request, response = app.test_client.get("/", headers=headers)
+ 773 |     assert request.remote_addr == ""
+ 774 |     assert response.text == ""
+ 775 | 
+ 776 |     headers = {"Client-IP": "127.0.0.2", "Forwarded": "127.0.1.1"}
+ 777 |     request, response = app.test_client.get("/", headers=headers)
+ 778 |     assert request.remote_addr == "127.0.0.2"
+ 779 |     assert response.text == "127.0.0.2"
+ 780 | 
+ 781 | 
+ 782 | @pytest.mark.asyncio
+ 783 | async def test_remote_addr_custom_headers_asgi(app):
+ 784 |     app.config.PROXIES_COUNT = 1
+ 785 |     app.config.REAL_IP_HEADER = "Client-IP"
+ 786 |     app.config.FORWARDED_FOR_HEADER = "Forwarded"
+ 787 | 
+ 788 |     @app.route("/")
+ 789 |     async def handler(request):
+ 790 |         return text(request.remote_addr)
+ 791 | 
+ 792 |     headers = {"X-Real-IP": "127.0.0.2", "Forwarded": "127.0.1.1"}
+ 793 |     request, response = await app.asgi_client.get("/", headers=headers)
+ 794 |     assert request.remote_addr == "127.0.1.1"
+ 795 |     assert response.text == "127.0.1.1"
+ 796 | 
+ 797 |     headers = {"X-Forwarded-For": "127.0.1.1"}
+ 798 |     request, response = await app.asgi_client.get("/", headers=headers)
+ 799 |     assert request.remote_addr == ""
+ 800 |     assert response.text == ""
+ 801 | 
+ 802 |     headers = {"Client-IP": "127.0.0.2", "Forwarded": "127.0.1.1"}
+ 803 |     request, response = await app.asgi_client.get("/", headers=headers)
+ 804 |     assert request.remote_addr == "127.0.0.2"
+ 805 |     assert response.text == "127.0.0.2"
+ 806 | 
+ 807 | 
+ 808 | def test_forwarded_scheme(app):
+ 809 |     @app.route("/")
+ 810 |     async def handler(request):
+ 811 |         return text(request.remote_addr)
+ 812 | 
+ 813 |     app.config.PROXIES_COUNT = 1
+ 814 |     request, response = app.test_client.get("/")
+ 815 |     assert request.scheme == "http"
+ 816 | 
+ 817 |     request, response = app.test_client.get(
+ 818 |         "/",
+ 819 |         headers={"X-Forwarded-For": "127.1.2.3", "X-Forwarded-Proto": "https"},
+ 820 |     )
+ 821 |     assert request.scheme == "https"
+ 822 | 
+ 823 |     request, response = app.test_client.get(
+ 824 |         "/", headers={"X-Forwarded-For": "127.1.2.3", "X-Scheme": "https"}
+ 825 |     )
+ 826 |     assert request.scheme == "https"
+ 827 | 
+ 828 | 
+ 829 | def test_match_info(app):
+ 830 |     @app.route("/api/v1/user/<user_id>/")
+ 831 |     async def handler(request, user_id):
+ 832 |         return json(request.match_info)
+ 833 | 
+ 834 |     request, response = app.test_client.get("/api/v1/user/sanic_user/")
+ 835 | 
+ 836 |     assert request.match_info == {"user_id": "sanic_user"}
+ 837 |     assert json_loads(response.text) == {"user_id": "sanic_user"}
+ 838 | 
+ 839 | 
+ 840 | @pytest.mark.asyncio
+ 841 | async def test_match_info_asgi(app):
+ 842 |     @app.route("/api/v1/user/<user_id>/")
+ 843 |     async def handler(request, user_id):
+ 844 |         return json(request.match_info)
+ 845 | 
+ 846 |     request, response = await app.asgi_client.get("/api/v1/user/sanic_user/")
+ 847 | 
+ 848 |     assert request.match_info == {"user_id": "sanic_user"}
+ 849 |     assert json_loads(response.text) == {"user_id": "sanic_user"}
+ 850 | 
+ 851 | 
+ 852 | # ------------------------------------------------------------ #
+ 853 | #  POST
+ 854 | # ------------------------------------------------------------ #
+ 855 | 
+ 856 | 
+ 857 | def test_post_json(app):
+ 858 |     @app.route("/", methods=["POST"])
+ 859 |     async def handler(request):
+ 860 |         return text("OK")
+ 861 | 
+ 862 |     payload = {"test": "OK"}
+ 863 |     headers = {"content-type": "application/json"}
+ 864 | 
+ 865 |     request, response = app.test_client.post(
+ 866 |         "/", data=json_dumps(payload), headers=headers
+ 867 |     )
+ 868 | 
+ 869 |     assert request.json.get("test") == "OK"
+ 870 |     assert request.json.get("test") == "OK"  # for request.parsed_json
+ 871 |     assert response.text == "OK"
+ 872 | 
+ 873 | 
+ 874 | @pytest.mark.asyncio
+ 875 | async def test_post_json_asgi(app):
+ 876 |     @app.route("/", methods=["POST"])
+ 877 |     async def handler(request):
+ 878 |         return text("OK")
+ 879 | 
+ 880 |     payload = {"test": "OK"}
+ 881 |     headers = {"content-type": "application/json"}
+ 882 | 
+ 883 |     request, response = await app.asgi_client.post(
+ 884 |         "/", data=json_dumps(payload), headers=headers
+ 885 |     )
+ 886 | 
+ 887 |     assert request.json.get("test") == "OK"
+ 888 |     assert request.json.get("test") == "OK"  # for request.parsed_json
+ 889 |     assert response.text == "OK"
+ 890 | 
+ 891 | 
+ 892 | def test_post_form_urlencoded(app):
+ 893 |     @app.route("/", methods=["POST"])
+ 894 |     async def handler(request):
+ 895 |         return text("OK")
+ 896 | 
+ 897 |     payload = "test=OK"
+ 898 |     headers = {"content-type": "application/x-www-form-urlencoded"}
+ 899 | 
+ 900 |     request, response = app.test_client.post(
+ 901 |         "/", data=payload, headers=headers
+ 902 |     )
+ 903 | 
+ 904 |     assert request.form.get("test") == "OK"
+ 905 |     assert request.form.get("test") == "OK"  # For request.parsed_form
+ 906 | 
+ 907 | 
+ 908 | @pytest.mark.asyncio
+ 909 | async def test_post_form_urlencoded_asgi(app):
+ 910 |     @app.route("/", methods=["POST"])
+ 911 |     async def handler(request):
+ 912 |         return text("OK")
+ 913 | 
+ 914 |     payload = "test=OK"
+ 915 |     headers = {"content-type": "application/x-www-form-urlencoded"}
+ 916 | 
+ 917 |     request, response = await app.asgi_client.post(
+ 918 |         "/", data=payload, headers=headers
+ 919 |     )
+ 920 | 
+ 921 |     assert request.form.get("test") == "OK"
+ 922 |     assert request.form.get("test") == "OK"  # For request.parsed_form
+ 923 | 
+ 924 | 
+ 925 | @pytest.mark.parametrize(
+ 926 |     "payload",
+ 927 |     [
+ 928 |         "------sanic\r\n"
+ 929 |         'Content-Disposition: form-data; name="test"\r\n'
+ 930 |         "\r\n"
+ 931 |         "OK\r\n"
+ 932 |         "------sanic--\r\n",
+ 933 |         "------sanic\r\n"
+ 934 |         'content-disposition: form-data; name="test"\r\n'
+ 935 |         "\r\n"
+ 936 |         "OK\r\n"
+ 937 |         "------sanic--\r\n",
+ 938 |     ],
+ 939 | )
+ 940 | def test_post_form_multipart_form_data(app, payload):
+ 941 |     @app.route("/", methods=["POST"])
+ 942 |     async def handler(request):
+ 943 |         return text("OK")
+ 944 | 
+ 945 |     headers = {"content-type": "multipart/form-data; boundary=----sanic"}
+ 946 | 
+ 947 |     request, response = app.test_client.post(data=payload, headers=headers)
+ 948 | 
+ 949 |     assert request.form.get("test") == "OK"
+ 950 | 
+ 951 | 
+ 952 | @pytest.mark.parametrize(
+ 953 |     "payload",
+ 954 |     [
+ 955 |         "------sanic\r\n"
+ 956 |         'Content-Disposition: form-data; name="test"\r\n'
+ 957 |         "\r\n"
+ 958 |         "OK\r\n"
+ 959 |         "------sanic--\r\n",
+ 960 |         "------sanic\r\n"
+ 961 |         'content-disposition: form-data; name="test"\r\n'
+ 962 |         "\r\n"
+ 963 |         "OK\r\n"
+ 964 |         "------sanic--\r\n",
+ 965 |     ],
+ 966 | )
+ 967 | @pytest.mark.asyncio
+ 968 | async def test_post_form_multipart_form_data_asgi(app, payload):
+ 969 |     @app.route("/", methods=["POST"])
+ 970 |     async def handler(request):
+ 971 |         return text("OK")
+ 972 | 
+ 973 |     headers = {"content-type": "multipart/form-data; boundary=----sanic"}
+ 974 | 
+ 975 |     request, response = await app.asgi_client.post(
+ 976 |         "/", data=payload, headers=headers
+ 977 |     )
+ 978 | 
+ 979 |     assert request.form.get("test") == "OK"
+ 980 | 
+ 981 | 
+ 982 | @pytest.mark.parametrize(
+ 983 |     "path,query,expected_url",
+ 984 |     [
+ 985 |         ("/foo", "", "http://{}:{}/foo"),
+ 986 |         ("/bar/baz", "", "http://{}:{}/bar/baz"),
+ 987 |         ("/moo/boo", "arg1=val1", "http://{}:{}/moo/boo?arg1=val1"),
+ 988 |     ],
+ 989 | )
+ 990 | def test_url_attributes_no_ssl(app, path, query, expected_url):
+ 991 |     async def handler(request):
+ 992 |         return text("OK")
+ 993 | 
+ 994 |     app.add_route(handler, path)
+ 995 | 
+ 996 |     request, response = app.test_client.get(path + "?{}".format(query))
+ 997 |     assert request.url == expected_url.format(HOST, PORT)
+ 998 | 
+ 999 |     parsed = urlparse(request.url)
+1000 | 
+1001 |     assert parsed.scheme == request.scheme
+1002 |     assert parsed.path == request.path
+1003 |     assert parsed.query == request.query_string
+1004 |     assert parsed.netloc == request.host
+1005 | 
+1006 | 
+1007 | @pytest.mark.parametrize(
+1008 |     "path,query,expected_url",
+1009 |     [
+1010 |         ("/foo", "", "http://{}/foo"),
+1011 |         ("/bar/baz", "", "http://{}/bar/baz"),
+1012 |         ("/moo/boo", "arg1=val1", "http://{}/moo/boo?arg1=val1"),
+1013 |     ],
+1014 | )
+1015 | @pytest.mark.asyncio
+1016 | async def test_url_attributes_no_ssl_asgi(app, path, query, expected_url):
+1017 |     async def handler(request):
+1018 |         return text("OK")
+1019 | 
+1020 |     app.add_route(handler, path)
+1021 | 
+1022 |     request, response = await app.asgi_client.get(path + "?{}".format(query))
+1023 |     assert request.url == expected_url.format(ASGI_HOST)
+1024 | 
+1025 |     parsed = urlparse(request.url)
+1026 | 
+1027 |     assert parsed.scheme == request.scheme
+1028 |     assert parsed.path == request.path
+1029 |     assert parsed.query == request.query_string
+1030 |     assert parsed.netloc == request.host
+1031 | 
+1032 | 
+1033 | @pytest.mark.parametrize(
+1034 |     "path,query,expected_url",
+1035 |     [
+1036 |         ("/foo", "", "https://{}:{}/foo"),
+1037 |         ("/bar/baz", "", "https://{}:{}/bar/baz"),
+1038 |         ("/moo/boo", "arg1=val1", "https://{}:{}/moo/boo?arg1=val1"),
+1039 |     ],
+1040 | )
+1041 | def test_url_attributes_with_ssl_context(app, path, query, expected_url):
+1042 |     current_dir = os.path.dirname(os.path.realpath(__file__))
+1043 |     context = ssl.create_default_context(purpose=ssl.Purpose.CLIENT_AUTH)
+1044 |     context.load_cert_chain(
+1045 |         os.path.join(current_dir, "certs/selfsigned.cert"),
+1046 |         keyfile=os.path.join(current_dir, "certs/selfsigned.key"),
+1047 |     )
+1048 | 
+1049 |     async def handler(request):
+1050 |         return text("OK")
+1051 | 
+1052 |     app.add_route(handler, path)
+1053 | 
+1054 |     request, response = app.test_client.get(
+1055 |         "https://{}:{}".format(HOST, PORT) + path + "?{}".format(query),
+1056 |         server_kwargs={"ssl": context},
+1057 |     )
+1058 |     assert request.url == expected_url.format(HOST, PORT)
+1059 | 
+1060 |     parsed = urlparse(request.url)
+1061 | 
+1062 |     assert parsed.scheme == request.scheme
+1063 |     assert parsed.path == request.path
+1064 |     assert parsed.query == request.query_string
+1065 |     assert parsed.netloc == request.host
+1066 | 
+1067 | 
+1068 | @pytest.mark.parametrize(
+1069 |     "path,query,expected_url",
+1070 |     [
+1071 |         ("/foo", "", "https://{}:{}/foo"),
+1072 |         ("/bar/baz", "", "https://{}:{}/bar/baz"),
+1073 |         ("/moo/boo", "arg1=val1", "https://{}:{}/moo/boo?arg1=val1"),
+1074 |     ],
+1075 | )
+1076 | def test_url_attributes_with_ssl_dict(app, path, query, expected_url):
+1077 | 
+1078 |     current_dir = os.path.dirname(os.path.realpath(__file__))
+1079 |     ssl_cert = os.path.join(current_dir, "certs/selfsigned.cert")
+1080 |     ssl_key = os.path.join(current_dir, "certs/selfsigned.key")
+1081 | 
+1082 |     ssl_dict = {"cert": ssl_cert, "key": ssl_key}
+1083 | 
+1084 |     async def handler(request):
+1085 |         return text("OK")
+1086 | 
+1087 |     app.add_route(handler, path)
+1088 | 
+1089 |     request, response = app.test_client.get(
+1090 |         "https://{}:{}".format(HOST, PORT) + path + "?{}".format(query),
+1091 |         server_kwargs={"ssl": ssl_dict},
+1092 |     )
+1093 |     assert request.url == expected_url.format(HOST, PORT)
+1094 | 
+1095 |     parsed = urlparse(request.url)
+1096 | 
+1097 |     assert parsed.scheme == request.scheme
+1098 |     assert parsed.path == request.path
+1099 |     assert parsed.query == request.query_string
+1100 |     assert parsed.netloc == request.host
+1101 | 
+1102 | 
+1103 | def test_invalid_ssl_dict(app):
+1104 |     @app.get("/test")
+1105 |     async def handler(request):
+1106 |         return text("ssl test")
+1107 | 
+1108 |     ssl_dict = {"cert": None, "key": None}
+1109 | 
+1110 |     with pytest.raises(ValueError) as excinfo:
+1111 |         request, response = app.test_client.get(
+1112 |             "/test", server_kwargs={"ssl": ssl_dict}
+1113 |         )
+1114 | 
+1115 |     assert str(excinfo.value) == "SSLContext or certificate and key required."
+1116 | 
+1117 | 
+1118 | def test_form_with_multiple_values(app):
+1119 |     @app.route("/", methods=["POST"])
+1120 |     async def handler(request):
+1121 |         return text("OK")
+1122 | 
+1123 |     payload = "selectedItems=v1&selectedItems=v2&selectedItems=v3"
+1124 | 
+1125 |     headers = {"content-type": "application/x-www-form-urlencoded"}
+1126 | 
+1127 |     request, response = app.test_client.post(
+1128 |         "/", data=payload, headers=headers
+1129 |     )
+1130 | 
+1131 |     assert request.form.getlist("selectedItems") == ["v1", "v2", "v3"]
+1132 | 
+1133 | 
+1134 | @pytest.mark.asyncio
+1135 | async def test_form_with_multiple_values_asgi(app):
+1136 |     @app.route("/", methods=["POST"])
+1137 |     async def handler(request):
+1138 |         return text("OK")
+1139 | 
+1140 |     payload = "selectedItems=v1&selectedItems=v2&selectedItems=v3"
+1141 | 
+1142 |     headers = {"content-type": "application/x-www-form-urlencoded"}
+1143 | 
+1144 |     request, response = await app.asgi_client.post(
+1145 |         "/", data=payload, headers=headers
+1146 |     )
+1147 | 
+1148 |     assert request.form.getlist("selectedItems") == ["v1", "v2", "v3"]
+1149 | 
+1150 | 
+1151 | def test_request_string_representation(app):
+1152 |     @app.route("/", methods=["GET"])
+1153 |     async def get(request):
+1154 |         return text("OK")
+1155 | 
+1156 |     request, _ = app.test_client.get("/")
+1157 |     assert repr(request) == "<Request: GET />"
+1158 | 
+1159 | 
+1160 | @pytest.mark.asyncio
+1161 | async def test_request_string_representation_asgi(app):
+1162 |     @app.route("/", methods=["GET"])
+1163 |     async def get(request):
+1164 |         return text("OK")
+1165 | 
+1166 |     request, _ = await app.asgi_client.get("/")
+1167 |     assert repr(request) == "<Request: GET />"
+1168 | 
+1169 | 
+1170 | @pytest.mark.parametrize(
+1171 |     "payload,filename",
+1172 |     [
+1173 |         (
+1174 |             "------sanic\r\n"
+1175 |             'Content-Disposition: form-data; filename="filename"; name="test"\r\n'
+1176 |             "\r\n"
+1177 |             "OK\r\n"
+1178 |             "------sanic--\r\n",
+1179 |             "filename",
+1180 |         ),
+1181 |         (
+1182 |             "------sanic\r\n"
+1183 |             'content-disposition: form-data; filename="filename"; name="test"\r\n'
+1184 |             "\r\n"
+1185 |             'content-type: application/json; {"field": "value"}\r\n'
+1186 |             "------sanic--\r\n",
+1187 |             "filename",
+1188 |         ),
+1189 |         (
+1190 |             "------sanic\r\n"
+1191 |             'Content-Disposition: form-data; filename=""; name="test"\r\n'
+1192 |             "\r\n"
+1193 |             "OK\r\n"
+1194 |             "------sanic--\r\n",
+1195 |             "",
+1196 |         ),
+1197 |         (
+1198 |             "------sanic\r\n"
+1199 |             'content-disposition: form-data; filename=""; name="test"\r\n'
+1200 |             "\r\n"
+1201 |             'content-type: application/json; {"field": "value"}\r\n'
+1202 |             "------sanic--\r\n",
+1203 |             "",
+1204 |         ),
+1205 |         (
+1206 |             "------sanic\r\n"
+1207 |             'Content-Disposition: form-data; filename*="utf-8\'\'filename_%C2%A0_test"; name="test"\r\n'
+1208 |             "\r\n"
+1209 |             "OK\r\n"
+1210 |             "------sanic--\r\n",
+1211 |             "filename_\u00A0_test",
+1212 |         ),
+1213 |         (
+1214 |             "------sanic\r\n"
+1215 |             'content-disposition: form-data; filename*="utf-8\'\'filename_%C2%A0_test"; name="test"\r\n'
+1216 |             "\r\n"
+1217 |             'content-type: application/json; {"field": "value"}\r\n'
+1218 |             "------sanic--\r\n",
+1219 |             "filename_\u00A0_test",
+1220 |         ),
+1221 |     ],
+1222 | )
+1223 | def test_request_multipart_files(app, payload, filename):
+1224 |     @app.route("/", methods=["POST"])
+1225 |     async def post(request):
+1226 |         return text("OK")
+1227 | 
+1228 |     headers = {"content-type": "multipart/form-data; boundary=----sanic"}
+1229 | 
+1230 |     request, _ = app.test_client.post(data=payload, headers=headers)
+1231 |     assert request.files.get("test").name == filename
+1232 | 
+1233 | 
+1234 | @pytest.mark.parametrize(
+1235 |     "payload,filename",
+1236 |     [
+1237 |         (
+1238 |             "------sanic\r\n"
+1239 |             'Content-Disposition: form-data; filename="filename"; name="test"\r\n'
+1240 |             "\r\n"
+1241 |             "OK\r\n"
+1242 |             "------sanic--\r\n",
+1243 |             "filename",
+1244 |         ),
+1245 |         (
+1246 |             "------sanic\r\n"
+1247 |             'content-disposition: form-data; filename="filename"; name="test"\r\n'
+1248 |             "\r\n"
+1249 |             'content-type: application/json; {"field": "value"}\r\n'
+1250 |             "------sanic--\r\n",
+1251 |             "filename",
+1252 |         ),
+1253 |         (
+1254 |             "------sanic\r\n"
+1255 |             'Content-Disposition: form-data; filename=""; name="test"\r\n'
+1256 |             "\r\n"
+1257 |             "OK\r\n"
+1258 |             "------sanic--\r\n",
+1259 |             "",
+1260 |         ),
+1261 |         (
+1262 |             "------sanic\r\n"
+1263 |             'content-disposition: form-data; filename=""; name="test"\r\n'
+1264 |             "\r\n"
+1265 |             'content-type: application/json; {"field": "value"}\r\n'
+1266 |             "------sanic--\r\n",
+1267 |             "",
+1268 |         ),
+1269 |         (
+1270 |             "------sanic\r\n"
+1271 |             'Content-Disposition: form-data; filename*="utf-8\'\'filename_%C2%A0_test"; name="test"\r\n'
+1272 |             "\r\n"
+1273 |             "OK\r\n"
+1274 |             "------sanic--\r\n",
+1275 |             "filename_\u00A0_test",
+1276 |         ),
+1277 |         (
+1278 |             "------sanic\r\n"
+1279 |             'content-disposition: form-data; filename*="utf-8\'\'filename_%C2%A0_test"; name="test"\r\n'
+1280 |             "\r\n"
+1281 |             'content-type: application/json; {"field": "value"}\r\n'
+1282 |             "------sanic--\r\n",
+1283 |             "filename_\u00A0_test",
+1284 |         ),
+1285 |     ],
+1286 | )
+1287 | @pytest.mark.asyncio
+1288 | async def test_request_multipart_files_asgi(app, payload, filename):
+1289 |     @app.route("/", methods=["POST"])
+1290 |     async def post(request):
+1291 |         return text("OK")
+1292 | 
+1293 |     headers = {"content-type": "multipart/form-data; boundary=----sanic"}
+1294 | 
+1295 |     request, _ = await app.asgi_client.post("/", data=payload, headers=headers)
+1296 |     assert request.files.get("test").name == filename
+1297 | 
+1298 | 
+1299 | def test_request_multipart_file_with_json_content_type(app):
+1300 |     @app.route("/", methods=["POST"])
+1301 |     async def post(request):
+1302 |         return text("OK")
+1303 | 
+1304 |     payload = (
+1305 |         "------sanic\r\n"
+1306 |         'Content-Disposition: form-data; name="file"; filename="test.json"\r\n'
+1307 |         "Content-Type: application/json\r\n"
+1308 |         "Content-Length: 0"
+1309 |         "\r\n"
+1310 |         "\r\n"
+1311 |         "------sanic--"
+1312 |     )
+1313 | 
+1314 |     headers = {"content-type": "multipart/form-data; boundary=------sanic"}
+1315 | 
+1316 |     request, _ = app.test_client.post(data=payload, headers=headers)
+1317 |     assert request.files.get("file").type == "application/json"
+1318 | 
+1319 | 
+1320 | @pytest.mark.asyncio
+1321 | async def test_request_multipart_file_with_json_content_type_asgi(app):
+1322 |     @app.route("/", methods=["POST"])
+1323 |     async def post(request):
+1324 |         return text("OK")
+1325 | 
+1326 |     payload = (
+1327 |         "------sanic\r\n"
+1328 |         'Content-Disposition: form-data; name="file"; filename="test.json"\r\n'
+1329 |         "Content-Type: application/json\r\n"
+1330 |         "Content-Length: 0"
+1331 |         "\r\n"
+1332 |         "\r\n"
+1333 |         "------sanic--"
+1334 |     )
+1335 | 
+1336 |     headers = {"content-type": "multipart/form-data; boundary=------sanic"}
+1337 | 
+1338 |     request, _ = await app.asgi_client.post("/", data=payload, headers=headers)
+1339 |     assert request.files.get("file").type == "application/json"
+1340 | 
+1341 | 
+1342 | def test_request_multipart_file_without_field_name(app, caplog):
+1343 |     @app.route("/", methods=["POST"])
+1344 |     async def post(request):
+1345 |         return text("OK")
+1346 | 
+1347 |     payload = (
+1348 |         '------sanic\r\nContent-Disposition: form-data; filename="test.json"'
+1349 |         "\r\nContent-Type: application/json\r\n\r\n\r\n------sanic--"
+1350 |     )
+1351 | 
+1352 |     headers = {"content-type": "multipart/form-data; boundary=------sanic"}
+1353 | 
+1354 |     request, _ = app.test_client.post(
+1355 |         data=payload, headers=headers, debug=True
+1356 |     )
+1357 |     with caplog.at_level(logging.DEBUG):
+1358 |         request.form
+1359 | 
+1360 |     assert caplog.record_tuples[-1] == (
+1361 |         "sanic.root",
+1362 |         logging.DEBUG,
+1363 |         "Form-data field does not have a 'name' parameter "
+1364 |         "in the Content-Disposition header",
+1365 |     )
+1366 | 
+1367 | 
+1368 | def test_request_multipart_file_duplicate_filed_name(app):
+1369 |     @app.route("/", methods=["POST"])
+1370 |     async def post(request):
+1371 |         return text("OK")
+1372 | 
+1373 |     payload = (
+1374 |         "--e73ffaa8b1b2472b8ec848de833cb05b\r\n"
+1375 |         'Content-Disposition: form-data; name="file"\r\n'
+1376 |         "Content-Type: application/octet-stream\r\n"
+1377 |         "Content-Length: 15\r\n"
+1378 |         "\r\n"
+1379 |         '{"test":"json"}\r\n'
+1380 |         "--e73ffaa8b1b2472b8ec848de833cb05b\r\n"
+1381 |         'Content-Disposition: form-data; name="file"\r\n'
+1382 |         "Content-Type: application/octet-stream\r\n"
+1383 |         "Content-Length: 15\r\n"
+1384 |         "\r\n"
+1385 |         '{"test":"json2"}\r\n'
+1386 |         "--e73ffaa8b1b2472b8ec848de833cb05b--\r\n"
+1387 |     )
+1388 | 
+1389 |     headers = {
+1390 |         "Content-Type": "multipart/form-data; boundary=e73ffaa8b1b2472b8ec848de833cb05b"
+1391 |     }
+1392 | 
+1393 |     request, _ = app.test_client.post(
+1394 |         data=payload, headers=headers, debug=True
+1395 |     )
+1396 |     assert request.form.getlist("file") == [
+1397 |         '{"test":"json"}',
+1398 |         '{"test":"json2"}',
+1399 |     ]
+1400 | 
+1401 | 
+1402 | @pytest.mark.asyncio
+1403 | async def test_request_multipart_file_duplicate_filed_name_asgi(app):
+1404 |     @app.route("/", methods=["POST"])
+1405 |     async def post(request):
+1406 |         return text("OK")
+1407 | 
+1408 |     payload = (
+1409 |         "--e73ffaa8b1b2472b8ec848de833cb05b\r\n"
+1410 |         'Content-Disposition: form-data; name="file"\r\n'
+1411 |         "Content-Type: application/octet-stream\r\n"
+1412 |         "Content-Length: 15\r\n"
+1413 |         "\r\n"
+1414 |         '{"test":"json"}\r\n'
+1415 |         "--e73ffaa8b1b2472b8ec848de833cb05b\r\n"
+1416 |         'Content-Disposition: form-data; name="file"\r\n'
+1417 |         "Content-Type: application/octet-stream\r\n"
+1418 |         "Content-Length: 15\r\n"
+1419 |         "\r\n"
+1420 |         '{"test":"json2"}\r\n'
+1421 |         "--e73ffaa8b1b2472b8ec848de833cb05b--\r\n"
+1422 |     )
+1423 | 
+1424 |     headers = {
+1425 |         "Content-Type": "multipart/form-data; boundary=e73ffaa8b1b2472b8ec848de833cb05b"
+1426 |     }
+1427 | 
+1428 |     request, _ = await app.asgi_client.post("/", data=payload, headers=headers)
+1429 |     assert request.form.getlist("file") == [
+1430 |         '{"test":"json"}',
+1431 |         '{"test":"json2"}',
+1432 |     ]
+1433 | 
+1434 | 
+1435 | def test_request_multipart_with_multiple_files_and_type(app):
+1436 |     @app.route("/", methods=["POST"])
+1437 |     async def post(request):
+1438 |         return text("OK")
+1439 | 
+1440 |     payload = (
+1441 |         '------sanic\r\nContent-Disposition: form-data; name="file"; filename="test.json"'
+1442 |         "\r\nContent-Type: application/json\r\n\r\n\r\n"
+1443 |         '------sanic\r\nContent-Disposition: form-data; name="file"; filename="some_file.pdf"\r\n'
+1444 |         "Content-Type: application/pdf\r\n\r\n\r\n------sanic--"
+1445 |     )
+1446 |     headers = {"content-type": "multipart/form-data; boundary=------sanic"}
+1447 | 
+1448 |     request, _ = app.test_client.post(data=payload, headers=headers)
+1449 |     assert len(request.files.getlist("file")) == 2
+1450 |     assert request.files.getlist("file")[0].type == "application/json"
+1451 |     assert request.files.getlist("file")[1].type == "application/pdf"
+1452 | 
+1453 | 
+1454 | @pytest.mark.asyncio
+1455 | async def test_request_multipart_with_multiple_files_and_type_asgi(app):
+1456 |     @app.route("/", methods=["POST"])
+1457 |     async def post(request):
+1458 |         return text("OK")
+1459 | 
+1460 |     payload = (
+1461 |         '------sanic\r\nContent-Disposition: form-data; name="file"; filename="test.json"'
+1462 |         "\r\nContent-Type: application/json\r\n\r\n\r\n"
+1463 |         '------sanic\r\nContent-Disposition: form-data; name="file"; filename="some_file.pdf"\r\n'
+1464 |         "Content-Type: application/pdf\r\n\r\n\r\n------sanic--"
+1465 |     )
+1466 |     headers = {"content-type": "multipart/form-data; boundary=------sanic"}
+1467 | 
+1468 |     request, _ = await app.asgi_client.post("/", data=payload, headers=headers)
+1469 |     assert len(request.files.getlist("file")) == 2
+1470 |     assert request.files.getlist("file")[0].type == "application/json"
+1471 |     assert request.files.getlist("file")[1].type == "application/pdf"
+1472 | 
+1473 | 
+1474 | def test_request_repr(app):
+1475 |     @app.get("/")
+1476 |     def handler(request):
+1477 |         return text("pass")
+1478 | 
+1479 |     request, response = app.test_client.get("/")
+1480 |     assert repr(request) == "<Request: GET />"
+1481 | 
+1482 |     request.method = None
+1483 |     assert repr(request) == "<Request: None />"
+1484 | 
+1485 | 
+1486 | @pytest.mark.asyncio
+1487 | async def test_request_repr_asgi(app):
+1488 |     @app.get("/")
+1489 |     def handler(request):
+1490 |         return text("pass")
+1491 | 
+1492 |     request, response = await app.asgi_client.get("/")
+1493 |     assert repr(request) == "<Request: GET />"
+1494 | 
+1495 |     request.method = None
+1496 |     assert repr(request) == "<Request: None />"
+1497 | 
+1498 | 
+1499 | def test_request_bool(app):
+1500 |     @app.get("/")
+1501 |     def handler(request):
+1502 |         return text("pass")
+1503 | 
+1504 |     request, response = app.test_client.get("/")
+1505 |     assert bool(request)
+1506 | 
+1507 | 
+1508 | def test_request_parsing_form_failed(app, caplog):
+1509 |     @app.route("/", methods=["POST"])
+1510 |     async def handler(request):
+1511 |         return text("OK")
+1512 | 
+1513 |     payload = "test=OK"
+1514 |     headers = {"content-type": "multipart/form-data"}
+1515 | 
+1516 |     request, response = app.test_client.post(
+1517 |         "/", data=payload, headers=headers
+1518 |     )
+1519 | 
+1520 |     with caplog.at_level(logging.ERROR):
+1521 |         request.form
+1522 | 
+1523 |     assert caplog.record_tuples[-1] == (
+1524 |         "sanic.error",
+1525 |         logging.ERROR,
+1526 |         "Failed when parsing form",
+1527 |     )
+1528 | 
+1529 | 
+1530 | @pytest.mark.asyncio
+1531 | async def test_request_parsing_form_failed_asgi(app, caplog):
+1532 |     @app.route("/", methods=["POST"])
+1533 |     async def handler(request):
+1534 |         return text("OK")
+1535 | 
+1536 |     payload = "test=OK"
+1537 |     headers = {"content-type": "multipart/form-data"}
+1538 | 
+1539 |     request, response = await app.asgi_client.post(
+1540 |         "/", data=payload, headers=headers
+1541 |     )
+1542 | 
+1543 |     with caplog.at_level(logging.ERROR):
+1544 |         request.form
+1545 | 
+1546 |     assert caplog.record_tuples[-1] == (
+1547 |         "sanic.error",
+1548 |         logging.ERROR,
+1549 |         "Failed when parsing form",
+1550 |     )
+1551 | 
+1552 | 
+1553 | def test_request_args_no_query_string(app):
+1554 |     @app.get("/")
+1555 |     def handler(request):
+1556 |         return text("pass")
+1557 | 
+1558 |     request, response = app.test_client.get("/")
+1559 | 
+1560 |     assert request.args == {}
+1561 | 
+1562 | 
+1563 | @pytest.mark.asyncio
+1564 | async def test_request_args_no_query_string_await(app):
+1565 |     @app.get("/")
+1566 |     def handler(request):
+1567 |         return text("pass")
+1568 | 
+1569 |     request, response = await app.asgi_client.get("/")
+1570 | 
+1571 |     assert request.args == {}
+1572 | 
+1573 | 
+1574 | def test_request_raw_args(app):
+1575 | 
+1576 |     params = {"test": "OK"}
+1577 | 
+1578 |     @app.get("/")
+1579 |     def handler(request):
+1580 |         return text("pass")
+1581 | 
+1582 |     request, response = app.test_client.get("/", params=params)
+1583 | 
+1584 |     assert request.raw_args == params
+1585 | 
+1586 | 
+1587 | @pytest.mark.asyncio
+1588 | async def test_request_raw_args_asgi(app):
+1589 | 
+1590 |     params = {"test": "OK"}
+1591 | 
+1592 |     @app.get("/")
+1593 |     def handler(request):
+1594 |         return text("pass")
+1595 | 
+1596 |     request, response = await app.asgi_client.get("/", params=params)
+1597 | 
+1598 |     assert request.raw_args == params
+1599 | 
+1600 | 
+1601 | def test_request_query_args(app):
+1602 |     # test multiple params with the same key
+1603 |     params = [("test", "value1"), ("test", "value2")]
+1604 | 
+1605 |     @app.get("/")
+1606 |     def handler(request):
+1607 |         return text("pass")
+1608 | 
+1609 |     request, response = app.test_client.get("/", params=params)
+1610 | 
+1611 |     assert request.query_args == params
+1612 | 
+1613 |     # test cached value
+1614 |     assert (
+1615 |         request.parsed_not_grouped_args[(False, False, "utf-8", "replace")]
+1616 |         == request.query_args
+1617 |     )
+1618 | 
+1619 |     # test params directly in the url
+1620 |     request, response = app.test_client.get("/?test=value1&test=value2")
+1621 | 
+1622 |     assert request.query_args == params
+1623 | 
+1624 |     # test unique params
+1625 |     params = [("test1", "value1"), ("test2", "value2")]
+1626 | 
+1627 |     request, response = app.test_client.get("/", params=params)
+1628 | 
+1629 |     assert request.query_args == params
+1630 | 
+1631 |     # test no params
+1632 |     request, response = app.test_client.get("/")
+1633 | 
+1634 |     assert not request.query_args
+1635 | 
+1636 | 
+1637 | @pytest.mark.asyncio
+1638 | async def test_request_query_args_asgi(app):
+1639 |     # test multiple params with the same key
+1640 |     params = [("test", "value1"), ("test", "value2")]
+1641 | 
+1642 |     @app.get("/")
+1643 |     def handler(request):
+1644 |         return text("pass")
+1645 | 
+1646 |     request, response = await app.asgi_client.get("/", params=params)
+1647 | 
+1648 |     assert request.query_args == params
+1649 | 
+1650 |     # test cached value
+1651 |     assert (
+1652 |         request.parsed_not_grouped_args[(False, False, "utf-8", "replace")]
+1653 |         == request.query_args
+1654 |     )
+1655 | 
+1656 |     # test params directly in the url
+1657 |     request, response = await app.asgi_client.get("/?test=value1&test=value2")
+1658 | 
+1659 |     assert request.query_args == params
+1660 | 
+1661 |     # test unique params
+1662 |     params = [("test1", "value1"), ("test2", "value2")]
+1663 | 
+1664 |     request, response = await app.asgi_client.get("/", params=params)
+1665 | 
+1666 |     assert request.query_args == params
+1667 | 
+1668 |     # test no params
+1669 |     request, response = await app.asgi_client.get("/")
+1670 | 
+1671 |     assert not request.query_args
+1672 | 
+1673 | 
+1674 | def test_request_query_args_custom_parsing(app):
+1675 |     @app.get("/")
+1676 |     def handler(request):
+1677 |         return text("pass")
+1678 | 
+1679 |     request, response = app.test_client.get(
+1680 |         "/?test1=value1&test2=&test3=value3"
+1681 |     )
+1682 | 
+1683 |     assert request.get_query_args(keep_blank_values=True) == [
+1684 |         ("test1", "value1"),
+1685 |         ("test2", ""),
+1686 |         ("test3", "value3"),
+1687 |     ]
+1688 |     assert request.query_args == [("test1", "value1"), ("test3", "value3")]
+1689 |     assert request.get_query_args(keep_blank_values=False) == [
+1690 |         ("test1", "value1"),
+1691 |         ("test3", "value3"),
+1692 |     ]
+1693 | 
+1694 |     assert request.get_args(keep_blank_values=True) == RequestParameters(
+1695 |         {"test1": ["value1"], "test2": [""], "test3": ["value3"]}
+1696 |     )
+1697 | 
+1698 |     assert request.args == RequestParameters(
+1699 |         {"test1": ["value1"], "test3": ["value3"]}
+1700 |     )
+1701 | 
+1702 |     assert request.get_args(keep_blank_values=False) == RequestParameters(
+1703 |         {"test1": ["value1"], "test3": ["value3"]}
+1704 |     )
+1705 | 
+1706 | 
+1707 | @pytest.mark.asyncio
+1708 | async def test_request_query_args_custom_parsing_asgi(app):
+1709 |     @app.get("/")
+1710 |     def handler(request):
+1711 |         return text("pass")
+1712 | 
+1713 |     request, response = await app.asgi_client.get(
+1714 |         "/?test1=value1&test2=&test3=value3"
+1715 |     )
+1716 | 
+1717 |     assert request.get_query_args(keep_blank_values=True) == [
+1718 |         ("test1", "value1"),
+1719 |         ("test2", ""),
+1720 |         ("test3", "value3"),
+1721 |     ]
+1722 |     assert request.query_args == [("test1", "value1"), ("test3", "value3")]
+1723 |     assert request.get_query_args(keep_blank_values=False) == [
+1724 |         ("test1", "value1"),
+1725 |         ("test3", "value3"),
+1726 |     ]
+1727 | 
+1728 |     assert request.get_args(keep_blank_values=True) == RequestParameters(
+1729 |         {"test1": ["value1"], "test2": [""], "test3": ["value3"]}
+1730 |     )
+1731 | 
+1732 |     assert request.args == RequestParameters(
+1733 |         {"test1": ["value1"], "test3": ["value3"]}
+1734 |     )
+1735 | 
+1736 |     assert request.get_args(keep_blank_values=False) == RequestParameters(
+1737 |         {"test1": ["value1"], "test3": ["value3"]}
+1738 |     )
+1739 | 
+1740 | 
+1741 | def test_request_cookies(app):
+1742 | 
+1743 |     cookies = {"test": "OK"}
+1744 | 
+1745 |     @app.get("/")
+1746 |     def handler(request):
+1747 |         return text("OK")
+1748 | 
+1749 |     request, response = app.test_client.get("/", cookies=cookies)
+1750 | 
+1751 |     assert request.cookies == cookies
+1752 |     assert request.cookies == cookies  # For request._cookies
+1753 | 
+1754 | 
+1755 | @pytest.mark.asyncio
+1756 | async def test_request_cookies_asgi(app):
+1757 | 
+1758 |     cookies = {"test": "OK"}
+1759 | 
+1760 |     @app.get("/")
+1761 |     def handler(request):
+1762 |         return text("OK")
+1763 | 
+1764 |     request, response = await app.asgi_client.get("/", cookies=cookies)
+1765 | 
+1766 |     assert request.cookies == cookies
+1767 |     assert request.cookies == cookies  # For request._cookies
+1768 | 
+1769 | 
+1770 | def test_request_cookies_without_cookies(app):
+1771 |     @app.get("/")
+1772 |     def handler(request):
+1773 |         return text("OK")
+1774 | 
+1775 |     request, response = app.test_client.get("/")
+1776 | 
+1777 |     assert request.cookies == {}
+1778 | 
+1779 | 
+1780 | @pytest.mark.asyncio
+1781 | async def test_request_cookies_without_cookies_asgi(app):
+1782 |     @app.get("/")
+1783 |     def handler(request):
+1784 |         return text("OK")
+1785 | 
+1786 |     request, response = await app.asgi_client.get("/")
+1787 | 
+1788 |     assert request.cookies == {}
+1789 | 
+1790 | 
+1791 | def test_request_port(app):
+1792 |     @app.get("/")
+1793 |     def handler(request):
+1794 |         return text("OK")
+1795 | 
+1796 |     request, response = app.test_client.get("/")
+1797 | 
+1798 |     port = request.port
+1799 |     assert isinstance(port, int)
+1800 | 
+1801 |     delattr(request, "_socket")
+1802 |     delattr(request, "_port")
+1803 | 
+1804 |     port = request.port
+1805 |     assert isinstance(port, int)
+1806 |     assert hasattr(request, "_socket")
+1807 |     assert hasattr(request, "_port")
+1808 | 
+1809 | 
+1810 | @pytest.mark.asyncio
+1811 | async def test_request_port_asgi(app):
+1812 |     @app.get("/")
+1813 |     def handler(request):
+1814 |         return text("OK")
+1815 | 
+1816 |     request, response = await app.asgi_client.get("/")
+1817 | 
+1818 |     port = request.port
+1819 |     assert isinstance(port, int)
+1820 | 
+1821 |     delattr(request, "_socket")
+1822 |     delattr(request, "_port")
+1823 | 
+1824 |     port = request.port
+1825 |     assert isinstance(port, int)
+1826 |     assert hasattr(request, "_socket")
+1827 |     assert hasattr(request, "_port")
+1828 | 
+1829 | 
+1830 | def test_request_socket(app):
+1831 |     @app.get("/")
+1832 |     def handler(request):
+1833 |         return text("OK")
+1834 | 
+1835 |     request, response = app.test_client.get("/")
+1836 | 
+1837 |     socket = request.socket
+1838 |     assert isinstance(socket, tuple)
+1839 | 
+1840 |     ip = socket[0]
+1841 |     port = socket[1]
+1842 | 
+1843 |     assert ip == request.ip
+1844 |     assert port == request.port
+1845 | 
+1846 |     delattr(request, "_socket")
+1847 | 
+1848 |     socket = request.socket
+1849 |     assert isinstance(socket, tuple)
+1850 |     assert hasattr(request, "_socket")
+1851 | 
+1852 | 
+1853 | def test_request_server_name(app):
+1854 |     @app.get("/")
+1855 |     def handler(request):
+1856 |         return text("OK")
+1857 | 
+1858 |     request, response = app.test_client.get("/")
+1859 |     assert request.server_name == "127.0.0.1"
+1860 | 
+1861 | 
+1862 | def test_request_server_name_in_host_header(app):
+1863 |     @app.get("/")
+1864 |     def handler(request):
+1865 |         return text("OK")
+1866 | 
+1867 |     request, response = app.test_client.get(
+1868 |         "/", headers={"Host": "my-server:5555"}
+1869 |     )
+1870 |     assert request.server_name == "my-server"
+1871 | 
+1872 |     request, response = app.test_client.get(
+1873 |         "/", headers={"Host": "[2a00:1450:400f:80c::200e]:5555"}
+1874 |     )
+1875 |     assert request.server_name == "[2a00:1450:400f:80c::200e]"
+1876 | 
+1877 |     request, response = app.test_client.get(
+1878 |         "/", headers={"Host": "mal_formed"}
+1879 |     )
+1880 |     assert request.server_name == None  # For now (later maybe 127.0.0.1)
+1881 | 
+1882 | 
+1883 | def test_request_server_name_forwarded(app):
+1884 |     @app.get("/")
+1885 |     def handler(request):
+1886 |         return text("OK")
+1887 | 
+1888 |     app.config.PROXIES_COUNT = 1
+1889 |     request, response = app.test_client.get(
+1890 |         "/",
+1891 |         headers={
+1892 |             "Host": "my-server:5555",
+1893 |             "X-Forwarded-For": "127.1.2.3",
+1894 |             "X-Forwarded-Host": "your-server",
+1895 |         },
+1896 |     )
+1897 |     assert request.server_name == "your-server"
+1898 | 
+1899 | 
+1900 | def test_request_server_port(app):
+1901 |     @app.get("/")
+1902 |     def handler(request):
+1903 |         return text("OK")
+1904 | 
+1905 |     request, response = app.test_client.get("/", headers={"Host": "my-server"})
+1906 |     assert request.server_port == app.test_client.port
+1907 | 
+1908 | 
+1909 | def test_request_server_port_in_host_header(app):
+1910 |     @app.get("/")
+1911 |     def handler(request):
+1912 |         return text("OK")
+1913 | 
+1914 |     request, response = app.test_client.get(
+1915 |         "/", headers={"Host": "my-server:5555"}
+1916 |     )
+1917 |     assert request.server_port == 5555
+1918 | 
+1919 |     request, response = app.test_client.get(
+1920 |         "/", headers={"Host": "[2a00:1450:400f:80c::200e]:5555"}
+1921 |     )
+1922 |     assert request.server_port == 5555
+1923 | 
+1924 |     request, response = app.test_client.get(
+1925 |         "/", headers={"Host": "mal_formed:5555"}
+1926 |     )
+1927 |     assert request.server_port == app.test_client.port
+1928 | 
+1929 | 
+1930 | def test_request_server_port_forwarded(app):
+1931 |     @app.get("/")
+1932 |     def handler(request):
+1933 |         return text("OK")
+1934 | 
+1935 |     app.config.PROXIES_COUNT = 1
+1936 |     request, response = app.test_client.get(
+1937 |         "/",
+1938 |         headers={
+1939 |             "Host": "my-server:5555",
+1940 |             "X-Forwarded-For": "127.1.2.3",
+1941 |             "X-Forwarded-Port": "4444",
+1942 |         },
+1943 |     )
+1944 |     assert request.server_port == 4444
+1945 | 
+1946 | 
+1947 | def test_request_form_invalid_content_type(app):
+1948 |     @app.route("/", methods=["POST"])
+1949 |     async def post(request):
+1950 |         return text("OK")
+1951 | 
+1952 |     request, response = app.test_client.post("/", json={"test": "OK"})
+1953 | 
+1954 |     assert request.form == {}
+1955 | 
+1956 | 
+1957 | def test_server_name_and_url_for(app):
+1958 |     @app.get("/foo")
+1959 |     def handler(request):
+1960 |         return text("ok")
+1961 | 
+1962 |     app.config.SERVER_NAME = "my-server"
+1963 |     assert app.url_for("handler", _external=True) == "http://my-server/foo"
+1964 |     request, response = app.test_client.get("/foo")
+1965 |     assert (
+1966 |         request.url_for("handler")
+1967 |         == f"http://my-server:{app.test_client.port}/foo"
+1968 |     )
+1969 | 
+1970 |     app.config.SERVER_NAME = "https://my-server/path"
+1971 |     request, response = app.test_client.get("/foo")
+1972 |     url = f"https://my-server/path/foo"
+1973 |     assert app.url_for("handler", _external=True) == url
+1974 |     assert request.url_for("handler") == url
+1975 | 
+1976 | 
+1977 | def test_url_for_with_forwarded_request(app):
+1978 |     @app.get("/")
+1979 |     def handler(request):
+1980 |         return text("OK")
+1981 | 
+1982 |     @app.get("/another_view/")
+1983 |     def view_name(request):
+1984 |         return text("OK")
+1985 | 
+1986 |     app.config.SERVER_NAME = "my-server"
+1987 |     app.config.PROXIES_COUNT = 1
+1988 |     request, response = app.test_client.get(
+1989 |         "/",
+1990 |         headers={
+1991 |             "X-Forwarded-For": "127.1.2.3",
+1992 |             "X-Forwarded-Proto": "https",
+1993 |             "X-Forwarded-Port": "6789",
+1994 |         },
+1995 |     )
+1996 |     assert app.url_for("view_name") == "/another_view"
+1997 |     assert (
+1998 |         app.url_for("view_name", _external=True)
+1999 |         == "http://my-server/another_view"
+2000 |     )
+2001 |     assert (
+2002 |         request.url_for("view_name") == "https://my-server:6789/another_view"
+2003 |     )
+2004 | 
+2005 |     request, response = app.test_client.get(
+2006 |         "/",
+2007 |         headers={
+2008 |             "X-Forwarded-For": "127.1.2.3",
+2009 |             "X-Forwarded-Proto": "https",
+2010 |             "X-Forwarded-Port": "443",
+2011 |         },
+2012 |     )
+2013 |     assert request.url_for("view_name") == "https://my-server/another_view"
+2014 | 
+2015 | 
+2016 | @pytest.mark.asyncio
+2017 | async def test_request_form_invalid_content_type_asgi(app):
+2018 |     @app.route("/", methods=["POST"])
+2019 |     async def post(request):
+2020 |         return text("OK")
+2021 | 
+2022 |     request, response = await app.asgi_client.post("/", json={"test": "OK"})
+2023 | 
+2024 |     assert request.form == {}
+2025 | 
+2026 | 
+2027 | def test_endpoint_basic():
+2028 |     app = Sanic()
+2029 | 
+2030 |     @app.route("/")
+2031 |     def my_unique_handler(request):
+2032 |         return text("Hello")
+2033 | 
+2034 |     request, response = app.test_client.get("/")
+2035 | 
+2036 |     assert request.endpoint == "test_requests.my_unique_handler"
+2037 | 
+2038 | 
+2039 | @pytest.mark.asyncio
+2040 | async def test_endpoint_basic_asgi():
+2041 |     app = Sanic()
+2042 | 
+2043 |     @app.route("/")
+2044 |     def my_unique_handler(request):
+2045 |         return text("Hello")
+2046 | 
+2047 |     request, response = await app.asgi_client.get("/")
+2048 | 
+2049 |     assert request.endpoint == "test_requests.my_unique_handler"
+2050 | 
+2051 | 
+2052 | def test_endpoint_named_app():
+2053 |     app = Sanic("named")
+2054 | 
+2055 |     @app.route("/")
+2056 |     def my_unique_handler(request):
+2057 |         return text("Hello")
+2058 | 
+2059 |     request, response = app.test_client.get("/")
+2060 | 
+2061 |     assert request.endpoint == "named.my_unique_handler"
+2062 | 
+2063 | 
+2064 | @pytest.mark.asyncio
+2065 | async def test_endpoint_named_app_asgi():
+2066 |     app = Sanic("named")
+2067 | 
+2068 |     @app.route("/")
+2069 |     def my_unique_handler(request):
+2070 |         return text("Hello")
+2071 | 
+2072 |     request, response = await app.asgi_client.get("/")
+2073 | 
+2074 |     assert request.endpoint == "named.my_unique_handler"
+2075 | 
+2076 | 
+2077 | def test_endpoint_blueprint():
+2078 |     bp = Blueprint("my_blueprint", url_prefix="/bp")
+2079 | 
+2080 |     @bp.route("/")
+2081 |     async def bp_root(request):
+2082 |         return text("Hello")
+2083 | 
+2084 |     app = Sanic("named")
+2085 |     app.blueprint(bp)
+2086 | 
+2087 |     request, response = app.test_client.get("/bp")
+2088 | 
+2089 |     assert request.endpoint == "named.my_blueprint.bp_root"
+2090 | 
+2091 | 
+2092 | @pytest.mark.asyncio
+2093 | async def test_endpoint_blueprint_asgi():
+2094 |     bp = Blueprint("my_blueprint", url_prefix="/bp")
+2095 | 
+2096 |     @bp.route("/")
+2097 |     async def bp_root(request):
+2098 |         return text("Hello")
+2099 | 
+2100 |     app = Sanic("named")
+2101 |     app.blueprint(bp)
+2102 | 
+2103 |     request, response = await app.asgi_client.get("/bp")
+2104 | 
+2105 |     assert request.endpoint == "named.my_blueprint.bp_root"
+2106 | 
+2107 | 
+2108 | def test_url_for_without_server_name(app):
+2109 |     @app.route("/sample")
+2110 |     def sample(request):
+2111 |         return json({"url": request.url_for("url_for")})
+2112 | 
+2113 |     @app.route("/url-for")
+2114 |     def url_for(request):
+2115 |         return text("url-for")
+2116 | 
+2117 |     request, response = app.test_client.get("/sample")
+2118 |     assert (
+2119 |         response.json["url"]
+2120 |         == f"http://127.0.0.1:{app.test_client.port}/url-for"
+2121 |     )
+```

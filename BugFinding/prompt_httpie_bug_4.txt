@@ -1,0 +1,187 @@
+You are given buggy source files and failing test files.
+
+Your task is BUG LOCALIZATION ONLY.
+
+Return only valid JSON using this exact format:
+
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "relative/path.py",
+      "line_start": 1,
+      "line_end": 1,
+      "confidence": "low|medium|high",
+      "reason": "Max 2 sentences."
+    }
+  ]
+}
+
+Rules:
+- Do not propose fixes.
+- Do not rewrite code.
+- Do not explain outside JSON.
+- Line numbers must refer to the numbered buggy source file.
+- Include at most 3 suspected locations.
+- Prefer the smallest line range that identifies the origin of the bug.
+
+
+SOURCE FILES:
+
+[file_1] BugsInPy/workspace/httpie/httpie/models.py
+```python
+  1 | from httpie.compat import urlsplit, str
+  2 | 
+  3 | 
+  4 | class HTTPMessage(object):
+  5 |     """Abstract class for HTTP messages."""
+  6 | 
+  7 |     def __init__(self, orig):
+  8 |         self._orig = orig
+  9 | 
+ 10 |     def iter_body(self, chunk_size):
+ 11 |         """Return an iterator over the body."""
+ 12 |         raise NotImplementedError()
+ 13 | 
+ 14 |     def iter_lines(self, chunk_size):
+ 15 |         """Return an iterator over the body yielding (`line`, `line_feed`)."""
+ 16 |         raise NotImplementedError()
+ 17 | 
+ 18 |     @property
+ 19 |     def headers(self):
+ 20 |         """Return a `str` with the message's headers."""
+ 21 |         raise NotImplementedError()
+ 22 | 
+ 23 |     @property
+ 24 |     def encoding(self):
+ 25 |         """Return a `str` with the message's encoding, if known."""
+ 26 |         raise NotImplementedError()
+ 27 | 
+ 28 |     @property
+ 29 |     def body(self):
+ 30 |         """Return a `bytes` with the message's body."""
+ 31 |         raise NotImplementedError()
+ 32 | 
+ 33 |     @property
+ 34 |     def content_type(self):
+ 35 |         """Return the message content type."""
+ 36 |         ct = self._orig.headers.get('Content-Type', '')
+ 37 |         if not isinstance(ct, str):
+ 38 |             ct = ct.decode('utf8')
+ 39 |         return ct
+ 40 | 
+ 41 | 
+ 42 | class HTTPResponse(HTTPMessage):
+ 43 |     """A :class:`requests.models.Response` wrapper."""
+ 44 | 
+ 45 |     def iter_body(self, chunk_size=1):
+ 46 |         return self._orig.iter_content(chunk_size=chunk_size)
+ 47 | 
+ 48 |     def iter_lines(self, chunk_size):
+ 49 |         return ((line, b'\n') for line in self._orig.iter_lines(chunk_size))
+ 50 | 
+ 51 |     #noinspection PyProtectedMember
+ 52 |     @property
+ 53 |     def headers(self):
+ 54 |         original = self._orig.raw._original_response
+ 55 |         version = {9: '0.9', 10: '1.0', 11: '1.1'}[original.version]
+ 56 |         status_line = 'HTTP/{version} {status} {reason}'.format(
+ 57 |             version=version,
+ 58 |             status=original.status,
+ 59 |             reason=original.reason
+ 60 |         )
+ 61 |         headers = [status_line]
+ 62 |         try:
+ 63 |             # `original.msg` is a `http.client.HTTPMessage` on Python 3
+ 64 |             # `_headers` is a 2-tuple
+ 65 |             headers.extend(
+ 66 |                 '%s: %s' % header for header in original.msg._headers)
+ 67 |         except AttributeError:
+ 68 |             # and a `httplib.HTTPMessage` on Python 2.x
+ 69 |             # `headers` is a list of `name: val<CRLF>`.
+ 70 |             headers.extend(h.strip() for h in original.msg.headers)
+ 71 | 
+ 72 |         return '\r\n'.join(headers)
+ 73 | 
+ 74 |     @property
+ 75 |     def encoding(self):
+ 76 |         return self._orig.encoding or 'utf8'
+ 77 | 
+ 78 |     @property
+ 79 |     def body(self):
+ 80 |         # Only now the response body is fetched.
+ 81 |         # Shouldn't be touched unless the body is actually needed.
+ 82 |         return self._orig.content
+ 83 | 
+ 84 | 
+ 85 | class HTTPRequest(HTTPMessage):
+ 86 |     """A :class:`requests.models.Request` wrapper."""
+ 87 | 
+ 88 |     def iter_body(self, chunk_size):
+ 89 |         yield self.body
+ 90 | 
+ 91 |     def iter_lines(self, chunk_size):
+ 92 |         yield self.body, b''
+ 93 | 
+ 94 |     @property
+ 95 |     def headers(self):
+ 96 |         url = urlsplit(self._orig.url)
+ 97 | 
+ 98 |         request_line = '{method} {path}{query} HTTP/1.1'.format(
+ 99 |             method=self._orig.method,
+100 |             path=url.path or '/',
+101 |             query='?' + url.query if url.query else ''
+102 |         )
+103 | 
+104 |         headers = dict(self._orig.headers)
+105 | 
+106 |         if 'Host' not in headers:
+107 |             headers['Host'] = url.netloc.split('@')[-1]
+108 | 
+109 |         headers = ['%s: %s' % (name, value)
+110 |                    for name, value in headers.items()]
+111 | 
+112 |         headers.insert(0, request_line)
+113 |         headers = '\r\n'.join(headers).strip()
+114 | 
+115 |         if isinstance(headers, bytes):
+116 |             # Python < 3
+117 |             headers = headers.decode('utf8')
+118 |         return headers
+119 | 
+120 |     @property
+121 |     def encoding(self):
+122 |         return 'utf8'
+123 | 
+124 |     @property
+125 |     def body(self):
+126 |         body = self._orig.body
+127 |         if isinstance(body, str):
+128 |             # Happens with JSON/form request data parsed from the command line.
+129 |             body = body.encode('utf8')
+130 |         return body or b''
+```
+
+
+FAILING TEST FILES:
+
+[test_file_1] BugsInPy/workspace/httpie/tests/test_regressions.py
+```python
+ 1 | """Miscellaneous regression tests"""
+ 2 | import socket
+ 3 | 
+ 4 | from utils import http, HTTP_OK
+ 5 | 
+ 6 | 
+ 7 | def test_Host_header_overwrite():
+ 8 |     """
+ 9 |     https://github.com/jakubroztocil/httpie/issues/235
+10 | 
+11 |     """
+12 |     host = 'httpbin.org'
+13 |     url = 'http://{httpbin_ip}/get'.format(
+14 |         httpbin_ip=socket.gethostbyname(host))
+15 |     r = http('--print=hH', url, 'host:{}'.format(host))
+16 |     assert HTTP_OK in r
+17 |     assert r.lower().count('host:') == 1
+```

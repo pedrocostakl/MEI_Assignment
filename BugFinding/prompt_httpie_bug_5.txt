@@ -1,0 +1,530 @@
+You are given buggy source files and failing test files.
+
+Your task is BUG LOCALIZATION ONLY.
+
+Return only valid JSON using this exact format:
+
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "relative/path.py",
+      "line_start": 1,
+      "line_end": 1,
+      "confidence": "low|medium|high",
+      "reason": "Max 2 sentences."
+    }
+  ]
+}
+
+Rules:
+- Do not propose fixes.
+- Do not rewrite code.
+- Do not explain outside JSON.
+- Line numbers must refer to the numbered buggy source file.
+- Include at most 3 suspected locations.
+- Prefer the smallest line range that identifies the origin of the bug.
+
+
+SOURCE FILES:
+
+[file_1] BugsInPy/workspace/httpie/httpie/cli.py
+```python
+  1 | import os
+  2 | import json
+  3 | import argparse
+  4 | import re
+  5 | from collections import namedtuple
+  6 | from . import pretty
+  7 | from . import __doc__ as doc
+  8 | from . import __version__ as version
+  9 | 
+ 10 | 
+ 11 | SEP_COMMON = ':'
+ 12 | SEP_HEADERS = SEP_COMMON
+ 13 | SEP_DATA = '='
+ 14 | SEP_DATA_RAW_JSON = ':='
+ 15 | SEP_FILES = '@'
+ 16 | PRETTIFY_STDOUT_TTY_ONLY = object()
+ 17 | 
+ 18 | OUT_REQUEST_HEADERS = 'H'
+ 19 | OUT_REQUEST_BODY = 'B'
+ 20 | OUT_RESPONSE_HEADERS = 'h'
+ 21 | OUT_RESPONSE_BODY = 'b'
+ 22 | 
+ 23 | OUTPUT_OPTIONS = [OUT_REQUEST_HEADERS,
+ 24 |                   OUT_REQUEST_BODY,
+ 25 |                   OUT_RESPONSE_HEADERS,
+ 26 |                   OUT_RESPONSE_BODY]
+ 27 | 
+ 28 | 
+ 29 | class ParseError(Exception):
+ 30 |     pass
+ 31 | 
+ 32 | 
+ 33 | KeyValue = namedtuple('KeyValue', ['key', 'value', 'sep', 'orig'])
+ 34 | 
+ 35 | class KeyValueType(object):
+ 36 |     """A type used with `argparse`."""
+ 37 |     def __init__(self, *separators):
+ 38 |         self.separators = separators
+ 39 | 
+ 40 |     def __call__(self, string):
+ 41 |         found = {}
+ 42 |         for sep in self.separators:
+ 43 |             regex = '[^\\\\]' + sep
+ 44 |             match = re.search(regex, string)
+ 45 |             if match:
+ 46 |                 found[match.start() + 1] = sep
+ 47 | 
+ 48 |         if not found:
+ 49 |             #noinspection PyExceptionInherit
+ 50 |             raise argparse.ArgumentTypeError(
+ 51 |                 '"%s" is not a valid value' % string)
+ 52 | 
+ 53 |         # split the string at the earliest non-escaped separator.
+ 54 |         seploc = min(found.keys())
+ 55 |         sep = found[seploc]
+ 56 |         key = string[:seploc]
+ 57 |         value = string[seploc + len(sep):]
+ 58 | 
+ 59 |         # remove escape chars
+ 60 |         for sepstr in self.separators:
+ 61 |             key = key.replace('\\' + sepstr, sepstr)
+ 62 |             value = value.replace('\\' + sepstr, sepstr)
+ 63 |         return KeyValue(key=key, value=value, sep=sep, orig=string)
+ 64 | 
+ 65 | 
+ 66 | def parse_items(items, data=None, headers=None, files=None):
+ 67 |     """Parse `KeyValueType` `items` into `data`, `headers` and `files`."""
+ 68 |     if headers is None:
+ 69 |         headers = {}
+ 70 |     if data is None:
+ 71 |         data = {}
+ 72 |     if files is None:
+ 73 |         files = {}
+ 74 |     for item in items:
+ 75 |         value = item.value
+ 76 |         key = item.key
+ 77 |         if item.sep == SEP_HEADERS:
+ 78 |             target = headers
+ 79 |         elif item.sep == SEP_FILES:
+ 80 |             try:
+ 81 |                 value = open(os.path.expanduser(item.value), 'r')
+ 82 |             except IOError as e:
+ 83 |                 raise ParseError(
+ 84 |                     'Invalid argument %r. %s' % (item.orig, e))
+ 85 |             if not key:
+ 86 |                 key = os.path.basename(value.name)
+ 87 |             target = files
+ 88 |         elif item.sep in [SEP_DATA, SEP_DATA_RAW_JSON]:
+ 89 |             if item.sep == SEP_DATA_RAW_JSON:
+ 90 |                 try:
+ 91 |                     value = json.loads(item.value)
+ 92 |                 except ValueError:
+ 93 |                     raise ParseError('%s is not valid JSON' % item.orig)
+ 94 |             target = data
+ 95 |         else:
+ 96 |             raise ParseError('%s is not valid item' % item.orig)
+ 97 | 
+ 98 |         if key in target:
+ 99 |             ParseError('duplicate item %s (%s)' % (item.key, item.orig))
+100 | 
+101 |         target[key] = value
+102 | 
+103 |     return headers, data, files
+104 | 
+105 | 
+106 | def _(text):
+107 |     """Normalize white space."""
+108 |     return ' '.join(text.strip().split())
+109 | 
+110 | 
+111 | class HTTPieArgumentParser(argparse.ArgumentParser):
+112 |     def parse_args(self, args=None, namespace=None):
+113 |         args = super(HTTPieArgumentParser, self).parse_args(args, namespace)
+114 |         self._validate_output_options(args)
+115 |         self._validate_auth_options(args)
+116 |         return args
+117 | 
+118 |     def _validate_output_options(self, args):
+119 |         unknown_output_options = set(args.output_options) - set(OUTPUT_OPTIONS)
+120 |         if unknown_output_options:
+121 |             self.error('Unknown output options: %s' % ','.join(unknown_output_options))
+122 | 
+123 |     def _validate_auth_options(self, args):
+124 |         if args.auth_type and not args.auth:
+125 |             self.error('--auth-type can only be used with --auth')
+126 | 
+127 | 
+128 | 
+129 | parser = HTTPieArgumentParser(description=doc.strip(),)
+130 | parser.add_argument('--version', action='version', version=version)
+131 | 
+132 | # Content type.
+133 | #############################################
+134 | 
+135 | group_type = parser.add_mutually_exclusive_group(required=False)
+136 | group_type.add_argument(
+137 |     '--json', '-j', action='store_true',
+138 |     help=_('''
+139 |         Serialize data items as a JSON object and set
+140 |         Content-Type to application/json, if not specified.
+141 |     ''')
+142 | )
+143 | group_type.add_argument(
+144 |     '--form', '-f', action='store_true',
+145 |     help=_('''
+146 |         Serialize fields as form values. The Content-Type is set to application/x-www-form-urlencoded.
+147 |         The presence of any file fields results into a multipart/form-data request.
+148 |         Note that Content-Type is not automatically set if explicitely specified.
+149 |      ''')
+150 | )
+151 | 
+152 | 
+153 | # output_options options.
+154 | #############################################
+155 | 
+156 | parser.add_argument(
+157 |     '--traceback', action='store_true', default=False,
+158 |     help=_('''
+159 |         Print exception traceback should one occur.
+160 |     ''')
+161 | )
+162 | 
+163 | prettify = parser.add_mutually_exclusive_group(required=False)
+164 | prettify.add_argument(
+165 |     '--pretty', dest='prettify', action='store_true',
+166 |     default=PRETTIFY_STDOUT_TTY_ONLY,
+167 |     help=_('''
+168 |         If stdout is a terminal, the response is prettified
+169 |         by default (colorized and indented if it is JSON).
+170 |         This flag ensures prettifying even when stdout is redirected.
+171 |     ''')
+172 | )
+173 | prettify.add_argument(
+174 |     '--ugly', '-u', dest='prettify', action='store_false',
+175 |     help=_('''
+176 |         Do not prettify the response.
+177 |     ''')
+178 | )
+179 | 
+180 | output_options = parser.add_mutually_exclusive_group(required=False)
+181 | output_options.add_argument('--print', '-p', dest='output_options',
+182 |     default=OUT_RESPONSE_HEADERS + OUT_RESPONSE_BODY,
+183 |     help=_('''
+184 |         String specifying what should the output contain.
+185 |         "{request_headers}" stands for request headers and
+186 |         "{request_body}" for request body.
+187 |         "{response_headers}" stands for response headers and
+188 |         "{response_body}" for response body.
+189 |         Defaults to "hb" which means that the whole response
+190 |         (headers and body) is printed.
+191 |     '''.format(
+192 |         request_headers=OUT_REQUEST_HEADERS,
+193 |         request_body=OUT_REQUEST_BODY,
+194 |         response_headers=OUT_RESPONSE_HEADERS,
+195 |         response_body=OUT_RESPONSE_BODY,
+196 |     ))
+197 | )
+198 | output_options.add_argument(
+199 |     '--verbose', '-v', dest='output_options',
+200 |     action='store_const', const=''.join(OUTPUT_OPTIONS),
+201 |     help=_('''
+202 |         Print the whole request as well as response.
+203 |         Shortcut for --print={0}.
+204 |     '''.format(''.join(OUTPUT_OPTIONS)))
+205 | )
+206 | output_options.add_argument(
+207 |     '--headers', '-t', dest='output_options',
+208 |     action='store_const', const=OUT_RESPONSE_HEADERS,
+209 |     help=_('''
+210 |         Print only the response headers.
+211 |         Shortcut for --print={0}.
+212 |     '''.format(OUT_RESPONSE_HEADERS))
+213 | )
+214 | output_options.add_argument(
+215 |     '--body', '-b', dest='output_options',
+216 |     action='store_const', const=OUT_RESPONSE_BODY,
+217 |     help=_('''
+218 |         Print only the response body.
+219 |         Shortcut for --print={0}.
+220 |     '''.format(OUT_RESPONSE_BODY))
+221 | )
+222 | 
+223 | parser.add_argument(
+224 |     '--style', '-s', dest='style', default='solarized', metavar='STYLE',
+225 |     choices=pretty.AVAILABLE_STYLES,
+226 |     help=_('''
+227 |         Output coloring style, one of %s. Defaults to solarized.
+228 |     ''') % ', '.join(sorted(pretty.AVAILABLE_STYLES))
+229 | )
+230 | 
+231 | # ``requests.request`` keyword arguments.
+232 | parser.add_argument(
+233 |     '--auth', '-a', help='username:password',
+234 |     type=KeyValueType(SEP_COMMON)
+235 | )
+236 | 
+237 | parser.add_argument(
+238 |     '--auth-type', choices=['basic', 'digest'],
+239 |     help=_('The type of authentication ("basic" or "digest"). Defaults to "basic".')
+240 | )
+241 | 
+242 | parser.add_argument(
+243 |     '--verify', default='yes',
+244 |     help=_('''
+245 |         Set to "no" to skip checking the host\'s SSL certificate.
+246 |         You can also pass the  path to a CA_BUNDLE
+247 |         file for private certs. You can also set
+248 |         the REQUESTS_CA_BUNDLE  environment variable.
+249 |         Defaults to "yes".
+250 |     ''')
+251 | )
+252 | parser.add_argument(
+253 |     '--proxy', default=[], action='append',
+254 |     type=KeyValueType(SEP_COMMON),
+255 |     help=_('''
+256 |         String mapping protocol to the URL of the proxy
+257 |         (e.g. http:foo.bar:3128).
+258 |     ''')
+259 | )
+260 | parser.add_argument(
+261 |     '--allow-redirects', default=False, action='store_true',
+262 |     help=_('''
+263 |         Set this flag if full redirects are allowed
+264 |         (e.g. re-POST-ing of data at new ``Location``)
+265 |     ''')
+266 | )
+267 | parser.add_argument(
+268 |     '--timeout', type=float,
+269 |     help=_('''
+270 |         Float describes the timeout of the request
+271 |         (Use socket.setdefaulttimeout() as fallback).
+272 |     ''')
+273 | )
+274 | 
+275 | 
+276 | # Positional arguments.
+277 | #############################################
+278 | 
+279 | parser.add_argument(
+280 |     'method', metavar='METHOD',
+281 |     help=_('''
+282 |         HTTP method to be used for the request
+283 |         (GET, POST, PUT, DELETE, PATCH, ...).
+284 |     ''')
+285 | )
+286 | parser.add_argument(
+287 |     'url', metavar='URL',
+288 |     help=_('''
+289 |         Protocol defaults to http:// if the
+290 |         URL does not include it.
+291 |     ''')
+292 | )
+293 | parser.add_argument(
+294 |     'items', nargs='*',
+295 |     type=KeyValueType(SEP_COMMON, SEP_DATA, SEP_DATA_RAW_JSON, SEP_FILES),
+296 |     help=_('''
+297 |         HTTP header (header:value), data field (field=value),
+298 |         raw JSON field (field:=value)
+299 |         or file field (field@/path/to/file).
+300 |     ''')
+301 | )
+```
+
+
+FAILING TEST FILES:
+
+[test_file_1] BugsInPy/workspace/httpie/tests/tests.py
+```python
+  1 | # coding:utf-8
+  2 | import os
+  3 | import sys
+  4 | import unittest
+  5 | import argparse
+  6 | from requests.compat import StringIO, is_py26, str
+  7 | 
+  8 | 
+  9 | TESTS_ROOT = os.path.dirname(__file__)
+ 10 | sys.path.insert(0, os.path.realpath(os.path.join(TESTS_ROOT, '..')))
+ 11 | from httpie import __main__
+ 12 | from httpie import cli
+ 13 | 
+ 14 | 
+ 15 | TEST_FILE = os.path.join(TESTS_ROOT, 'file.txt')
+ 16 | TERMINAL_COLOR_PRESENCE_CHECK = '\x1b['
+ 17 | 
+ 18 | 
+ 19 | def http(*args, **kwargs):
+ 20 |     http_kwargs = {
+ 21 |         'stdin_isatty': True,
+ 22 |         'stdout_isatty': False
+ 23 |     }
+ 24 |     http_kwargs.update(kwargs)
+ 25 |     stdout = http_kwargs.setdefault('stdout', StringIO())
+ 26 |     __main__.main(args=args, **http_kwargs)
+ 27 |     return stdout.getvalue()
+ 28 | 
+ 29 | 
+ 30 | class BaseTest(unittest.TestCase):
+ 31 | 
+ 32 |     if is_py26:
+ 33 |         def assertIn(self, member, container, msg=None):
+ 34 |             self.assert_(member in container, msg)
+ 35 | 
+ 36 |         def assertNotIn(self, member, container, msg=None):
+ 37 |             self.assert_(member not in container, msg)
+ 38 | 
+ 39 |         def assertDictEqual(self, d1, d2, msg=None):
+ 40 |             self.assertEqual(set(d1.keys()), set(d2.keys()), msg)
+ 41 |             self.assertEqual(sorted(d1.values()), sorted(d2.values()), msg)
+ 42 | 
+ 43 | 
+ 44 | class TestItemParsing(BaseTest):
+ 45 | 
+ 46 |     def setUp(self):
+ 47 |         self.kv = cli.KeyValueType(
+ 48 |             cli.SEP_HEADERS,
+ 49 |             cli.SEP_DATA,
+ 50 |             cli.SEP_DATA_RAW_JSON,
+ 51 |             cli.SEP_FILES,
+ 52 |         )
+ 53 | 
+ 54 |     def test_invalid_items(self):
+ 55 |         items = ['no-separator']
+ 56 |         for item in items:
+ 57 |             self.assertRaises(argparse.ArgumentTypeError,
+ 58 |                               lambda: self.kv(item))
+ 59 | 
+ 60 |     def test_escape(self):
+ 61 |         headers, data, files = cli.parse_items([
+ 62 |             # headers
+ 63 |             self.kv('foo\\:bar:baz'),
+ 64 |             self.kv('jack\\@jill:hill'),
+ 65 |             # data
+ 66 |             self.kv('baz\\=bar=foo'),
+ 67 |             # files
+ 68 |             self.kv('bar\\@baz@%s' % TEST_FILE)
+ 69 |         ])
+ 70 |         self.assertDictEqual(headers, {
+ 71 |             'foo:bar': 'baz',
+ 72 |             'jack@jill': 'hill',
+ 73 |         })
+ 74 |         self.assertDictEqual(data, {
+ 75 |             'baz=bar': 'foo',
+ 76 |         })
+ 77 |         self.assertIn('bar@baz', files)
+ 78 | 
+ 79 |     def test_escape_longsep(self):
+ 80 |         headers, data, files = cli.parse_items([
+ 81 |             self.kv('bob\\:==foo'),
+ 82 |         ])
+ 83 |         self.assertDictEqual(data, {
+ 84 |             'bob:=': 'foo',
+ 85 |         })
+ 86 |     
+ 87 |     def test_valid_items(self):
+ 88 |         headers, data, files = cli.parse_items([
+ 89 |             self.kv('string=value'),
+ 90 |             self.kv('header:value'),
+ 91 |             self.kv('list:=["a", 1, {}, false]'),
+ 92 |             self.kv('obj:={"a": "b"}'),
+ 93 |             self.kv('eh:'),
+ 94 |             self.kv('ed='),
+ 95 |             self.kv('bool:=true'),
+ 96 |             self.kv('test-file@%s' % TEST_FILE),
+ 97 |         ])
+ 98 |         self.assertDictEqual(headers, {
+ 99 |             'header': 'value',
+100 |             'eh': ''
+101 |         })
+102 |         self.assertDictEqual(data, {
+103 |             "ed": "",
+104 |             "string": "value",
+105 |             "bool": True,
+106 |             "list": ["a", 1, {}, False],
+107 |             "obj": {"a": "b"}
+108 |         })
+109 |         self.assertIn('test-file', files)
+110 | 
+111 | 
+112 | class TestHTTPie(BaseTest):
+113 | 
+114 |     def test_get(self):
+115 |         http('GET', 'http://httpbin.org/get')
+116 | 
+117 |     def test_verbose(self):
+118 |         r = http('--verbose', 'GET', 'http://httpbin.org/get', 'test-header:__test__')
+119 |         self.assertEqual(r.count('__test__'), 2)
+120 | 
+121 |     def test_json(self):
+122 |         response = http('POST', 'http://httpbin.org/post', 'foo=bar')
+123 |         self.assertIn('"foo": "bar"', response)
+124 |         response2 = http('-j', 'GET', 'http://httpbin.org/headers')
+125 |         self.assertIn('"Accept": "application/json"', response2)
+126 |         response3 = http('-j', 'GET', 'http://httpbin.org/headers', 'Accept:application/xml')
+127 |         self.assertIn('"Accept": "application/xml"', response3)
+128 | 
+129 |     def test_form(self):
+130 |         response = http('--form', 'POST', 'http://httpbin.org/post', 'foo=bar')
+131 |         self.assertIn('"foo": "bar"', response)
+132 | 
+133 |     def test_headers(self):
+134 |         response = http('GET', 'http://httpbin.org/headers', 'Foo:bar')
+135 |         self.assertIn('"User-Agent": "HTTPie', response)
+136 |         self.assertIn('"Foo": "bar"', response)
+137 | 
+138 | 
+139 | class TestPrettyFlag(BaseTest):
+140 |     """Test the --pretty / --ugly flag handling."""
+141 | 
+142 |     def test_pretty_enabled_by_default(self):
+143 |         r = http('GET', 'http://httpbin.org/get', stdout_isatty=True)
+144 |         self.assertIn(TERMINAL_COLOR_PRESENCE_CHECK, r)
+145 | 
+146 |     def test_pretty_enabled_by_default_unless_stdin_redirected(self):
+147 |         r = http('GET', 'http://httpbin.org/get', stdout_isatty=False)
+148 |         self.assertNotIn(TERMINAL_COLOR_PRESENCE_CHECK, r)
+149 | 
+150 |     def test_force_pretty(self):
+151 |         r = http('--pretty', 'GET', 'http://httpbin.org/get', stdout_isatty=False)
+152 |         self.assertIn(TERMINAL_COLOR_PRESENCE_CHECK, r)
+153 | 
+154 |     def test_force_ugly(self):
+155 |         r = http('--ugly', 'GET', 'http://httpbin.org/get', stdout_isatty=True)
+156 |         self.assertNotIn(TERMINAL_COLOR_PRESENCE_CHECK, r)
+157 | 
+158 | 
+159 | class TestFileUpload(BaseTest):
+160 | 
+161 |     def test_non_existent_file_raises_parse_error(self):
+162 |         self.assertRaises(cli.ParseError, http,
+163 |             '--form', '--traceback',
+164 |             'POST', 'http://httpbin.org/post',
+165 |             'foo@/__does_not_exist__')
+166 | 
+167 |     def test_upload_ok(self):
+168 |         r = http('--form', 'POST', 'http://httpbin.org/post',
+169 |              'test-file@%s' % TEST_FILE)
+170 |         self.assertIn('"test-file": "__test_file_content__', r)
+171 | 
+172 | 
+173 | class TestAuth(BaseTest):
+174 | 
+175 |     def test_basic_auth(self):
+176 |         r = http('--auth', 'user:password',
+177 |                  'GET', 'httpbin.org/basic-auth/user/password')
+178 |         self.assertIn('"authenticated": true', r)
+179 |         self.assertIn('"user": "user"', r)
+180 | 
+181 |     def test_digest_auth(self):
+182 |         r = http('--auth-type=digest', '--auth', 'user:password',
+183 |                  'GET', 'httpbin.org/digest-auth/auth/user/password')
+184 |         self.assertIn('"authenticated": true', r)
+185 |         self.assertIn('"user": "user"', r)
+186 | 
+187 | 
+188 | if __name__ == '__main__':
+189 |     unittest.main()
+```

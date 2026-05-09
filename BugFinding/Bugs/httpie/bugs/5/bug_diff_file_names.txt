@@ -1,0 +1,5 @@
+# git diff <buggy_version> <patched_version>
+# git diff --name-only 16df8848e81eefac830f407e4b985f42b52970da 90af1f742230831792d74d303d1e7ce56c96d4bd
+# change from buggy → fixed.
+httpie/cli.py
+tests/tests.py

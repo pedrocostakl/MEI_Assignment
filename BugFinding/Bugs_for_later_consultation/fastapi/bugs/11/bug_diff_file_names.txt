@@ -1,0 +1,6 @@
+# git diff <buggy_version> <patched_version>
+# git diff --name-only bf229ad5d830eb5320f966d51a55e590e8d57008 06eb4219345a77d23484528c9d164eb8d2097fec
+# change from buggy → fixed.
+fastapi/dependencies/utils.py
+tests/test_union_body.py
+tests/test_union_inherited_body.py

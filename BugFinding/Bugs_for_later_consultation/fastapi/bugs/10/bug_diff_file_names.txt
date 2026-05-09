@@ -1,0 +1,5 @@
+# git diff <buggy_version> <patched_version>
+# git diff --name-only b77a43bcac3ec8e7edbe82543e777c60ae85c178 38495fffa560fa57a8f0e6437d8e43c36c8e5612
+# change from buggy → fixed.
+fastapi/routing.py
+tests/test_skip_defaults.py

@@ -1,0 +1,678 @@
+You are given buggy source files and failing test files.
+
+Your task is BUG LOCALIZATION ONLY.
+
+Return only valid JSON using this exact format:
+
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "relative/path.py",
+      "line_start": 1,
+      "line_end": 1,
+      "confidence": "low|medium|high",
+      "reason": "Max 2 sentences."
+    }
+  ]
+}
+
+Rules:
+- Do not propose fixes.
+- Do not rewrite code.
+- Do not explain outside JSON.
+- Line numbers must refer to the numbered buggy source file.
+- Include at most 3 suspected locations.
+- Prefer the smallest line range that identifies the origin of the bug.
+
+
+SOURCE FILES:
+
+[file_1] BugsInPy/workspace/httpie/httpie/downloads.py
+```python
+  1 | """
+  2 | Download mode implementation.
+  3 | 
+  4 | """
+  5 | import mimetypes
+  6 | import os
+  7 | import re
+  8 | from mailbox import Message
+  9 | from time import monotonic
+ 10 | from typing import IO, Optional, Tuple
+ 11 | from urllib.parse import urlsplit
+ 12 | 
+ 13 | import requests
+ 14 | 
+ 15 | from .models import HTTPResponse, OutputOptions
+ 16 | from .output.streams import RawStream
+ 17 | from .context import Environment
+ 18 | 
+ 19 | 
+ 20 | PARTIAL_CONTENT = 206
+ 21 | 
+ 22 | 
+ 23 | class ContentRangeError(ValueError):
+ 24 |     pass
+ 25 | 
+ 26 | 
+ 27 | def parse_content_range(content_range: str, resumed_from: int) -> int:
+ 28 |     """
+ 29 |     Parse and validate Content-Range header.
+ 30 | 
+ 31 |     <https://www.w3.org/Protocols/rfc2616/rfc2616-sec14.html>
+ 32 | 
+ 33 |     :param content_range: the value of a Content-Range response header
+ 34 |                           eg. "bytes 21010-47021/47022"
+ 35 |     :param resumed_from: first byte pos. from the Range request header
+ 36 |     :return: total size of the response body when fully downloaded.
+ 37 | 
+ 38 |     """
+ 39 |     if content_range is None:
+ 40 |         raise ContentRangeError('Missing Content-Range')
+ 41 | 
+ 42 |     pattern = (
+ 43 |         r'^bytes (?P<first_byte_pos>\d+)-(?P<last_byte_pos>\d+)'
+ 44 |         r'/(\*|(?P<instance_length>\d+))$'
+ 45 |     )
+ 46 |     match = re.match(pattern, content_range)
+ 47 | 
+ 48 |     if not match:
+ 49 |         raise ContentRangeError(
+ 50 |             f'Invalid Content-Range format {content_range!r}')
+ 51 | 
+ 52 |     content_range_dict = match.groupdict()
+ 53 |     first_byte_pos = int(content_range_dict['first_byte_pos'])
+ 54 |     last_byte_pos = int(content_range_dict['last_byte_pos'])
+ 55 |     instance_length = (
+ 56 |         int(content_range_dict['instance_length'])
+ 57 |         if content_range_dict['instance_length']
+ 58 |         else None
+ 59 |     )
+ 60 | 
+ 61 |     # "A byte-content-range-spec with a byte-range-resp-spec whose
+ 62 |     # last- byte-pos value is less than its first-byte-pos value,
+ 63 |     # or whose instance-length value is less than or equal to its
+ 64 |     # last-byte-pos value, is invalid. The recipient of an invalid
+ 65 |     # byte-content-range- spec MUST ignore it and any content
+ 66 |     # transferred along with it."
+ 67 |     if (first_byte_pos > last_byte_pos
+ 68 |         or (instance_length is not None
+ 69 |             and instance_length <= last_byte_pos)):
+ 70 |         raise ContentRangeError(
+ 71 |             f'Invalid Content-Range returned: {content_range!r}')
+ 72 | 
+ 73 |     if (first_byte_pos != resumed_from
+ 74 |         or (instance_length is not None
+ 75 |             and last_byte_pos + 1 != instance_length)):
+ 76 |         # Not what we asked for.
+ 77 |         raise ContentRangeError(
+ 78 |             f'Unexpected Content-Range returned ({content_range!r})'
+ 79 |             f' for the requested Range ("bytes={resumed_from}-")'
+ 80 |         )
+ 81 | 
+ 82 |     return last_byte_pos + 1
+ 83 | 
+ 84 | 
+ 85 | def filename_from_content_disposition(
+ 86 |     content_disposition: str
+ 87 | ) -> Optional[str]:
+ 88 |     """
+ 89 |     Extract and validate filename from a Content-Disposition header.
+ 90 | 
+ 91 |     :param content_disposition: Content-Disposition value
+ 92 |     :return: the filename if present and valid, otherwise `None`
+ 93 | 
+ 94 |     """
+ 95 |     # attachment; filename=jakubroztocil-httpie-0.4.1-20-g40bd8f6.tar.gz
+ 96 | 
+ 97 |     msg = Message(f'Content-Disposition: {content_disposition}')
+ 98 |     filename = msg.get_filename()
+ 99 |     if filename:
+100 |         # Basic sanitation.
+101 |         filename = os.path.basename(filename).lstrip('.').strip()
+102 |         if filename:
+103 |             return filename
+104 | 
+105 | 
+106 | def filename_from_url(url: str, content_type: Optional[str]) -> str:
+107 |     fn = urlsplit(url).path.rstrip('/')
+108 |     fn = os.path.basename(fn) if fn else 'index'
+109 |     if '.' not in fn and content_type:
+110 |         content_type = content_type.split(';')[0]
+111 |         if content_type == 'text/plain':
+112 |             # mimetypes returns '.ksh'
+113 |             ext = '.txt'
+114 |         else:
+115 |             ext = mimetypes.guess_extension(content_type)
+116 | 
+117 |         if ext == '.htm':
+118 |             ext = '.html'
+119 | 
+120 |         if ext:
+121 |             fn += ext
+122 | 
+123 |     return fn
+124 | 
+125 | 
+126 | def trim_filename(filename: str, max_len: int) -> str:
+127 |     if len(filename) > max_len:
+128 |         trim_by = len(filename) - max_len
+129 |         name, ext = os.path.splitext(filename)
+130 |         if trim_by >= len(name):
+131 |             filename = filename[:-trim_by]
+132 |         else:
+133 |             filename = name[:-trim_by] + ext
+134 |     return filename
+135 | 
+136 | 
+137 | def get_filename_max_length(directory: str) -> int:
+138 |     max_len = 255
+139 |     if hasattr(os, 'pathconf') and 'PC_NAME_MAX' in os.pathconf_names:
+140 |         max_len = os.pathconf(directory, 'PC_NAME_MAX')
+141 |     return max_len
+142 | 
+143 | 
+144 | def trim_filename_if_needed(filename: str, directory='.', extra=0) -> str:
+145 |     max_len = get_filename_max_length(directory) - extra
+146 |     if len(filename) > max_len:
+147 |         filename = trim_filename(filename, max_len)
+148 |     return filename
+149 | 
+150 | 
+151 | def get_unique_filename(filename: str, exists=os.path.exists) -> str:
+152 |     attempt = 0
+153 |     while True:
+154 |         suffix = f'-{attempt}' if attempt > 0 else ''
+155 |         try_filename = trim_filename_if_needed(filename, extra=len(suffix))
+156 |         try_filename += suffix
+157 |         if not exists(try_filename):
+158 |             return try_filename
+159 |         attempt += 1
+160 | 
+161 | 
+162 | class Downloader:
+163 | 
+164 |     def __init__(
+165 |         self,
+166 |         env: Environment,
+167 |         output_file: IO = None,
+168 |         resume: bool = False
+169 |     ):
+170 |         """
+171 |         :param resume: Should the download resume if partial download
+172 |                        already exists.
+173 | 
+174 |         :param output_file: The file to store response body in. If not
+175 |                             provided, it will be guessed from the response.
+176 | 
+177 |         :param progress_file: Where to report download progress.
+178 | 
+179 |         """
+180 |         self.finished = False
+181 |         self.status = DownloadStatus(env=env)
+182 |         self._output_file = output_file
+183 |         self._resume = resume
+184 |         self._resumed_from = 0
+185 | 
+186 |     def pre_request(self, request_headers: dict):
+187 |         """Called just before the HTTP request is sent.
+188 | 
+189 |         Might alter `request_headers`.
+190 | 
+191 |         """
+192 |         # Ask the server not to encode the content so that we can resume, etc.
+193 |         request_headers['Accept-Encoding'] = 'identity'
+194 |         if self._resume:
+195 |             bytes_have = os.path.getsize(self._output_file.name)
+196 |             if bytes_have:
+197 |                 # Set ``Range`` header to resume the download
+198 |                 # TODO: Use "If-Range: mtime" to make sure it's fresh?
+199 |                 request_headers['Range'] = f'bytes={bytes_have}-'
+200 |                 self._resumed_from = bytes_have
+201 | 
+202 |     def start(
+203 |         self,
+204 |         initial_url: str,
+205 |         final_response: requests.Response
+206 |     ) -> Tuple[RawStream, IO]:
+207 |         """
+208 |         Initiate and return a stream for `response` body  with progress
+209 |         callback attached. Can be called only once.
+210 | 
+211 |         :param initial_url: The original requested URL
+212 |         :param final_response: Initiated response object with headers already fetched
+213 | 
+214 |         :return: RawStream, output_file
+215 | 
+216 |         """
+217 |         assert not self.status.time_started
+218 | 
+219 |         # FIXME: some servers still might sent Content-Encoding: gzip
+220 |         # <https://github.com/httpie/cli/issues/423>
+221 |         try:
+222 |             total_size = int(final_response.headers['Content-Length'])
+223 |         except (KeyError, ValueError, TypeError):
+224 |             total_size = None
+225 | 
+226 |         if not self._output_file:
+227 |             self._output_file = self._get_output_file_from_response(
+228 |                 initial_url=initial_url,
+229 |                 final_response=final_response,
+230 |             )
+231 |         else:
+232 |             # `--output, -o` provided
+233 |             if self._resume and final_response.status_code == PARTIAL_CONTENT:
+234 |                 total_size = parse_content_range(
+235 |                     final_response.headers.get('Content-Range'),
+236 |                     self._resumed_from
+237 |                 )
+238 | 
+239 |             else:
+240 |                 self._resumed_from = 0
+241 |                 try:
+242 |                     self._output_file.seek(0)
+243 |                     self._output_file.truncate()
+244 |                 except OSError:
+245 |                     pass  # stdout
+246 | 
+247 |         output_options = OutputOptions.from_message(final_response, headers=False, body=True)
+248 |         stream = RawStream(
+249 |             msg=HTTPResponse(final_response),
+250 |             output_options=output_options,
+251 |             on_body_chunk_downloaded=self.chunk_downloaded,
+252 |         )
+253 | 
+254 |         self.status.started(
+255 |             output_file=self._output_file,
+256 |             resumed_from=self._resumed_from,
+257 |             total_size=total_size
+258 |         )
+259 | 
+260 |         return stream, self._output_file
+261 | 
+262 |     def finish(self):
+263 |         assert not self.finished
+264 |         self.finished = True
+265 |         self.status.finished()
+266 | 
+267 |     def failed(self):
+268 |         self.status.terminate()
+269 | 
+270 |     @property
+271 |     def interrupted(self) -> bool:
+272 |         return (
+273 |             self.finished
+274 |             and self.status.total_size
+275 |             and self.status.total_size != self.status.downloaded
+276 |         )
+277 | 
+278 |     def chunk_downloaded(self, chunk: bytes):
+279 |         """
+280 |         A download progress callback.
+281 | 
+282 |         :param chunk: A chunk of response body data that has just
+283 |                       been downloaded and written to the output.
+284 | 
+285 |         """
+286 |         self.status.chunk_downloaded(len(chunk))
+287 | 
+288 |     @staticmethod
+289 |     def _get_output_file_from_response(
+290 |         initial_url: str,
+291 |         final_response: requests.Response,
+292 |     ) -> IO:
+293 |         # Output file not specified. Pick a name that doesn't exist yet.
+294 |         filename = None
+295 |         if 'Content-Disposition' in final_response.headers:
+296 |             filename = filename_from_content_disposition(
+297 |                 final_response.headers['Content-Disposition'])
+298 |         if not filename:
+299 |             filename = filename_from_url(
+300 |                 url=initial_url,
+301 |                 content_type=final_response.headers.get('Content-Type'),
+302 |             )
+303 |         unique_filename = get_unique_filename(filename)
+304 |         return open(unique_filename, buffering=0, mode='a+b')
+305 | 
+306 | 
+307 | class DownloadStatus:
+308 |     """Holds details about the download status."""
+309 | 
+310 |     def __init__(self, env):
+311 |         self.env = env
+312 |         self.downloaded = 0
+313 |         self.total_size = None
+314 |         self.resumed_from = 0
+315 |         self.time_started = None
+316 |         self.time_finished = None
+317 | 
+318 |     def started(self, output_file, resumed_from=0, total_size=None):
+319 |         assert self.time_started is None
+320 |         self.total_size = total_size
+321 |         self.downloaded = self.resumed_from = resumed_from
+322 |         self.time_started = monotonic()
+323 |         self.start_display(output_file=output_file)
+324 | 
+325 |     def start_display(self, output_file):
+326 |         from httpie.output.ui.rich_progress import (
+327 |             DummyDisplay,
+328 |             StatusDisplay,
+329 |             ProgressDisplay
+330 |         )
+331 | 
+332 |         message = f'Downloading to {output_file.name}'
+333 |         if self.env.show_displays:
+334 |             if self.total_size is None:
+335 |                 # Rich does not support progress bars without a total
+336 |                 # size given. Instead we use status objects.
+337 |                 self.display = StatusDisplay(self.env)
+338 |             else:
+339 |                 self.display = ProgressDisplay(self.env)
+340 |         else:
+341 |             self.display = DummyDisplay(self.env)
+342 | 
+343 |         self.display.start(
+344 |             total=self.total_size,
+345 |             at=self.downloaded,
+346 |             description=message
+347 |         )
+348 | 
+349 |     def chunk_downloaded(self, size):
+350 |         assert self.time_finished is None
+351 |         self.downloaded += size
+352 |         self.display.update(size)
+353 | 
+354 |     @property
+355 |     def has_finished(self):
+356 |         return self.time_finished is not None
+357 | 
+358 |     @property
+359 |     def time_spent(self):
+360 |         if (
+361 |             self.time_started is not None
+362 |             and self.time_finished is not None
+363 |         ):
+364 |             return self.time_finished - self.time_started
+365 |         else:
+366 |             return None
+367 | 
+368 |     def finished(self):
+369 |         assert self.time_started is not None
+370 |         assert self.time_finished is None
+371 |         self.time_finished = monotonic()
+372 |         if hasattr(self, 'display'):
+373 |             self.display.stop(self.time_spent)
+374 | 
+375 |     def terminate(self):
+376 |         if hasattr(self, 'display'):
+377 |             self.display.stop(self.time_spent)
+```
+
+
+FAILING TEST FILES:
+
+[test_file_1] BugsInPy/workspace/httpie/tests/test_downloads.py
+```python
+  1 | import os
+  2 | import tempfile
+  3 | import time
+  4 | import requests
+  5 | from unittest import mock
+  6 | from urllib.request import urlopen
+  7 | 
+  8 | import pytest
+  9 | from requests.structures import CaseInsensitiveDict
+ 10 | 
+ 11 | from httpie.downloads import (
+ 12 |     parse_content_range, filename_from_content_disposition, filename_from_url,
+ 13 |     get_unique_filename, ContentRangeError, Downloader, PARTIAL_CONTENT
+ 14 | )
+ 15 | from .utils import http, MockEnvironment
+ 16 | 
+ 17 | 
+ 18 | class Response(requests.Response):
+ 19 |     # noinspection PyDefaultArgument
+ 20 |     def __init__(self, url, headers={}, status_code=200):
+ 21 |         self.url = url
+ 22 |         self.headers = CaseInsensitiveDict(headers)
+ 23 |         self.status_code = status_code
+ 24 | 
+ 25 | 
+ 26 | class TestDownloadUtils:
+ 27 | 
+ 28 |     def test_Content_Range_parsing(self):
+ 29 |         parse = parse_content_range
+ 30 | 
+ 31 |         assert parse('bytes 100-199/200', 100) == 200
+ 32 |         assert parse('bytes 100-199/*', 100) == 200
+ 33 | 
+ 34 |         # single byte
+ 35 |         assert parse('bytes 100-100/*', 100) == 101
+ 36 | 
+ 37 |         # missing
+ 38 |         pytest.raises(ContentRangeError, parse, None, 100)
+ 39 | 
+ 40 |         # syntax error
+ 41 |         pytest.raises(ContentRangeError, parse, 'beers 100-199/*', 100)
+ 42 | 
+ 43 |         # unexpected range
+ 44 |         pytest.raises(ContentRangeError, parse, 'bytes 100-199/*', 99)
+ 45 | 
+ 46 |         # invalid instance-length
+ 47 |         pytest.raises(ContentRangeError, parse, 'bytes 100-199/199', 100)
+ 48 | 
+ 49 |         # invalid byte-range-resp-spec
+ 50 |         pytest.raises(ContentRangeError, parse, 'bytes 100-99/199', 100)
+ 51 | 
+ 52 |     @pytest.mark.parametrize('header, expected_filename', [
+ 53 |         ('attachment; filename=hello-WORLD_123.txt', 'hello-WORLD_123.txt'),
+ 54 |         ('attachment; filename=".hello-WORLD_123.txt"', 'hello-WORLD_123.txt'),
+ 55 |         ('attachment; filename="white space.txt"', 'white space.txt'),
+ 56 |         (r'attachment; filename="\"quotes\".txt"', '"quotes".txt'),
+ 57 |         ('attachment; filename=/etc/hosts', 'hosts'),
+ 58 |         ('attachment; filename=', None)
+ 59 |     ])
+ 60 |     def test_Content_Disposition_parsing(self, header, expected_filename):
+ 61 |         assert filename_from_content_disposition(header) == expected_filename
+ 62 | 
+ 63 |     def test_filename_from_url(self):
+ 64 |         assert 'foo.txt' == filename_from_url(
+ 65 |             url='http://example.org/foo',
+ 66 |             content_type='text/plain'
+ 67 |         )
+ 68 |         assert 'foo.html' == filename_from_url(
+ 69 |             url='http://example.org/foo',
+ 70 |             content_type='text/html; charset=UTF-8'
+ 71 |         )
+ 72 |         assert 'foo' == filename_from_url(
+ 73 |             url='http://example.org/foo',
+ 74 |             content_type=None
+ 75 |         )
+ 76 |         assert 'foo' == filename_from_url(
+ 77 |             url='http://example.org/foo',
+ 78 |             content_type='x-foo/bar'
+ 79 |         )
+ 80 | 
+ 81 |     @pytest.mark.parametrize(
+ 82 |         'orig_name, unique_on_attempt, expected',
+ 83 |         [
+ 84 |             # Simple
+ 85 |             ('foo.bar', 0, 'foo.bar'),
+ 86 |             ('foo.bar', 1, 'foo.bar-1'),
+ 87 |             ('foo.bar', 10, 'foo.bar-10'),
+ 88 |             # Trim
+ 89 |             ('A' * 20, 0, 'A' * 10),
+ 90 |             ('A' * 20, 1, 'A' * 8 + '-1'),
+ 91 |             ('A' * 20, 10, 'A' * 7 + '-10'),
+ 92 |             # Trim before ext
+ 93 |             ('A' * 20 + '.txt', 0, 'A' * 6 + '.txt'),
+ 94 |             ('A' * 20 + '.txt', 1, 'A' * 4 + '.txt-1'),
+ 95 |             # Trim at the end
+ 96 |             ('foo.' + 'A' * 20, 0, 'foo.' + 'A' * 6),
+ 97 |             ('foo.' + 'A' * 20, 1, 'foo.' + 'A' * 4 + '-1'),
+ 98 |             ('foo.' + 'A' * 20, 10, 'foo.' + 'A' * 3 + '-10'),
+ 99 |         ]
+100 |     )
+101 |     @mock.patch('httpie.downloads.get_filename_max_length')
+102 |     def test_unique_filename(self, get_filename_max_length,
+103 |                              orig_name, unique_on_attempt,
+104 |                              expected):
+105 | 
+106 |         def attempts(unique_on_attempt=0):
+107 |             # noinspection PyUnresolvedReferences,PyUnusedLocal
+108 |             def exists(filename):
+109 |                 if exists.attempt == unique_on_attempt:
+110 |                     return False
+111 |                 exists.attempt += 1
+112 |                 return True
+113 | 
+114 |             exists.attempt = 0
+115 |             return exists
+116 | 
+117 |         get_filename_max_length.return_value = 10
+118 | 
+119 |         actual = get_unique_filename(orig_name, attempts(unique_on_attempt))
+120 |         assert expected == actual
+121 | 
+122 | 
+123 | class TestDownloads:
+124 | 
+125 |     def test_actual_download(self, httpbin_both, httpbin):
+126 |         robots_txt = '/robots.txt'
+127 |         body = urlopen(httpbin + robots_txt).read().decode()
+128 |         env = MockEnvironment(stdin_isatty=True, stdout_isatty=False, show_displays=True)
+129 |         r = http('--download', httpbin_both.url + robots_txt, env=env)
+130 |         assert 'Downloading' in r.stderr
+131 |         assert body == r
+132 | 
+133 |     def test_download_with_Content_Length(self, mock_env, httpbin_both):
+134 |         with open(os.devnull, 'w') as devnull:
+135 |             downloader = Downloader(mock_env, output_file=devnull)
+136 |             downloader.start(
+137 |                 initial_url='/',
+138 |                 final_response=Response(
+139 |                     url=httpbin_both.url + '/',
+140 |                     headers={'Content-Length': 10}
+141 |                 )
+142 |             )
+143 |             time.sleep(1.1)
+144 |             downloader.chunk_downloaded(b'12345')
+145 |             time.sleep(1.1)
+146 |             downloader.chunk_downloaded(b'12345')
+147 |             downloader.finish()
+148 |             assert not downloader.interrupted
+149 | 
+150 |     def test_download_no_Content_Length(self, mock_env, httpbin_both):
+151 |         with open(os.devnull, 'w') as devnull:
+152 |             downloader = Downloader(mock_env, output_file=devnull)
+153 |             downloader.start(
+154 |                 final_response=Response(url=httpbin_both.url + '/'),
+155 |                 initial_url='/'
+156 |             )
+157 |             time.sleep(1.1)
+158 |             downloader.chunk_downloaded(b'12345')
+159 |             downloader.finish()
+160 |             assert not downloader.interrupted
+161 | 
+162 |     def test_download_output_from_content_disposition(self, mock_env, httpbin_both):
+163 |         with tempfile.TemporaryDirectory() as tmp_dirname:
+164 |             orig_cwd = os.getcwd()
+165 |             os.chdir(tmp_dirname)
+166 |             try:
+167 |                 assert not os.path.isfile('filename.bin')
+168 |                 downloader = Downloader(mock_env)
+169 |                 downloader.start(
+170 |                     final_response=Response(
+171 |                         url=httpbin_both.url + '/',
+172 |                         headers={
+173 |                             'Content-Length': 5,
+174 |                             'Content-Disposition': 'attachment; filename="filename.bin"',
+175 |                         }
+176 |                     ),
+177 |                     initial_url='/'
+178 |                 )
+179 |                 downloader.chunk_downloaded(b'12345')
+180 |                 downloader.finish()
+181 |                 downloader.failed()  # Stop the reporter
+182 |                 assert not downloader.interrupted
+183 | 
+184 |                 # TODO: Auto-close the file in that case?
+185 |                 downloader._output_file.close()
+186 |                 assert os.path.isfile('filename.bin')
+187 |             finally:
+188 |                 os.chdir(orig_cwd)
+189 | 
+190 |     def test_download_interrupted(self, mock_env, httpbin_both):
+191 |         with open(os.devnull, 'w') as devnull:
+192 |             downloader = Downloader(mock_env, output_file=devnull)
+193 |             downloader.start(
+194 |                 final_response=Response(
+195 |                     url=httpbin_both.url + '/',
+196 |                     headers={'Content-Length': 5}
+197 |                 ),
+198 |                 initial_url='/'
+199 |             )
+200 |             downloader.chunk_downloaded(b'1234')
+201 |             downloader.finish()
+202 |             assert downloader.interrupted
+203 | 
+204 |     def test_download_resumed(self, mock_env, httpbin_both):
+205 |         with tempfile.TemporaryDirectory() as tmp_dirname:
+206 |             file = os.path.join(tmp_dirname, 'file.bin')
+207 |             with open(file, 'a'):
+208 |                 pass
+209 | 
+210 |             with open(file, 'a+b') as output_file:
+211 |                 # Start and interrupt the transfer after 3 bytes written
+212 |                 downloader = Downloader(mock_env, output_file=output_file)
+213 |                 downloader.start(
+214 |                     final_response=Response(
+215 |                         url=httpbin_both.url + '/',
+216 |                         headers={'Content-Length': 5}
+217 |                     ),
+218 |                     initial_url='/'
+219 |                 )
+220 |                 downloader.chunk_downloaded(b'123')
+221 |                 downloader.finish()
+222 |                 downloader.failed()
+223 |                 assert downloader.interrupted
+224 | 
+225 |             # Write bytes
+226 |             with open(file, 'wb') as fh:
+227 |                 fh.write(b'123')
+228 | 
+229 |             with open(file, 'a+b') as output_file:
+230 |                 # Resume the transfer
+231 |                 downloader = Downloader(mock_env, output_file=output_file, resume=True)
+232 | 
+233 |                 # Ensure `pre_request()` is working as expected too
+234 |                 headers = {}
+235 |                 downloader.pre_request(headers)
+236 |                 assert headers['Accept-Encoding'] == 'identity'
+237 |                 assert headers['Range'] == 'bytes=3-'
+238 | 
+239 |                 downloader.start(
+240 |                     final_response=Response(
+241 |                         url=httpbin_both.url + '/',
+242 |                         headers={'Content-Length': 5, 'Content-Range': 'bytes 3-4/5'},
+243 |                         status_code=PARTIAL_CONTENT
+244 |                     ),
+245 |                     initial_url='/'
+246 |                 )
+247 |                 downloader.chunk_downloaded(b'45')
+248 |                 downloader.finish()
+249 | 
+250 |     def test_download_with_redirect_original_url_used_for_filename(self, httpbin):
+251 |         # Redirect from `/redirect/1` to `/get`.
+252 |         expected_filename = '1.json'
+253 |         orig_cwd = os.getcwd()
+254 |         with tempfile.TemporaryDirectory() as tmp_dirname:
+255 |             os.chdir(tmp_dirname)
+256 |             try:
+257 |                 assert os.listdir('.') == []
+258 |                 http('--download', httpbin + '/redirect/1')
+259 |                 assert os.listdir('.') == [expected_filename]
+260 |             finally:
+261 |                 os.chdir(orig_cwd)
+```
