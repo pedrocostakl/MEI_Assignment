@@ -1,5 +1,0 @@
-# git diff <buggy_version> <patched_version>
-# git diff --name-only 7cea84b74ca3106a7f861b774e9d215e5228728f 75a07f24bf01a31225ee687f3e2b3fc1981b67ab
-# change from buggy → fixed.
-fastapi/utils.py
-tests/test_filter_pydantic_sub_model.py

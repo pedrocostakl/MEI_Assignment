@@ -1,5 +1,0 @@
-# git diff <buggy_version> <patched_version>
-# git diff --name-only 2ddb804940bbcad4ed730b2a910c8fd3c1167127 b7d184363fad5f6b55d15ec3a3a844aa81092bbd
-# change from buggy → fixed.
-fastapi/openapi/models.py
-tests/test_additional_properties.py

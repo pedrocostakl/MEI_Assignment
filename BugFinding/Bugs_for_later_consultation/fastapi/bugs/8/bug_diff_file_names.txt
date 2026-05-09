@@ -1,5 +1,0 @@
-# git diff <buggy_version> <patched_version>
-# git diff --name-only fdb6d43e103bcf7a7325d796e37c9435c9460e4c dd963511d699b463b416408a0ad705b3dda0d067
-# change from buggy → fixed.
-fastapi/routing.py
-tests/test_custom_route_class.py

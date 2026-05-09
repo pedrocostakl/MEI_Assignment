@@ -1,5 +1,0 @@
-# git diff <buggy_version> <patched_version>
-# git diff --name-only d61f5e4b555b123bf222503fc0e076cbae6a7ebc d262f6e9296993e528e2327f0a73f7bf5514e7c6
-# change from buggy → fixed.
-fastapi/security/http.py
-tests/test_security_http_bearer_optional.py

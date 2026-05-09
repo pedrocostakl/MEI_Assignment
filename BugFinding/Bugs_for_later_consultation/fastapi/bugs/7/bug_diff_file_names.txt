@@ -1,5 +1,0 @@
-# git diff <buggy_version> <patched_version>
-# git diff --name-only cc4c13e4ae3f65fc76c23962b316df4a60e0c7e0 19c77e35bdde33aeec1eb2cfa680f95016492b69
-# change from buggy → fixed.
-fastapi/exception_handlers.py
-tests/test_multi_body_errors.py
