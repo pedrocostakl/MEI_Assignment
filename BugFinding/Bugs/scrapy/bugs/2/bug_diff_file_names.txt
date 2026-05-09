@@ -1,0 +1,4 @@
+# git diff <buggy_version> <patched_version>
+# git diff --name-only f02c3d1dcf3e4880388d19e961e7911be5dc54ff 439a3e59b8e858441f8d97dbc32f398db392330d
+scrapy/utils/datatypes.py
+tests/test_utils_datatypes.py

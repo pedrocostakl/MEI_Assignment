@@ -1,0 +1,642 @@
+You are given buggy source files and failing test files.
+
+Your task is BUG LOCALIZATION ONLY.
+
+Return only valid JSON using this exact format:
+
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "relative/path.py",
+      "line_start": 1,
+      "line_end": 1,
+      "confidence": "low|medium|high",
+      "reason": "Max 2 sentences."
+    }
+  ]
+}
+
+Rules:
+- Do not propose fixes.
+- Do not rewrite code.
+- Do not explain outside JSON.
+- Line numbers must refer to the numbered buggy source file.
+- Include at most 3 suspected locations.
+- Prefer the smallest line range that identifies the origin of the bug.
+
+
+SOURCE FILES:
+
+[file_1] BugsInPy/workspace/scrapy/scrapy/utils/datatypes.py
+```python
+  1 | """
+  2 | This module contains data types used by Scrapy which are not included in the
+  3 | Python Standard Library.
+  4 | 
+  5 | This module must not depend on any module outside the Standard Library.
+  6 | """
+  7 | 
+  8 | import copy
+  9 | import collections
+ 10 | import warnings
+ 11 | 
+ 12 | import six
+ 13 | 
+ 14 | from scrapy.exceptions import ScrapyDeprecationWarning
+ 15 | 
+ 16 | 
+ 17 | if six.PY2:
+ 18 |     Mapping = collections.Mapping
+ 19 | else:
+ 20 |     Mapping = collections.abc.Mapping
+ 21 | 
+ 22 | 
+ 23 | class MultiValueDictKeyError(KeyError):
+ 24 |     def __init__(self, *args, **kwargs):
+ 25 |         warnings.warn(
+ 26 |             "scrapy.utils.datatypes.MultiValueDictKeyError is deprecated "
+ 27 |             "and will be removed in future releases.",
+ 28 |             category=ScrapyDeprecationWarning,
+ 29 |             stacklevel=2
+ 30 |         )
+ 31 |         super(MultiValueDictKeyError, self).__init__(*args, **kwargs)
+ 32 | 
+ 33 | 
+ 34 | class MultiValueDict(dict):
+ 35 |     """
+ 36 |     A subclass of dictionary customized to handle multiple values for the same key.
+ 37 | 
+ 38 |     >>> d = MultiValueDict({'name': ['Adrian', 'Simon'], 'position': ['Developer']})
+ 39 |     >>> d['name']
+ 40 |     'Simon'
+ 41 |     >>> d.getlist('name')
+ 42 |     ['Adrian', 'Simon']
+ 43 |     >>> d.get('lastname', 'nonexistent')
+ 44 |     'nonexistent'
+ 45 |     >>> d.setlist('lastname', ['Holovaty', 'Willison'])
+ 46 | 
+ 47 |     This class exists to solve the irritating problem raised by cgi.parse_qs,
+ 48 |     which returns a list for every key, even though most Web forms submit
+ 49 |     single name-value pairs.
+ 50 |     """
+ 51 |     def __init__(self, key_to_list_mapping=()):
+ 52 |         warnings.warn("scrapy.utils.datatypes.MultiValueDict is deprecated "
+ 53 |                       "and will be removed in future releases.",
+ 54 |                       category=ScrapyDeprecationWarning,
+ 55 |                       stacklevel=2)
+ 56 |         dict.__init__(self, key_to_list_mapping)
+ 57 | 
+ 58 |     def __repr__(self):
+ 59 |         return "<%s: %s>" % (self.__class__.__name__, dict.__repr__(self))
+ 60 | 
+ 61 |     def __getitem__(self, key):
+ 62 |         """
+ 63 |         Returns the last data value for this key, or [] if it's an empty list;
+ 64 |         raises KeyError if not found.
+ 65 |         """
+ 66 |         try:
+ 67 |             list_ = dict.__getitem__(self, key)
+ 68 |         except KeyError:
+ 69 |             raise MultiValueDictKeyError("Key %r not found in %r" % (key, self))
+ 70 |         try:
+ 71 |             return list_[-1]
+ 72 |         except IndexError:
+ 73 |             return []
+ 74 | 
+ 75 |     def __setitem__(self, key, value):
+ 76 |         dict.__setitem__(self, key, [value])
+ 77 | 
+ 78 |     def __copy__(self):
+ 79 |         return self.__class__(dict.items(self))
+ 80 | 
+ 81 |     def __deepcopy__(self, memo=None):
+ 82 |         if memo is None:
+ 83 |             memo = {}
+ 84 |         result = self.__class__()
+ 85 |         memo[id(self)] = result
+ 86 |         for key, value in dict.items(self):
+ 87 |             dict.__setitem__(result, copy.deepcopy(key, memo), copy.deepcopy(value, memo))
+ 88 |         return result
+ 89 | 
+ 90 |     def get(self, key, default=None):
+ 91 |         "Returns the default value if the requested data doesn't exist"
+ 92 |         try:
+ 93 |             val = self[key]
+ 94 |         except KeyError:
+ 95 |             return default
+ 96 |         if val == []:
+ 97 |             return default
+ 98 |         return val
+ 99 | 
+100 |     def getlist(self, key):
+101 |         "Returns an empty list if the requested data doesn't exist"
+102 |         try:
+103 |             return dict.__getitem__(self, key)
+104 |         except KeyError:
+105 |             return []
+106 | 
+107 |     def setlist(self, key, list_):
+108 |         dict.__setitem__(self, key, list_)
+109 | 
+110 |     def setdefault(self, key, default=None):
+111 |         if key not in self:
+112 |             self[key] = default
+113 |         return self[key]
+114 | 
+115 |     def setlistdefault(self, key, default_list=()):
+116 |         if key not in self:
+117 |             self.setlist(key, default_list)
+118 |         return self.getlist(key)
+119 | 
+120 |     def appendlist(self, key, value):
+121 |         "Appends an item to the internal list associated with key"
+122 |         self.setlistdefault(key, [])
+123 |         dict.__setitem__(self, key, self.getlist(key) + [value])
+124 | 
+125 |     def items(self):
+126 |         """
+127 |         Returns a list of (key, value) pairs, where value is the last item in
+128 |         the list associated with the key.
+129 |         """
+130 |         return [(key, self[key]) for key in self.keys()]
+131 | 
+132 |     def lists(self):
+133 |         "Returns a list of (key, list) pairs."
+134 |         return dict.items(self)
+135 | 
+136 |     def values(self):
+137 |         "Returns a list of the last value on every key list."
+138 |         return [self[key] for key in self.keys()]
+139 | 
+140 |     def copy(self):
+141 |         "Returns a copy of this object."
+142 |         return self.__deepcopy__()
+143 | 
+144 |     def update(self, *args, **kwargs):
+145 |         "update() extends rather than replaces existing key lists. Also accepts keyword args."
+146 |         if len(args) > 1:
+147 |             raise TypeError("update expected at most 1 arguments, got %d" % len(args))
+148 |         if args:
+149 |             other_dict = args[0]
+150 |             if isinstance(other_dict, MultiValueDict):
+151 |                 for key, value_list in other_dict.lists():
+152 |                     self.setlistdefault(key, []).extend(value_list)
+153 |             else:
+154 |                 try:
+155 |                     for key, value in other_dict.items():
+156 |                         self.setlistdefault(key, []).append(value)
+157 |                 except TypeError:
+158 |                     raise ValueError("MultiValueDict.update() takes either a MultiValueDict or dictionary")
+159 |         for key, value in six.iteritems(kwargs):
+160 |             self.setlistdefault(key, []).append(value)
+161 | 
+162 | 
+163 | class SiteNode(object):
+164 |     """Class to represent a site node (page, image or any other file)"""
+165 | 
+166 |     def __init__(self, url):
+167 |         warnings.warn(
+168 |             "scrapy.utils.datatypes.SiteNode is deprecated "
+169 |             "and will be removed in future releases.",
+170 |             category=ScrapyDeprecationWarning,
+171 |             stacklevel=2
+172 |         )
+173 | 
+174 |         self.url = url
+175 |         self.itemnames = []
+176 |         self.children = []
+177 |         self.parent = None
+178 | 
+179 |     def add_child(self, node):
+180 |         self.children.append(node)
+181 |         node.parent = self
+182 | 
+183 |     def to_string(self, level=0):
+184 |         s = "%s%s\n" % ('  '*level, self.url)
+185 |         if self.itemnames:
+186 |             for n in self.itemnames:
+187 |                 s += "%sScraped: %s\n" % ('  '*(level+1), n)
+188 |         for node in self.children:
+189 |             s += node.to_string(level+1)
+190 |         return s
+191 | 
+192 | 
+193 | class CaselessDict(dict):
+194 | 
+195 |     __slots__ = ()
+196 | 
+197 |     def __init__(self, seq=None):
+198 |         super(CaselessDict, self).__init__()
+199 |         if seq:
+200 |             self.update(seq)
+201 | 
+202 |     def __getitem__(self, key):
+203 |         return dict.__getitem__(self, self.normkey(key))
+204 | 
+205 |     def __setitem__(self, key, value):
+206 |         dict.__setitem__(self, self.normkey(key), self.normvalue(value))
+207 | 
+208 |     def __delitem__(self, key):
+209 |         dict.__delitem__(self, self.normkey(key))
+210 | 
+211 |     def __contains__(self, key):
+212 |         return dict.__contains__(self, self.normkey(key))
+213 |     has_key = __contains__
+214 | 
+215 |     def __copy__(self):
+216 |         return self.__class__(self)
+217 |     copy = __copy__
+218 | 
+219 |     def normkey(self, key):
+220 |         """Method to normalize dictionary key access"""
+221 |         return key.lower()
+222 | 
+223 |     def normvalue(self, value):
+224 |         """Method to normalize values prior to be setted"""
+225 |         return value
+226 | 
+227 |     def get(self, key, def_val=None):
+228 |         return dict.get(self, self.normkey(key), self.normvalue(def_val))
+229 | 
+230 |     def setdefault(self, key, def_val=None):
+231 |         return dict.setdefault(self, self.normkey(key), self.normvalue(def_val))
+232 | 
+233 |     def update(self, seq):
+234 |         seq = seq.items() if isinstance(seq, Mapping) else seq
+235 |         iseq = ((self.normkey(k), self.normvalue(v)) for k, v in seq)
+236 |         super(CaselessDict, self).update(iseq)
+237 | 
+238 |     @classmethod
+239 |     def fromkeys(cls, keys, value=None):
+240 |         return cls((k, value) for k in keys)
+241 | 
+242 |     def pop(self, key, *args):
+243 |         return dict.pop(self, self.normkey(key), *args)
+244 | 
+245 | 
+246 | class MergeDict(object):
+247 |     """
+248 |     A simple class for creating new "virtual" dictionaries that actually look
+249 |     up values in more than one dictionary, passed in the constructor.
+250 | 
+251 |     If a key appears in more than one of the given dictionaries, only the
+252 |     first occurrence will be used.
+253 |     """
+254 |     def __init__(self, *dicts):
+255 |         if not six.PY2:
+256 |             warnings.warn(
+257 |                 "scrapy.utils.datatypes.MergeDict is deprecated in favor "
+258 |                 "of collections.ChainMap (introduced in Python 3.3)",
+259 |                 category=ScrapyDeprecationWarning,
+260 |                 stacklevel=2,
+261 |             )
+262 |         self.dicts = dicts
+263 | 
+264 |     def __getitem__(self, key):
+265 |         for dict_ in self.dicts:
+266 |             try:
+267 |                 return dict_[key]
+268 |             except KeyError:
+269 |                 pass
+270 |         raise KeyError
+271 | 
+272 |     def __copy__(self):
+273 |         return self.__class__(*self.dicts)
+274 | 
+275 |     def get(self, key, default=None):
+276 |         try:
+277 |             return self[key]
+278 |         except KeyError:
+279 |             return default
+280 | 
+281 |     def getlist(self, key):
+282 |         for dict_ in self.dicts:
+283 |             if key in dict_.keys():
+284 |                 return dict_.getlist(key)
+285 |         return []
+286 | 
+287 |     def items(self):
+288 |         item_list = []
+289 |         for dict_ in self.dicts:
+290 |             item_list.extend(dict_.items())
+291 |         return item_list
+292 | 
+293 |     def has_key(self, key):
+294 |         for dict_ in self.dicts:
+295 |             if key in dict_:
+296 |                 return True
+297 |         return False
+298 | 
+299 |     __contains__ = has_key
+300 | 
+301 |     def copy(self):
+302 |         """Returns a copy of this object."""
+303 |         return self.__copy__()
+304 | 
+305 | 
+306 | class LocalCache(collections.OrderedDict):
+307 |     """Dictionary with a finite number of keys.
+308 | 
+309 |     Older items expires first.
+310 | 
+311 |     """
+312 | 
+313 |     def __init__(self, limit=None):
+314 |         super(LocalCache, self).__init__()
+315 |         self.limit = limit
+316 | 
+317 |     def __setitem__(self, key, value):
+318 |         while len(self) >= self.limit:
+319 |             self.popitem(last=False)
+320 |         super(LocalCache, self).__setitem__(key, value)
+321 | 
+322 | 
+323 | class SequenceExclude(object):
+324 |     """Object to test if an item is NOT within some sequence."""
+325 | 
+326 |     def __init__(self, seq):
+327 |         self.seq = seq
+328 | 
+329 |     def __contains__(self, item):
+330 |         return item not in self.seq
+```
+
+
+FAILING TEST FILES:
+
+[test_file_1] BugsInPy/workspace/scrapy/tests/test_utils_datatypes.py
+```python
+  1 | import copy
+  2 | import unittest
+  3 | 
+  4 | import six
+  5 | if six.PY2:
+  6 |     from collections import Mapping, MutableMapping
+  7 | else:
+  8 |     from collections.abc import Mapping, MutableMapping
+  9 | 
+ 10 | from scrapy.utils.datatypes import CaselessDict, SequenceExclude, LocalCache
+ 11 | 
+ 12 | 
+ 13 | __doctests__ = ['scrapy.utils.datatypes']
+ 14 | 
+ 15 | 
+ 16 | class CaselessDictTest(unittest.TestCase):
+ 17 | 
+ 18 |     def test_init_dict(self):
+ 19 |         seq = {'red': 1, 'black': 3}
+ 20 |         d = CaselessDict(seq)
+ 21 |         self.assertEqual(d['red'], 1)
+ 22 |         self.assertEqual(d['black'], 3)
+ 23 | 
+ 24 |     def test_init_pair_sequence(self):
+ 25 |         seq = (('red', 1), ('black', 3))
+ 26 |         d = CaselessDict(seq)
+ 27 |         self.assertEqual(d['red'], 1)
+ 28 |         self.assertEqual(d['black'], 3)
+ 29 | 
+ 30 |     def test_init_mapping(self):
+ 31 |         class MyMapping(Mapping):
+ 32 |             def __init__(self, **kwargs):
+ 33 |                 self._d = kwargs
+ 34 | 
+ 35 |             def __getitem__(self, key):
+ 36 |                 return self._d[key]
+ 37 | 
+ 38 |             def __iter__(self):
+ 39 |                 return iter(self._d)
+ 40 | 
+ 41 |             def __len__(self):
+ 42 |                 return len(self._d)
+ 43 | 
+ 44 |         seq = MyMapping(red=1, black=3)
+ 45 |         d = CaselessDict(seq)
+ 46 |         self.assertEqual(d['red'], 1)
+ 47 |         self.assertEqual(d['black'], 3)
+ 48 | 
+ 49 |     def test_init_mutable_mapping(self):
+ 50 |         class MyMutableMapping(MutableMapping):
+ 51 |             def __init__(self, **kwargs):
+ 52 |                 self._d = kwargs
+ 53 | 
+ 54 |             def __getitem__(self, key):
+ 55 |                 return self._d[key]
+ 56 | 
+ 57 |             def __setitem__(self, key, value):
+ 58 |                 self._d[key] = value
+ 59 | 
+ 60 |             def __delitem__(self, key):
+ 61 |                 del self._d[key]
+ 62 | 
+ 63 |             def __iter__(self):
+ 64 |                 return iter(self._d)
+ 65 | 
+ 66 |             def __len__(self):
+ 67 |                 return len(self._d)
+ 68 | 
+ 69 |         seq = MyMutableMapping(red=1, black=3)
+ 70 |         d = CaselessDict(seq)
+ 71 |         self.assertEqual(d['red'], 1)
+ 72 |         self.assertEqual(d['black'], 3)
+ 73 | 
+ 74 |     def test_caseless(self):
+ 75 |         d = CaselessDict()
+ 76 |         d['key_Lower'] = 1
+ 77 |         self.assertEqual(d['KEy_loWer'], 1)
+ 78 |         self.assertEqual(d.get('KEy_loWer'), 1)
+ 79 | 
+ 80 |         d['KEY_LOWER'] = 3
+ 81 |         self.assertEqual(d['key_Lower'], 3)
+ 82 |         self.assertEqual(d.get('key_Lower'), 3)
+ 83 | 
+ 84 |     def test_delete(self):
+ 85 |         d = CaselessDict({'key_lower': 1})
+ 86 |         del d['key_LOWER']
+ 87 |         self.assertRaises(KeyError, d.__getitem__, 'key_LOWER')
+ 88 |         self.assertRaises(KeyError, d.__getitem__, 'key_lower')
+ 89 | 
+ 90 |     def test_getdefault(self):
+ 91 |         d = CaselessDict()
+ 92 |         self.assertEqual(d.get('c', 5), 5)
+ 93 |         d['c'] = 10
+ 94 |         self.assertEqual(d.get('c', 5), 10)
+ 95 | 
+ 96 |     def test_setdefault(self):
+ 97 |         d = CaselessDict({'a': 1, 'b': 2})
+ 98 | 
+ 99 |         r = d.setdefault('A', 5)
+100 |         self.assertEqual(r, 1)
+101 |         self.assertEqual(d['A'], 1)
+102 | 
+103 |         r = d.setdefault('c', 5)
+104 |         self.assertEqual(r, 5)
+105 |         self.assertEqual(d['C'], 5)
+106 | 
+107 |     def test_fromkeys(self):
+108 |         keys = ('a', 'b')
+109 | 
+110 |         d = CaselessDict.fromkeys(keys)
+111 |         self.assertEqual(d['A'], None)
+112 |         self.assertEqual(d['B'], None)
+113 | 
+114 |         d = CaselessDict.fromkeys(keys, 1)
+115 |         self.assertEqual(d['A'], 1)
+116 |         self.assertEqual(d['B'], 1)
+117 | 
+118 |         instance = CaselessDict()
+119 |         d = instance.fromkeys(keys)
+120 |         self.assertEqual(d['A'], None)
+121 |         self.assertEqual(d['B'], None)
+122 | 
+123 |         d = instance.fromkeys(keys, 1)
+124 |         self.assertEqual(d['A'], 1)
+125 |         self.assertEqual(d['B'], 1)
+126 | 
+127 |     def test_contains(self):
+128 |         d = CaselessDict()
+129 |         d['a'] = 1
+130 |         assert 'a' in d
+131 | 
+132 |     def test_pop(self):
+133 |         d = CaselessDict()
+134 |         d['a'] = 1
+135 |         self.assertEqual(d.pop('A'), 1)
+136 |         self.assertRaises(KeyError, d.pop, 'A')
+137 | 
+138 |     def test_normkey(self):
+139 |         class MyDict(CaselessDict):
+140 |             def normkey(self, key):
+141 |                 return key.title()
+142 | 
+143 |         d = MyDict()
+144 |         d['key-one'] = 2
+145 |         self.assertEqual(list(d.keys()), ['Key-One'])
+146 | 
+147 |     def test_normvalue(self):
+148 |         class MyDict(CaselessDict):
+149 |             def normvalue(self, value):
+150 |                 if value is not None:
+151 |                     return value + 1
+152 | 
+153 |         d = MyDict({'key': 1})
+154 |         self.assertEqual(d['key'], 2)
+155 |         self.assertEqual(d.get('key'), 2)
+156 | 
+157 |         d = MyDict()
+158 |         d['key'] = 1
+159 |         self.assertEqual(d['key'], 2)
+160 |         self.assertEqual(d.get('key'), 2)
+161 | 
+162 |         d = MyDict()
+163 |         d.setdefault('key', 1)
+164 |         self.assertEqual(d['key'], 2)
+165 |         self.assertEqual(d.get('key'), 2)
+166 | 
+167 |         d = MyDict()
+168 |         d.update({'key': 1})
+169 |         self.assertEqual(d['key'], 2)
+170 |         self.assertEqual(d.get('key'), 2)
+171 | 
+172 |         d = MyDict.fromkeys(('key',), 1)
+173 |         self.assertEqual(d['key'], 2)
+174 |         self.assertEqual(d.get('key'), 2)
+175 | 
+176 |     def test_copy(self):
+177 |         h1 = CaselessDict({'header1': 'value'})
+178 |         h2 = copy.copy(h1)
+179 |         self.assertEqual(h1, h2)
+180 |         self.assertEqual(h1.get('header1'), h2.get('header1'))
+181 |         assert isinstance(h2, CaselessDict)
+182 | 
+183 | 
+184 | class SequenceExcludeTest(unittest.TestCase):
+185 | 
+186 |     def test_list(self):
+187 |         seq = [1, 2, 3]
+188 |         d = SequenceExclude(seq)
+189 |         self.assertIn(0, d)
+190 |         self.assertIn(4, d)
+191 |         self.assertNotIn(2, d)
+192 | 
+193 |     def test_range(self):
+194 |         seq = range(10, 20)
+195 |         d = SequenceExclude(seq)
+196 |         self.assertIn(5, d)
+197 |         self.assertIn(20, d)
+198 |         self.assertNotIn(15, d)
+199 | 
+200 |     def test_six_range(self):
+201 |         import six.moves
+202 |         seq = six.moves.range(10**3, 10**6)
+203 |         d = SequenceExclude(seq)
+204 |         self.assertIn(10**2, d)
+205 |         self.assertIn(10**7, d)
+206 |         self.assertNotIn(10**4, d)
+207 | 
+208 |     def test_range_step(self):
+209 |         seq = range(10, 20, 3)
+210 |         d = SequenceExclude(seq)
+211 |         are_not_in = [v for v in range(10, 20, 3) if v in d]
+212 |         self.assertEqual([], are_not_in)
+213 | 
+214 |         are_not_in = [v for v in range(10, 20) if v in d]
+215 |         self.assertEqual([11, 12, 14, 15, 17, 18], are_not_in)
+216 | 
+217 |     def test_string_seq(self):
+218 |         seq = "cde"
+219 |         d = SequenceExclude(seq)
+220 |         chars = "".join(v for v in "abcdefg" if v in d)
+221 |         self.assertEqual("abfg", chars)
+222 | 
+223 |     def test_stringset_seq(self):
+224 |         seq = set("cde")
+225 |         d = SequenceExclude(seq)
+226 |         chars = "".join(v for v in "abcdefg" if v in d)
+227 |         self.assertEqual("abfg", chars)
+228 | 
+229 |     def test_set(self):
+230 |         """Anything that is not in the supplied sequence will evaluate as 'in' the container."""
+231 |         seq = set([-3, "test", 1.1])
+232 |         d = SequenceExclude(seq)
+233 |         self.assertIn(0, d)
+234 |         self.assertIn("foo", d)
+235 |         self.assertIn(3.14, d)
+236 |         self.assertIn(set("bar"), d)
+237 | 
+238 |         # supplied sequence is a set, so checking for list (non)inclusion fails
+239 |         self.assertRaises(TypeError, (0, 1, 2) in d)
+240 |         self.assertRaises(TypeError, d.__contains__, ['a', 'b', 'c'])
+241 | 
+242 |         for v in [-3, "test", 1.1]:
+243 |             self.assertNotIn(v, d)
+244 | 
+245 | 
+246 | class LocalCacheTest(unittest.TestCase):
+247 | 
+248 |     def test_cache_with_limit(self):
+249 |         cache = LocalCache(limit=2)
+250 |         cache['a'] = 1
+251 |         cache['b'] = 2
+252 |         cache['c'] = 3
+253 |         self.assertEqual(len(cache), 2)
+254 |         self.assertNotIn('a', cache)
+255 |         self.assertIn('b', cache)
+256 |         self.assertIn('c', cache)
+257 |         self.assertEqual(cache['b'], 2)
+258 |         self.assertEqual(cache['c'], 3)
+259 | 
+260 |     def test_cache_without_limit(self):
+261 |         max = 10**4
+262 |         cache = LocalCache()
+263 |         for x in range(max):
+264 |             cache[str(x)] = x
+265 |         self.assertEqual(len(cache), max)
+266 |         for x in range(max):
+267 |             self.assertIn(str(x), cache)
+268 |             self.assertEqual(cache[str(x)], x)
+269 | 
+270 | 
+271 | if __name__ == "__main__":
+272 |     unittest.main()
+```

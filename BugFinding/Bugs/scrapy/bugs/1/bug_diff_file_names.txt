@@ -1,0 +1,4 @@
+# git diff <buggy_version> <patched_version>
+# git diff --name-only c57512fa669e6f6b1b766a7639206a380f0d10ce 9d9dea0d69709ef0f7aef67ddba1bd7bda25d273
+scrapy/spidermiddlewares/offsite.py
+tests/test_spidermiddleware_offsite.py

@@ -1,0 +1,672 @@
+You are given buggy source files and failing test files.
+
+Your task is BUG LOCALIZATION ONLY.
+
+Return only valid JSON using this exact format:
+
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "relative/path.py",
+      "line_start": 1,
+      "line_end": 1,
+      "confidence": "low|medium|high",
+      "reason": "Max 2 sentences."
+    }
+  ]
+}
+
+Rules:
+- Do not propose fixes.
+- Do not rewrite code.
+- Do not explain outside JSON.
+- Line numbers must refer to the numbered buggy source file.
+- Include at most 3 suspected locations.
+- Prefer the smallest line range that identifies the origin of the bug.
+
+
+SOURCE FILES:
+
+[file_1] BugsInPy/workspace/scrapy/scrapy/pipelines/images.py
+```python
+  1 | """
+  2 | Images Pipeline
+  3 | 
+  4 | See documentation in topics/media-pipeline.rst
+  5 | """
+  6 | import functools
+  7 | import hashlib
+  8 | import six
+  9 | 
+ 10 | try:
+ 11 |     from cStringIO import StringIO as BytesIO
+ 12 | except ImportError:
+ 13 |     from io import BytesIO
+ 14 | 
+ 15 | from PIL import Image
+ 16 | 
+ 17 | from scrapy.utils.misc import md5sum
+ 18 | from scrapy.utils.python import to_bytes
+ 19 | from scrapy.http import Request
+ 20 | from scrapy.settings import Settings
+ 21 | from scrapy.exceptions import DropItem
+ 22 | #TODO: from scrapy.pipelines.media import MediaPipeline
+ 23 | from scrapy.pipelines.files import FileException, FilesPipeline
+ 24 | 
+ 25 | 
+ 26 | class NoimagesDrop(DropItem):
+ 27 |     """Product with no images exception"""
+ 28 | 
+ 29 | 
+ 30 | class ImageException(FileException):
+ 31 |     """General image error exception"""
+ 32 | 
+ 33 | 
+ 34 | class ImagesPipeline(FilesPipeline):
+ 35 |     """Abstract pipeline that implement the image thumbnail generation logic
+ 36 | 
+ 37 |     """
+ 38 | 
+ 39 |     MEDIA_NAME = 'image'
+ 40 | 
+ 41 |     # Uppercase attributes kept for backward compatibility with code that subclasses
+ 42 |     # ImagesPipeline. They may be overridden by settings.
+ 43 |     MIN_WIDTH = 0
+ 44 |     MIN_HEIGHT = 0
+ 45 |     EXPIRES = 90
+ 46 |     THUMBS = {}
+ 47 |     DEFAULT_IMAGES_URLS_FIELD = 'image_urls'
+ 48 |     DEFAULT_IMAGES_RESULT_FIELD = 'images'
+ 49 | 
+ 50 |     def __init__(self, store_uri, download_func=None, settings=None):
+ 51 |         super(ImagesPipeline, self).__init__(store_uri, settings=settings,
+ 52 |                                              download_func=download_func)
+ 53 | 
+ 54 |         if isinstance(settings, dict) or settings is None:
+ 55 |             settings = Settings(settings)
+ 56 | 
+ 57 |         resolve = functools.partial(self._key_for_pipe,
+ 58 |                                     base_class_name="ImagesPipeline",
+ 59 |                                     settings=settings)
+ 60 |         self.expires = settings.getint(
+ 61 |             resolve("IMAGES_EXPIRES"), self.EXPIRES
+ 62 |         )
+ 63 | 
+ 64 |         if not hasattr(self, "IMAGES_RESULT_FIELD"):
+ 65 |             self.IMAGES_RESULT_FIELD = self.DEFAULT_IMAGES_RESULT_FIELD
+ 66 |         if not hasattr(self, "IMAGES_URLS_FIELD"):
+ 67 |             self.IMAGES_URLS_FIELD = self.DEFAULT_IMAGES_URLS_FIELD
+ 68 | 
+ 69 |         self.images_urls_field = settings.get(
+ 70 |             resolve('IMAGES_URLS_FIELD'),
+ 71 |             self.IMAGES_URLS_FIELD
+ 72 |         )
+ 73 |         self.images_result_field = settings.get(
+ 74 |             resolve('IMAGES_RESULT_FIELD'),
+ 75 |             self.IMAGES_RESULT_FIELD
+ 76 |         )
+ 77 |         self.min_width = settings.getint(
+ 78 |             resolve('IMAGES_MIN_WIDTH'), self.MIN_WIDTH
+ 79 |         )
+ 80 |         self.min_height = settings.getint(
+ 81 |             resolve('IMAGES_MIN_HEIGHT'), self.MIN_HEIGHT
+ 82 |         )
+ 83 |         self.thumbs = settings.get(
+ 84 |             resolve('IMAGES_THUMBS'), self.THUMBS
+ 85 |         )
+ 86 | 
+ 87 |     @classmethod
+ 88 |     def from_settings(cls, settings):
+ 89 |         s3store = cls.STORE_SCHEMES['s3']
+ 90 |         s3store.AWS_ACCESS_KEY_ID = settings['AWS_ACCESS_KEY_ID']
+ 91 |         s3store.AWS_SECRET_ACCESS_KEY = settings['AWS_SECRET_ACCESS_KEY']
+ 92 |         s3store.POLICY = settings['IMAGES_STORE_S3_ACL']
+ 93 | 
+ 94 |         store_uri = settings['IMAGES_STORE']
+ 95 |         return cls(store_uri, settings=settings)
+ 96 | 
+ 97 |     def file_downloaded(self, response, request, info):
+ 98 |         return self.image_downloaded(response, request, info)
+ 99 | 
+100 |     def image_downloaded(self, response, request, info):
+101 |         checksum = None
+102 |         for path, image, buf in self.get_images(response, request, info):
+103 |             if checksum is None:
+104 |                 buf.seek(0)
+105 |                 checksum = md5sum(buf)
+106 |             width, height = image.size
+107 |             self.store.persist_file(
+108 |                 path, buf, info,
+109 |                 meta={'width': width, 'height': height},
+110 |                 headers={'Content-Type': 'image/jpeg'})
+111 |         return checksum
+112 | 
+113 |     def get_images(self, response, request, info):
+114 |         path = self.file_path(request, response=response, info=info)
+115 |         orig_image = Image.open(BytesIO(response.body))
+116 | 
+117 |         width, height = orig_image.size
+118 |         if width < self.min_width or height < self.min_height:
+119 |             raise ImageException("Image too small (%dx%d < %dx%d)" %
+120 |                                  (width, height, self.min_width, self.min_height))
+121 | 
+122 |         image, buf = self.convert_image(orig_image)
+123 |         yield path, image, buf
+124 | 
+125 |         for thumb_id, size in six.iteritems(self.thumbs):
+126 |             thumb_path = self.thumb_path(request, thumb_id, response=response, info=info)
+127 |             thumb_image, thumb_buf = self.convert_image(image, size)
+128 |             yield thumb_path, thumb_image, thumb_buf
+129 | 
+130 |     def convert_image(self, image, size=None):
+131 |         if image.format == 'PNG' and image.mode == 'RGBA':
+132 |             background = Image.new('RGBA', image.size, (255, 255, 255))
+133 |             background.paste(image, image)
+134 |             image = background.convert('RGB')
+135 |         elif image.mode != 'RGB':
+136 |             image = image.convert('RGB')
+137 | 
+138 |         if size:
+139 |             image = image.copy()
+140 |             image.thumbnail(size, Image.ANTIALIAS)
+141 | 
+142 |         buf = BytesIO()
+143 |         image.save(buf, 'JPEG')
+144 |         return image, buf
+145 | 
+146 |     def get_media_requests(self, item, info):
+147 |         return [Request(x) for x in item.get(self.images_urls_field, [])]
+148 | 
+149 |     def item_completed(self, results, item, info):
+150 |         if isinstance(item, dict) or self.images_result_field in item.fields:
+151 |             item[self.images_result_field] = [x for ok, x in results if ok]
+152 |         return item
+153 | 
+154 |     def file_path(self, request, response=None, info=None):
+155 |         ## start of deprecation warning block (can be removed in the future)
+156 |         def _warn():
+157 |             from scrapy.exceptions import ScrapyDeprecationWarning
+158 |             import warnings
+159 |             warnings.warn('ImagesPipeline.image_key(url) and file_key(url) methods are deprecated, '
+160 |                           'please use file_path(request, response=None, info=None) instead',
+161 |                           category=ScrapyDeprecationWarning, stacklevel=1)
+162 | 
+163 |         # check if called from image_key or file_key with url as first argument
+164 |         if not isinstance(request, Request):
+165 |             _warn()
+166 |             url = request
+167 |         else:
+168 |             url = request.url
+169 | 
+170 |         # detect if file_key() or image_key() methods have been overridden
+171 |         if not hasattr(self.file_key, '_base'):
+172 |             _warn()
+173 |             return self.file_key(url)
+174 |         elif not hasattr(self.image_key, '_base'):
+175 |             _warn()
+176 |             return self.image_key(url)
+177 |         ## end of deprecation warning block
+178 | 
+179 |         image_guid = hashlib.sha1(to_bytes(url)).hexdigest()  # change to request.url after deprecation
+180 |         return 'full/%s.jpg' % (image_guid)
+181 | 
+182 |     def thumb_path(self, request, thumb_id, response=None, info=None):
+183 |         ## start of deprecation warning block (can be removed in the future)
+184 |         def _warn():
+185 |             from scrapy.exceptions import ScrapyDeprecationWarning
+186 |             import warnings
+187 |             warnings.warn('ImagesPipeline.thumb_key(url) method is deprecated, please use '
+188 |                           'thumb_path(request, thumb_id, response=None, info=None) instead',
+189 |                           category=ScrapyDeprecationWarning, stacklevel=1)
+190 | 
+191 |         # check if called from thumb_key with url as first argument
+192 |         if not isinstance(request, Request):
+193 |             _warn()
+194 |             url = request
+195 |         else:
+196 |             url = request.url
+197 | 
+198 |         # detect if thumb_key() method has been overridden
+199 |         if not hasattr(self.thumb_key, '_base'):
+200 |             _warn()
+201 |             return self.thumb_key(url, thumb_id)
+202 |         ## end of deprecation warning block
+203 | 
+204 |         thumb_guid = hashlib.sha1(to_bytes(url)).hexdigest()  # change to request.url after deprecation
+205 |         return 'thumbs/%s/%s.jpg' % (thumb_id, thumb_guid)
+206 | 
+207 |     # deprecated
+208 |     def file_key(self, url):
+209 |         return self.image_key(url)
+210 |     file_key._base = True
+211 | 
+212 |     # deprecated
+213 |     def image_key(self, url):
+214 |         return self.file_path(url)
+215 |     image_key._base = True
+216 | 
+217 |     # deprecated
+218 |     def thumb_key(self, url, thumb_id):
+219 |         return self.thumb_path(url, thumb_id)
+220 |     thumb_key._base = True
+```
+
+
+FAILING TEST FILES:
+
+[test_file_1] BugsInPy/workspace/scrapy/tests/test_pipeline_images.py
+```python
+  1 | import os
+  2 | import hashlib
+  3 | import random
+  4 | import warnings
+  5 | from tempfile import mkdtemp, TemporaryFile
+  6 | from shutil import rmtree
+  7 | 
+  8 | from twisted.trial import unittest
+  9 | 
+ 10 | from scrapy.item import Item, Field
+ 11 | from scrapy.http import Request, Response
+ 12 | from scrapy.settings import Settings
+ 13 | from scrapy.pipelines.images import ImagesPipeline
+ 14 | from scrapy.utils.python import to_bytes
+ 15 | 
+ 16 | skip = False
+ 17 | try:
+ 18 |     from PIL import Image
+ 19 | except ImportError as e:
+ 20 |     skip = 'Missing Python Imaging Library, install https://pypi.python.org/pypi/Pillow'
+ 21 | else:
+ 22 |     encoders = set(('jpeg_encoder', 'jpeg_decoder'))
+ 23 |     if not encoders.issubset(set(Image.core.__dict__)):
+ 24 |         skip = 'Missing JPEG encoders'
+ 25 | 
+ 26 | 
+ 27 | def _mocked_download_func(request, info):
+ 28 |     response = request.meta.get('response')
+ 29 |     return response() if callable(response) else response
+ 30 | 
+ 31 | 
+ 32 | class ImagesPipelineTestCase(unittest.TestCase):
+ 33 | 
+ 34 |     skip = skip
+ 35 | 
+ 36 |     def setUp(self):
+ 37 |         self.tempdir = mkdtemp()
+ 38 |         self.pipeline = ImagesPipeline(self.tempdir, download_func=_mocked_download_func)
+ 39 | 
+ 40 |     def tearDown(self):
+ 41 |         rmtree(self.tempdir)
+ 42 | 
+ 43 |     def test_file_path(self):
+ 44 |         file_path = self.pipeline.file_path
+ 45 |         self.assertEqual(file_path(Request("https://dev.mydeco.com/mydeco.gif")),
+ 46 |                          'full/3fd165099d8e71b8a48b2683946e64dbfad8b52d.jpg')
+ 47 |         self.assertEqual(file_path(Request("http://www.maddiebrown.co.uk///catalogue-items//image_54642_12175_95307.jpg")),
+ 48 |                          'full/0ffcd85d563bca45e2f90becd0ca737bc58a00b2.jpg')
+ 49 |         self.assertEqual(file_path(Request("https://dev.mydeco.com/two/dirs/with%20spaces%2Bsigns.gif")),
+ 50 |                          'full/b250e3a74fff2e4703e310048a5b13eba79379d2.jpg')
+ 51 |         self.assertEqual(file_path(Request("http://www.dfsonline.co.uk/get_prod_image.php?img=status_0907_mdm.jpg")),
+ 52 |                          'full/4507be485f38b0da8a0be9eb2e1dfab8a19223f2.jpg')
+ 53 |         self.assertEqual(file_path(Request("http://www.dorma.co.uk/images/product_details/2532/")),
+ 54 |                          'full/97ee6f8a46cbbb418ea91502fd24176865cf39b2.jpg')
+ 55 |         self.assertEqual(file_path(Request("http://www.dorma.co.uk/images/product_details/2532")),
+ 56 |                          'full/244e0dd7d96a3b7b01f54eded250c9e272577aa1.jpg')
+ 57 |         self.assertEqual(file_path(Request("http://www.dorma.co.uk/images/product_details/2532"),
+ 58 |                                    response=Response("http://www.dorma.co.uk/images/product_details/2532"),
+ 59 |                                    info=object()),
+ 60 |                          'full/244e0dd7d96a3b7b01f54eded250c9e272577aa1.jpg')
+ 61 | 
+ 62 |     def test_thumbnail_name(self):
+ 63 |         thumb_path = self.pipeline.thumb_path
+ 64 |         name = '50'
+ 65 |         self.assertEqual(thumb_path(Request("file:///tmp/foo.jpg"), name),
+ 66 |                          'thumbs/50/38a86208c36e59d4404db9e37ce04be863ef0335.jpg')
+ 67 |         self.assertEqual(thumb_path(Request("file://foo.png"), name),
+ 68 |                          'thumbs/50/e55b765eba0ec7348e50a1df496040449071b96a.jpg')
+ 69 |         self.assertEqual(thumb_path(Request("file:///tmp/foo"), name),
+ 70 |                          'thumbs/50/0329ad83ebb8e93ea7c7906d46e9ed55f7349a50.jpg')
+ 71 |         self.assertEqual(thumb_path(Request("file:///tmp/some.name/foo"), name),
+ 72 |                          'thumbs/50/850233df65a5b83361798f532f1fc549cd13cbe9.jpg')
+ 73 |         self.assertEqual(thumb_path(Request("file:///tmp/some.name/foo"), name,
+ 74 |                                     response=Response("file:///tmp/some.name/foo"),
+ 75 |                                     info=object()),
+ 76 |                          'thumbs/50/850233df65a5b83361798f532f1fc549cd13cbe9.jpg')
+ 77 | 
+ 78 |     def test_convert_image(self):
+ 79 |         SIZE = (100, 100)
+ 80 |         # straigh forward case: RGB and JPEG
+ 81 |         COLOUR = (0, 127, 255)
+ 82 |         im = _create_image('JPEG', 'RGB', SIZE, COLOUR)
+ 83 |         converted, _ = self.pipeline.convert_image(im)
+ 84 |         self.assertEquals(converted.mode, 'RGB')
+ 85 |         self.assertEquals(converted.getcolors(), [(10000, COLOUR)])
+ 86 | 
+ 87 |         # check that thumbnail keep image ratio
+ 88 |         thumbnail, _ = self.pipeline.convert_image(converted, size=(10, 25))
+ 89 |         self.assertEquals(thumbnail.mode, 'RGB')
+ 90 |         self.assertEquals(thumbnail.size, (10, 10))
+ 91 | 
+ 92 |         # transparency case: RGBA and PNG
+ 93 |         COLOUR = (0, 127, 255, 50)
+ 94 |         im = _create_image('PNG', 'RGBA', SIZE, COLOUR)
+ 95 |         converted, _ = self.pipeline.convert_image(im)
+ 96 |         self.assertEquals(converted.mode, 'RGB')
+ 97 |         self.assertEquals(converted.getcolors(), [(10000, (205, 230, 255))])
+ 98 | 
+ 99 |         # transparency case with palette: P and PNG
+100 |         COLOUR = (0, 127, 255, 50)
+101 |         im = _create_image('PNG', 'RGBA', SIZE, COLOUR)
+102 |         im = im.convert('P')
+103 |         converted, _ = self.pipeline.convert_image(im)
+104 |         self.assertEquals(converted.mode, 'RGB')
+105 |         self.assertEquals(converted.getcolors(), [(10000, (205, 230, 255))])
+106 | 
+107 | 
+108 | class DeprecatedImagesPipeline(ImagesPipeline):
+109 |     def file_key(self, url):
+110 |         return self.image_key(url)
+111 | 
+112 |     def image_key(self, url):
+113 |         image_guid = hashlib.sha1(to_bytes(url)).hexdigest()
+114 |         return 'empty/%s.jpg' % (image_guid)
+115 | 
+116 |     def thumb_key(self, url, thumb_id):
+117 |         thumb_guid = hashlib.sha1(to_bytes(url)).hexdigest()
+118 |         return 'thumbsup/%s/%s.jpg' % (thumb_id, thumb_guid)
+119 | 
+120 | 
+121 | class DeprecatedImagesPipelineTestCase(unittest.TestCase):
+122 |     def setUp(self):
+123 |         self.tempdir = mkdtemp()
+124 | 
+125 |     def init_pipeline(self, pipeline_class):
+126 |         self.pipeline = pipeline_class(self.tempdir, download_func=_mocked_download_func)
+127 |         self.pipeline.open_spider(None)
+128 | 
+129 |     def test_default_file_key_method(self):
+130 |         self.init_pipeline(ImagesPipeline)
+131 |         with warnings.catch_warnings(record=True) as w:
+132 |             warnings.simplefilter('always')
+133 |             self.assertEqual(self.pipeline.file_key("https://dev.mydeco.com/mydeco.gif"),
+134 |                              'full/3fd165099d8e71b8a48b2683946e64dbfad8b52d.jpg')
+135 |             self.assertEqual(len(w), 1)
+136 |             self.assertTrue('image_key(url) and file_key(url) methods are deprecated' in str(w[-1].message))
+137 | 
+138 |     def test_default_image_key_method(self):
+139 |         self.init_pipeline(ImagesPipeline)
+140 |         with warnings.catch_warnings(record=True) as w:
+141 |             warnings.simplefilter('always')
+142 |             self.assertEqual(self.pipeline.image_key("https://dev.mydeco.com/mydeco.gif"),
+143 |                              'full/3fd165099d8e71b8a48b2683946e64dbfad8b52d.jpg')
+144 |             self.assertEqual(len(w), 1)
+145 |             self.assertTrue('image_key(url) and file_key(url) methods are deprecated' in str(w[-1].message))
+146 | 
+147 |     def test_overridden_file_key_method(self):
+148 |         self.init_pipeline(DeprecatedImagesPipeline)
+149 |         with warnings.catch_warnings(record=True) as w:
+150 |             warnings.simplefilter('always')
+151 |             self.assertEqual(self.pipeline.file_path(Request("https://dev.mydeco.com/mydeco.gif")),
+152 |                              'empty/3fd165099d8e71b8a48b2683946e64dbfad8b52d.jpg')
+153 |             self.assertEqual(len(w), 1)
+154 |             self.assertTrue('image_key(url) and file_key(url) methods are deprecated' in str(w[-1].message))
+155 | 
+156 |     def test_default_thumb_key_method(self):
+157 |         self.init_pipeline(ImagesPipeline)
+158 |         with warnings.catch_warnings(record=True) as w:
+159 |             warnings.simplefilter('always')
+160 |             self.assertEqual(self.pipeline.thumb_key("file:///tmp/foo.jpg", 50),
+161 |                              'thumbs/50/38a86208c36e59d4404db9e37ce04be863ef0335.jpg')
+162 |             self.assertEqual(len(w), 1)
+163 |             self.assertTrue('thumb_key(url) method is deprecated' in str(w[-1].message))
+164 | 
+165 |     def test_overridden_thumb_key_method(self):
+166 |         self.init_pipeline(DeprecatedImagesPipeline)
+167 |         with warnings.catch_warnings(record=True) as w:
+168 |             warnings.simplefilter('always')
+169 |             self.assertEqual(self.pipeline.thumb_path(Request("file:///tmp/foo.jpg"), 50),
+170 |                              'thumbsup/50/38a86208c36e59d4404db9e37ce04be863ef0335.jpg')
+171 |             self.assertEqual(len(w), 1)
+172 |             self.assertTrue('thumb_key(url) method is deprecated' in str(w[-1].message))
+173 | 
+174 |     def tearDown(self):
+175 |         rmtree(self.tempdir)
+176 | 
+177 | 
+178 | class ImagesPipelineTestCaseFields(unittest.TestCase):
+179 | 
+180 |     def test_item_fields_default(self):
+181 |         class TestItem(Item):
+182 |             name = Field()
+183 |             image_urls = Field()
+184 |             images = Field()
+185 | 
+186 |         for cls in TestItem, dict:
+187 |             url = 'http://www.example.com/images/1.jpg'
+188 |             item = cls({'name': 'item1', 'image_urls': [url]})
+189 |             pipeline = ImagesPipeline.from_settings(Settings({'IMAGES_STORE': 's3://example/images/'}))
+190 |             requests = list(pipeline.get_media_requests(item, None))
+191 |             self.assertEqual(requests[0].url, url)
+192 |             results = [(True, {'url': url})]
+193 |             pipeline.item_completed(results, item, None)
+194 |             self.assertEqual(item['images'], [results[0][1]])
+195 | 
+196 |     def test_item_fields_override_settings(self):
+197 |         class TestItem(Item):
+198 |             name = Field()
+199 |             image = Field()
+200 |             stored_image = Field()
+201 | 
+202 |         for cls in TestItem, dict:
+203 |             url = 'http://www.example.com/images/1.jpg'
+204 |             item = cls({'name': 'item1', 'image': [url]})
+205 |             pipeline = ImagesPipeline.from_settings(Settings({
+206 |                 'IMAGES_STORE': 's3://example/images/',
+207 |                 'IMAGES_URLS_FIELD': 'image',
+208 |                 'IMAGES_RESULT_FIELD': 'stored_image'
+209 |             }))
+210 |             requests = list(pipeline.get_media_requests(item, None))
+211 |             self.assertEqual(requests[0].url, url)
+212 |             results = [(True, {'url': url})]
+213 |             pipeline.item_completed(results, item, None)
+214 |             self.assertEqual(item['stored_image'], [results[0][1]])
+215 | 
+216 | 
+217 | class ImagesPipelineTestCaseCustomSettings(unittest.TestCase):
+218 |     img_cls_attribute_names = [
+219 |         # Pipeline attribute names with corresponding setting names.
+220 |         ("EXPIRES", "IMAGES_EXPIRES"),
+221 |         ("MIN_WIDTH", "IMAGES_MIN_WIDTH"),
+222 |         ("MIN_HEIGHT", "IMAGES_MIN_HEIGHT"),
+223 |         ("IMAGES_URLS_FIELD", "IMAGES_URLS_FIELD"),
+224 |         ("IMAGES_RESULT_FIELD", "IMAGES_RESULT_FIELD"),
+225 |         ("THUMBS", "IMAGES_THUMBS")
+226 |     ]
+227 | 
+228 |     # This should match what is defined in ImagesPipeline.
+229 |     default_pipeline_settings = dict(
+230 |         MIN_WIDTH=0,
+231 |         MIN_HEIGHT=0,
+232 |         EXPIRES=90,
+233 |         THUMBS={},
+234 |         IMAGES_URLS_FIELD='image_urls',
+235 |         IMAGES_RESULT_FIELD='images'
+236 |     )
+237 | 
+238 | 
+239 |     def setUp(self):
+240 |         self.tempdir = mkdtemp()
+241 | 
+242 |     def tearDown(self):
+243 |         rmtree(self.tempdir)
+244 | 
+245 |     def _generate_fake_settings(self, prefix=None):
+246 |         """
+247 |         :param prefix: string for setting keys
+248 |         :return: dictionary of image pipeline settings
+249 |         """
+250 | 
+251 |         def random_string():
+252 |             return "".join([chr(random.randint(97, 123)) for _ in range(10)])
+253 | 
+254 |         settings = {
+255 |             "IMAGES_EXPIRES": random.randint(100, 1000),
+256 |             "IMAGES_STORE": self.tempdir,
+257 |             "IMAGES_RESULT_FIELD": random_string(),
+258 |             "IMAGES_URLS_FIELD": random_string(),
+259 |             "IMAGES_MIN_WIDTH": random.randint(1, 1000),
+260 |             "IMAGES_MIN_HEIGHT": random.randint(1, 1000),
+261 |             "IMAGES_THUMBS": {
+262 |                 'small': (random.randint(1, 1000), random.randint(1, 1000)),
+263 |                 'big': (random.randint(1, 1000), random.randint(1, 1000))
+264 |             }
+265 |         }
+266 |         if not prefix:
+267 |             return settings
+268 | 
+269 |         return {prefix.upper() + "_" + k if k != "IMAGES_STORE" else k: v for k, v in settings.items()}
+270 | 
+271 |     def _generate_fake_pipeline_subclass(self):
+272 |         """
+273 |         :return: ImagePipeline class will all uppercase attributes set.
+274 |         """
+275 |         class UserDefinedImagePipeline(ImagesPipeline):
+276 |             # Values should be in different range than fake_settings.
+277 |             MIN_WIDTH = random.randint(1000, 2000)
+278 |             MIN_HEIGHT = random.randint(1000, 2000)
+279 |             THUMBS = {
+280 |                 'small': (random.randint(1000, 2000), random.randint(1000, 2000)),
+281 |                 'big': (random.randint(1000, 2000), random.randint(1000, 2000))
+282 |             }
+283 |             EXPIRES = random.randint(1000, 2000)
+284 |             IMAGES_URLS_FIELD = "field_one"
+285 |             IMAGES_RESULT_FIELD = "field_two"
+286 | 
+287 |         return UserDefinedImagePipeline
+288 | 
+289 |     def test_different_settings_for_different_instances(self):
+290 |         """
+291 |         If there are two instances of ImagesPipeline class with different settings, they should
+292 |         have different settings.
+293 |         """
+294 |         custom_settings = self._generate_fake_settings()
+295 |         default_settings = Settings()
+296 |         default_sts_pipe = ImagesPipeline(self.tempdir, settings=default_settings)
+297 |         user_sts_pipe = ImagesPipeline.from_settings(Settings(custom_settings))
+298 |         for pipe_attr, settings_attr in self.img_cls_attribute_names:
+299 |             expected_default_value = self.default_pipeline_settings.get(pipe_attr)
+300 |             custom_value = custom_settings.get(settings_attr)
+301 |             self.assertNotEqual(expected_default_value, custom_value)
+302 |             self.assertEqual(getattr(default_sts_pipe, pipe_attr.lower()), expected_default_value)
+303 |             self.assertEqual(getattr(user_sts_pipe, pipe_attr.lower()), custom_value)
+304 | 
+305 |     def test_subclass_attrs_preserved_default_settings(self):
+306 |         """
+307 |         If image settings are not defined at all subclass of ImagePipeline takes values
+308 |         from class attributes.
+309 |         """
+310 |         pipeline_cls = self._generate_fake_pipeline_subclass()
+311 |         pipeline = pipeline_cls.from_settings(Settings({"IMAGES_STORE": self.tempdir}))
+312 |         for pipe_attr, settings_attr in self.img_cls_attribute_names:
+313 |             # Instance attribute (lowercase) must be equal to class attribute (uppercase).
+314 |             attr_value = getattr(pipeline, pipe_attr.lower())
+315 |             self.assertNotEqual(attr_value, self.default_pipeline_settings[pipe_attr])
+316 |             self.assertEqual(attr_value, getattr(pipeline, pipe_attr))
+317 | 
+318 |     def test_subclass_attrs_preserved_custom_settings(self):
+319 |         """
+320 |         If image settings are defined but they are not defined for subclass default
+321 |         values taken from settings should be preserved.
+322 |         """
+323 |         pipeline_cls = self._generate_fake_pipeline_subclass()
+324 |         settings = self._generate_fake_settings()
+325 |         pipeline = pipeline_cls.from_settings(Settings(settings))
+326 |         for pipe_attr, settings_attr in self.img_cls_attribute_names:
+327 |             # Instance attribute (lowercase) must be equal to
+328 |             # value defined in settings.
+329 |             value = getattr(pipeline, pipe_attr.lower())
+330 |             self.assertNotEqual(value, self.default_pipeline_settings[pipe_attr])
+331 |             setings_value = settings.get(settings_attr)
+332 |             self.assertEqual(value, setings_value)
+333 | 
+334 |     def test_no_custom_settings_for_subclasses(self):
+335 |         """
+336 |         If there are no settings for subclass and no subclass attributes, pipeline should use
+337 |         attributes of base class.
+338 |         """
+339 |         class UserDefinedImagePipeline(ImagesPipeline):
+340 |             pass
+341 | 
+342 |         user_pipeline = UserDefinedImagePipeline.from_settings(Settings({"IMAGES_STORE": self.tempdir}))
+343 |         for pipe_attr, settings_attr in self.img_cls_attribute_names:
+344 |             # Values from settings for custom pipeline should be set on pipeline instance.
+345 |             custom_value = self.default_pipeline_settings.get(pipe_attr.upper())
+346 |             self.assertEqual(getattr(user_pipeline, pipe_attr.lower()), custom_value)
+347 | 
+348 |     def test_custom_settings_for_subclasses(self):
+349 |         """
+350 |         If there are custom settings for subclass and NO class attributes, pipeline should use custom
+351 |         settings.
+352 |         """
+353 |         class UserDefinedImagePipeline(ImagesPipeline):
+354 |             pass
+355 | 
+356 |         prefix = UserDefinedImagePipeline.__name__.upper()
+357 |         settings = self._generate_fake_settings(prefix=prefix)
+358 |         user_pipeline = UserDefinedImagePipeline.from_settings(Settings(settings))
+359 |         for pipe_attr, settings_attr in self.img_cls_attribute_names:
+360 |             # Values from settings for custom pipeline should be set on pipeline instance.
+361 |             custom_value = settings.get(prefix + "_" + settings_attr)
+362 |             self.assertNotEqual(custom_value, self.default_pipeline_settings[pipe_attr])
+363 |             self.assertEqual(getattr(user_pipeline, pipe_attr.lower()), custom_value)
+364 | 
+365 |     def test_custom_settings_and_class_attrs_for_subclasses(self):
+366 |         """
+367 |         If there are custom settings for subclass AND class attributes
+368 |         setting keys are preferred and override attributes.
+369 |         """
+370 |         pipeline_cls = self._generate_fake_pipeline_subclass()
+371 |         prefix = pipeline_cls.__name__.upper()
+372 |         settings = self._generate_fake_settings(prefix=prefix)
+373 |         user_pipeline = pipeline_cls.from_settings(Settings(settings))
+374 |         for pipe_attr, settings_attr in self.img_cls_attribute_names:
+375 |             custom_value = settings.get(prefix + "_" + settings_attr)
+376 |             self.assertNotEqual(custom_value, self.default_pipeline_settings[pipe_attr])
+377 |             self.assertEqual(getattr(user_pipeline, pipe_attr.lower()), custom_value)
+378 | 
+379 |     def test_cls_attrs_with_DEFAULT_prefix(self):
+380 |         class UserDefinedImagePipeline(ImagesPipeline):
+381 |             DEFAULT_IMAGES_URLS_FIELD = "something"
+382 |             DEFAULT_IMAGES_RESULT_FIELD = "something_else"
+383 |         pipeline = UserDefinedImagePipeline.from_settings(Settings({"IMAGES_STORE": self.tempdir}))
+384 |         self.assertEqual(pipeline.images_result_field, "something_else")
+385 |         self.assertEqual(pipeline.images_urls_field, "something")
+386 | 
+387 |     def test_user_defined_subclass_default_key_names(self):
+388 |         """Test situation when user defines subclass of ImagePipeline,
+389 |         but uses attribute names for default pipeline (without prefixing
+390 |         them with pipeline class name).
+391 |         """
+392 |         settings = self._generate_fake_settings()
+393 | 
+394 |         class UserPipe(ImagesPipeline):
+395 |             pass
+396 | 
+397 |         pipeline_cls = UserPipe.from_settings(Settings(settings))
+398 | 
+399 |         for pipe_attr, settings_attr in self.img_cls_attribute_names:
+400 |             expected_value = settings.get(settings_attr)
+401 |             self.assertEqual(getattr(pipeline_cls, pipe_attr.lower()),
+402 |                              expected_value)
+403 | 
+404 | def _create_image(format, *a, **kw):
+405 |     buf = TemporaryFile()
+406 |     Image.new(*a, **kw).save(buf, format)
+407 |     buf.seek(0)
+408 |     return Image.open(buf)
+409 | 
+410 | 
+411 | if __name__ == "__main__":
+412 |     unittest.main()
+```

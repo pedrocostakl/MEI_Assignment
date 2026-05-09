@@ -1,0 +1,464 @@
+You are given buggy source files and failing test files.
+
+Your task is BUG LOCALIZATION ONLY.
+
+Return only valid JSON using this exact format:
+
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "relative/path.py",
+      "line_start": 1,
+      "line_end": 1,
+      "confidence": "low|medium|high",
+      "reason": "Max 2 sentences."
+    }
+  ]
+}
+
+Rules:
+- Do not propose fixes.
+- Do not rewrite code.
+- Do not explain outside JSON.
+- Line numbers must refer to the numbered buggy source file.
+- Include at most 3 suspected locations.
+- Prefer the smallest line range that identifies the origin of the bug.
+
+
+SOURCE FILES:
+
+[file_1] BugsInPy/workspace/scrapy/scrapy/downloadermiddlewares/redirect.py
+```python
+  1 | import logging
+  2 | from six.moves.urllib.parse import urljoin
+  3 | 
+  4 | from w3lib.url import safe_url_string
+  5 | 
+  6 | from scrapy.http import HtmlResponse
+  7 | from scrapy.utils.response import get_meta_refresh
+  8 | from scrapy.exceptions import IgnoreRequest, NotConfigured
+  9 | 
+ 10 | logger = logging.getLogger(__name__)
+ 11 | 
+ 12 | 
+ 13 | class BaseRedirectMiddleware(object):
+ 14 | 
+ 15 |     enabled_setting = 'REDIRECT_ENABLED'
+ 16 | 
+ 17 |     def __init__(self, settings):
+ 18 |         if not settings.getbool(self.enabled_setting):
+ 19 |             raise NotConfigured
+ 20 | 
+ 21 |         self.max_redirect_times = settings.getint('REDIRECT_MAX_TIMES')
+ 22 |         self.priority_adjust = settings.getint('REDIRECT_PRIORITY_ADJUST')
+ 23 | 
+ 24 |     @classmethod
+ 25 |     def from_crawler(cls, crawler):
+ 26 |         return cls(crawler.settings)
+ 27 | 
+ 28 |     def _redirect(self, redirected, request, spider, reason):
+ 29 |         ttl = request.meta.setdefault('redirect_ttl', self.max_redirect_times)
+ 30 |         redirects = request.meta.get('redirect_times', 0) + 1
+ 31 | 
+ 32 |         if ttl and redirects <= self.max_redirect_times:
+ 33 |             redirected.meta['redirect_times'] = redirects
+ 34 |             redirected.meta['redirect_ttl'] = ttl - 1
+ 35 |             redirected.meta['redirect_urls'] = request.meta.get('redirect_urls', []) + \
+ 36 |                 [request.url]
+ 37 |             redirected.meta['redirect_reasons'] = request.meta.get('redirect_reasons', []) + \
+ 38 |                 [reason]
+ 39 |             redirected.dont_filter = request.dont_filter
+ 40 |             redirected.priority = request.priority + self.priority_adjust
+ 41 |             logger.debug("Redirecting (%(reason)s) to %(redirected)s from %(request)s",
+ 42 |                          {'reason': reason, 'redirected': redirected, 'request': request},
+ 43 |                          extra={'spider': spider})
+ 44 |             return redirected
+ 45 |         else:
+ 46 |             logger.debug("Discarding %(request)s: max redirections reached",
+ 47 |                          {'request': request}, extra={'spider': spider})
+ 48 |             raise IgnoreRequest("max redirections reached")
+ 49 | 
+ 50 |     def _redirect_request_using_get(self, request, redirect_url):
+ 51 |         redirected = request.replace(url=redirect_url, method='GET', body='')
+ 52 |         redirected.headers.pop('Content-Type', None)
+ 53 |         redirected.headers.pop('Content-Length', None)
+ 54 |         return redirected
+ 55 | 
+ 56 | 
+ 57 | class RedirectMiddleware(BaseRedirectMiddleware):
+ 58 |     """
+ 59 |     Handle redirection of requests based on response status
+ 60 |     and meta-refresh html tag.
+ 61 |     """
+ 62 |     def process_response(self, request, response, spider):
+ 63 |         if (request.meta.get('dont_redirect', False) or
+ 64 |                 response.status in getattr(spider, 'handle_httpstatus_list', []) or
+ 65 |                 response.status in request.meta.get('handle_httpstatus_list', []) or
+ 66 |                 request.meta.get('handle_httpstatus_all', False)):
+ 67 |             return response
+ 68 | 
+ 69 |         allowed_status = (301, 302, 303, 307, 308)
+ 70 |         if 'Location' not in response.headers or response.status not in allowed_status:
+ 71 |             return response
+ 72 | 
+ 73 |         location = safe_url_string(response.headers['location'])
+ 74 | 
+ 75 |         redirected_url = urljoin(request.url, location)
+ 76 | 
+ 77 |         if response.status in (301, 307, 308) or request.method == 'HEAD':
+ 78 |             redirected = request.replace(url=redirected_url)
+ 79 |             return self._redirect(redirected, request, spider, response.status)
+ 80 | 
+ 81 |         redirected = self._redirect_request_using_get(request, redirected_url)
+ 82 |         return self._redirect(redirected, request, spider, response.status)
+ 83 | 
+ 84 | 
+ 85 | class MetaRefreshMiddleware(BaseRedirectMiddleware):
+ 86 | 
+ 87 |     enabled_setting = 'METAREFRESH_ENABLED'
+ 88 | 
+ 89 |     def __init__(self, settings):
+ 90 |         super(MetaRefreshMiddleware, self).__init__(settings)
+ 91 |         self._ignore_tags = settings.getlist('METAREFRESH_IGNORE_TAGS')
+ 92 |         self._maxdelay = settings.getint('REDIRECT_MAX_METAREFRESH_DELAY',
+ 93 |                                          settings.getint('METAREFRESH_MAXDELAY'))
+ 94 | 
+ 95 |     def process_response(self, request, response, spider):
+ 96 |         if request.meta.get('dont_redirect', False) or request.method == 'HEAD' or \
+ 97 |                 not isinstance(response, HtmlResponse):
+ 98 |             return response
+ 99 | 
+100 |         interval, url = get_meta_refresh(response,
+101 |                                          ignore_tags=self._ignore_tags)
+102 |         if url and interval < self._maxdelay:
+103 |             redirected = self._redirect_request_using_get(request, url)
+104 |             return self._redirect(redirected, request, spider, 'meta refresh')
+105 | 
+106 |         return response
+```
+
+
+FAILING TEST FILES:
+
+[test_file_1] BugsInPy/workspace/scrapy/tests/test_downloadermiddleware_redirect.py
+```python
+  1 | # -*- coding: utf-8 -*-
+  2 | 
+  3 | import unittest
+  4 | 
+  5 | from scrapy.downloadermiddlewares.redirect import RedirectMiddleware, MetaRefreshMiddleware
+  6 | from scrapy.spiders import Spider
+  7 | from scrapy.exceptions import IgnoreRequest
+  8 | from scrapy.http import Request, Response, HtmlResponse
+  9 | from scrapy.utils.test import get_crawler
+ 10 | 
+ 11 | 
+ 12 | class RedirectMiddlewareTest(unittest.TestCase):
+ 13 | 
+ 14 |     def setUp(self):
+ 15 |         self.crawler = get_crawler(Spider)
+ 16 |         self.spider = self.crawler._create_spider('foo')
+ 17 |         self.mw = RedirectMiddleware.from_crawler(self.crawler)
+ 18 | 
+ 19 |     def test_priority_adjust(self):
+ 20 |         req = Request('http://a.com')
+ 21 |         rsp = Response('http://a.com', headers={'Location': 'http://a.com/redirected'}, status=301)
+ 22 |         req2 = self.mw.process_response(req, rsp, self.spider)
+ 23 |         assert req2.priority > req.priority
+ 24 | 
+ 25 |     def test_redirect_3xx_permanent(self):
+ 26 |         def _test(method, status=301):
+ 27 |             url = 'http://www.example.com/{}'.format(status)
+ 28 |             url2 = 'http://www.example.com/redirected'
+ 29 |             req = Request(url, method=method)
+ 30 |             rsp = Response(url, headers={'Location': url2}, status=status)
+ 31 | 
+ 32 |             req2 = self.mw.process_response(req, rsp, self.spider)
+ 33 |             assert isinstance(req2, Request)
+ 34 |             self.assertEqual(req2.url, url2)
+ 35 |             self.assertEqual(req2.method, method)
+ 36 | 
+ 37 |             # response without Location header but with status code is 3XX should be ignored
+ 38 |             del rsp.headers['Location']
+ 39 |             assert self.mw.process_response(req, rsp, self.spider) is rsp
+ 40 | 
+ 41 |         _test('GET')
+ 42 |         _test('POST')
+ 43 |         _test('HEAD')
+ 44 | 
+ 45 |         _test('GET', status=307)
+ 46 |         _test('POST', status=307)
+ 47 |         _test('HEAD', status=307)
+ 48 | 
+ 49 |         _test('GET', status=308)
+ 50 |         _test('POST', status=308)
+ 51 |         _test('HEAD', status=308)
+ 52 | 
+ 53 |     def test_dont_redirect(self):
+ 54 |         url = 'http://www.example.com/301'
+ 55 |         url2 = 'http://www.example.com/redirected'
+ 56 |         req = Request(url, meta={'dont_redirect': True})
+ 57 |         rsp = Response(url, headers={'Location': url2}, status=301)
+ 58 | 
+ 59 |         r = self.mw.process_response(req, rsp, self.spider)
+ 60 |         assert isinstance(r, Response)
+ 61 |         assert r is rsp
+ 62 | 
+ 63 |         # Test that it redirects when dont_redirect is False
+ 64 |         req = Request(url, meta={'dont_redirect': False})
+ 65 |         rsp = Response(url2, status=200)
+ 66 | 
+ 67 |         r = self.mw.process_response(req, rsp, self.spider)
+ 68 |         assert isinstance(r, Response)
+ 69 |         assert r is rsp
+ 70 | 
+ 71 | 
+ 72 |     def test_redirect_302(self):
+ 73 |         url = 'http://www.example.com/302'
+ 74 |         url2 = 'http://www.example.com/redirected2'
+ 75 |         req = Request(url, method='POST', body='test',
+ 76 |             headers={'Content-Type': 'text/plain', 'Content-length': '4'})
+ 77 |         rsp = Response(url, headers={'Location': url2}, status=302)
+ 78 | 
+ 79 |         req2 = self.mw.process_response(req, rsp, self.spider)
+ 80 |         assert isinstance(req2, Request)
+ 81 |         self.assertEqual(req2.url, url2)
+ 82 |         self.assertEqual(req2.method, 'GET')
+ 83 |         assert 'Content-Type' not in req2.headers, \
+ 84 |             "Content-Type header must not be present in redirected request"
+ 85 |         assert 'Content-Length' not in req2.headers, \
+ 86 |             "Content-Length header must not be present in redirected request"
+ 87 |         assert not req2.body, \
+ 88 |             "Redirected body must be empty, not '%s'" % req2.body
+ 89 | 
+ 90 |         # response without Location header but with status code is 3XX should be ignored
+ 91 |         del rsp.headers['Location']
+ 92 |         assert self.mw.process_response(req, rsp, self.spider) is rsp
+ 93 | 
+ 94 |     def test_redirect_302_head(self):
+ 95 |         url = 'http://www.example.com/302'
+ 96 |         url2 = 'http://www.example.com/redirected2'
+ 97 |         req = Request(url, method='HEAD')
+ 98 |         rsp = Response(url, headers={'Location': url2}, status=302)
+ 99 | 
+100 |         req2 = self.mw.process_response(req, rsp, self.spider)
+101 |         assert isinstance(req2, Request)
+102 |         self.assertEqual(req2.url, url2)
+103 |         self.assertEqual(req2.method, 'HEAD')
+104 | 
+105 |         # response without Location header but with status code is 3XX should be ignored
+106 |         del rsp.headers['Location']
+107 |         assert self.mw.process_response(req, rsp, self.spider) is rsp
+108 | 
+109 |     def test_redirect_302_relative(self):
+110 |         url = 'http://www.example.com/302'
+111 |         url2 = '///i8n.example2.com/302'
+112 |         url3 = 'http://i8n.example2.com/302'
+113 |         req = Request(url, method='HEAD')
+114 |         rsp = Response(url, headers={'Location': url2}, status=302)
+115 | 
+116 |         req2 = self.mw.process_response(req, rsp, self.spider)
+117 |         assert isinstance(req2, Request)
+118 |         self.assertEqual(req2.url, url3)
+119 |         self.assertEqual(req2.method, 'HEAD')
+120 | 
+121 |         # response without Location header but with status code is 3XX should be ignored
+122 |         del rsp.headers['Location']
+123 |         assert self.mw.process_response(req, rsp, self.spider) is rsp
+124 | 
+125 | 
+126 |     def test_max_redirect_times(self):
+127 |         self.mw.max_redirect_times = 1
+128 |         req = Request('http://scrapytest.org/302')
+129 |         rsp = Response('http://scrapytest.org/302', headers={'Location': '/redirected'}, status=302)
+130 | 
+131 |         req = self.mw.process_response(req, rsp, self.spider)
+132 |         assert isinstance(req, Request)
+133 |         assert 'redirect_times' in req.meta
+134 |         self.assertEqual(req.meta['redirect_times'], 1)
+135 |         self.assertRaises(IgnoreRequest, self.mw.process_response, req, rsp, self.spider)
+136 | 
+137 |     def test_ttl(self):
+138 |         self.mw.max_redirect_times = 100
+139 |         req = Request('http://scrapytest.org/302', meta={'redirect_ttl': 1})
+140 |         rsp = Response('http://www.scrapytest.org/302', headers={'Location': '/redirected'}, status=302)
+141 | 
+142 |         req = self.mw.process_response(req, rsp, self.spider)
+143 |         assert isinstance(req, Request)
+144 |         self.assertRaises(IgnoreRequest, self.mw.process_response, req, rsp, self.spider)
+145 | 
+146 |     def test_redirect_urls(self):
+147 |         req1 = Request('http://scrapytest.org/first')
+148 |         rsp1 = Response('http://scrapytest.org/first', headers={'Location': '/redirected'}, status=302)
+149 |         req2 = self.mw.process_response(req1, rsp1, self.spider)
+150 |         rsp2 = Response('http://scrapytest.org/redirected', headers={'Location': '/redirected2'}, status=302)
+151 |         req3 = self.mw.process_response(req2, rsp2, self.spider)
+152 | 
+153 |         self.assertEqual(req2.url, 'http://scrapytest.org/redirected')
+154 |         self.assertEqual(req2.meta['redirect_urls'], ['http://scrapytest.org/first'])
+155 |         self.assertEqual(req3.url, 'http://scrapytest.org/redirected2')
+156 |         self.assertEqual(req3.meta['redirect_urls'], ['http://scrapytest.org/first', 'http://scrapytest.org/redirected'])
+157 | 
+158 |     def test_redirect_reasons(self):
+159 |         req1 = Request('http://scrapytest.org/first')
+160 |         rsp1 = Response('http://scrapytest.org/first', headers={'Location': '/redirected1'}, status=301)
+161 |         req2 = self.mw.process_response(req1, rsp1, self.spider)
+162 |         rsp2 = Response('http://scrapytest.org/redirected1', headers={'Location': '/redirected2'}, status=301)
+163 |         req3 = self.mw.process_response(req2, rsp2, self.spider)
+164 | 
+165 |         self.assertEqual(req2.meta['redirect_reasons'], [301])
+166 |         self.assertEqual(req3.meta['redirect_reasons'], [301, 301])
+167 | 
+168 |     def test_spider_handling(self):
+169 |         smartspider = self.crawler._create_spider('smarty')
+170 |         smartspider.handle_httpstatus_list = [404, 301, 302]
+171 |         url = 'http://www.example.com/301'
+172 |         url2 = 'http://www.example.com/redirected'
+173 |         req = Request(url)
+174 |         rsp = Response(url, headers={'Location': url2}, status=301)
+175 |         r = self.mw.process_response(req, rsp, smartspider)
+176 |         self.assertIs(r, rsp)
+177 | 
+178 |     def test_request_meta_handling(self):
+179 |         url = 'http://www.example.com/301'
+180 |         url2 = 'http://www.example.com/redirected'
+181 |         def _test_passthrough(req):
+182 |             rsp = Response(url, headers={'Location': url2}, status=301, request=req)
+183 |             r = self.mw.process_response(req, rsp, self.spider)
+184 |             self.assertIs(r, rsp)
+185 |         _test_passthrough(Request(url, meta={'handle_httpstatus_list':
+186 |                                                            [404, 301, 302]}))
+187 |         _test_passthrough(Request(url, meta={'handle_httpstatus_all': True}))
+188 | 
+189 |     def test_latin1_location(self):
+190 |         req = Request('http://scrapytest.org/first')
+191 |         latin1_location = u'/ação'.encode('latin1')  # HTTP historically supports latin1
+192 |         resp = Response('http://scrapytest.org/first', headers={'Location': latin1_location}, status=302)
+193 |         req_result = self.mw.process_response(req, resp, self.spider)
+194 |         perc_encoded_utf8_url = 'http://scrapytest.org/a%E7%E3o'
+195 |         self.assertEqual(perc_encoded_utf8_url, req_result.url)
+196 | 
+197 |     def test_utf8_location(self):
+198 |         req = Request('http://scrapytest.org/first')
+199 |         utf8_location = u'/ação'.encode('utf-8')  # header using UTF-8 encoding
+200 |         resp = Response('http://scrapytest.org/first', headers={'Location': utf8_location}, status=302)
+201 |         req_result = self.mw.process_response(req, resp, self.spider)
+202 |         perc_encoded_utf8_url = 'http://scrapytest.org/a%C3%A7%C3%A3o'
+203 |         self.assertEqual(perc_encoded_utf8_url, req_result.url)
+204 | 
+205 | 
+206 | class MetaRefreshMiddlewareTest(unittest.TestCase):
+207 | 
+208 |     def setUp(self):
+209 |         crawler = get_crawler(Spider)
+210 |         self.spider = crawler._create_spider('foo')
+211 |         self.mw = MetaRefreshMiddleware.from_crawler(crawler)
+212 | 
+213 |     def _body(self, interval=5, url='http://example.org/newpage'):
+214 |         html = u"""<html><head><meta http-equiv="refresh" content="{0};url={1}"/></head></html>"""
+215 |         return html.format(interval, url).encode('utf-8')
+216 | 
+217 |     def test_priority_adjust(self):
+218 |         req = Request('http://a.com')
+219 |         rsp = HtmlResponse(req.url, body=self._body())
+220 |         req2 = self.mw.process_response(req, rsp, self.spider)
+221 |         assert req2.priority > req.priority
+222 | 
+223 |     def test_meta_refresh(self):
+224 |         req = Request(url='http://example.org')
+225 |         rsp = HtmlResponse(req.url, body=self._body())
+226 |         req2 = self.mw.process_response(req, rsp, self.spider)
+227 |         assert isinstance(req2, Request)
+228 |         self.assertEqual(req2.url, 'http://example.org/newpage')
+229 | 
+230 |     def test_meta_refresh_with_high_interval(self):
+231 |         # meta-refresh with high intervals don't trigger redirects
+232 |         req = Request(url='http://example.org')
+233 |         rsp = HtmlResponse(url='http://example.org',
+234 |                            body=self._body(interval=1000),
+235 |                            encoding='utf-8')
+236 |         rsp2 = self.mw.process_response(req, rsp, self.spider)
+237 |         assert rsp is rsp2
+238 | 
+239 |     def test_meta_refresh_trough_posted_request(self):
+240 |         req = Request(url='http://example.org', method='POST', body='test',
+241 |                       headers={'Content-Type': 'text/plain', 'Content-length': '4'})
+242 |         rsp = HtmlResponse(req.url, body=self._body())
+243 |         req2 = self.mw.process_response(req, rsp, self.spider)
+244 | 
+245 |         assert isinstance(req2, Request)
+246 |         self.assertEqual(req2.url, 'http://example.org/newpage')
+247 |         self.assertEqual(req2.method, 'GET')
+248 |         assert 'Content-Type' not in req2.headers, \
+249 |             "Content-Type header must not be present in redirected request"
+250 |         assert 'Content-Length' not in req2.headers, \
+251 |             "Content-Length header must not be present in redirected request"
+252 |         assert not req2.body, \
+253 |             "Redirected body must be empty, not '%s'" % req2.body
+254 | 
+255 |     def test_max_redirect_times(self):
+256 |         self.mw.max_redirect_times = 1
+257 |         req = Request('http://scrapytest.org/max')
+258 |         rsp = HtmlResponse(req.url, body=self._body())
+259 | 
+260 |         req = self.mw.process_response(req, rsp, self.spider)
+261 |         assert isinstance(req, Request)
+262 |         assert 'redirect_times' in req.meta
+263 |         self.assertEqual(req.meta['redirect_times'], 1)
+264 |         self.assertRaises(IgnoreRequest, self.mw.process_response, req, rsp, self.spider)
+265 | 
+266 |     def test_ttl(self):
+267 |         self.mw.max_redirect_times = 100
+268 |         req = Request('http://scrapytest.org/302', meta={'redirect_ttl': 1})
+269 |         rsp = HtmlResponse(req.url, body=self._body())
+270 | 
+271 |         req = self.mw.process_response(req, rsp, self.spider)
+272 |         assert isinstance(req, Request)
+273 |         self.assertRaises(IgnoreRequest, self.mw.process_response, req, rsp, self.spider)
+274 | 
+275 |     def test_redirect_urls(self):
+276 |         req1 = Request('http://scrapytest.org/first')
+277 |         rsp1 = HtmlResponse(req1.url, body=self._body(url='/redirected'))
+278 |         req2 = self.mw.process_response(req1, rsp1, self.spider)
+279 |         assert isinstance(req2, Request), req2
+280 |         rsp2 = HtmlResponse(req2.url, body=self._body(url='/redirected2'))
+281 |         req3 = self.mw.process_response(req2, rsp2, self.spider)
+282 |         assert isinstance(req3, Request), req3
+283 |         self.assertEqual(req2.url, 'http://scrapytest.org/redirected')
+284 |         self.assertEqual(req2.meta['redirect_urls'], ['http://scrapytest.org/first'])
+285 |         self.assertEqual(req3.url, 'http://scrapytest.org/redirected2')
+286 |         self.assertEqual(req3.meta['redirect_urls'], ['http://scrapytest.org/first', 'http://scrapytest.org/redirected'])
+287 | 
+288 |     def test_redirect_reasons(self):
+289 |         req1 = Request('http://scrapytest.org/first')
+290 |         rsp1 = HtmlResponse('http://scrapytest.org/first', body=self._body(url='/redirected'))
+291 |         req2 = self.mw.process_response(req1, rsp1, self.spider)
+292 |         rsp2 = HtmlResponse('http://scrapytest.org/redirected', body=self._body(url='/redirected1'))
+293 |         req3 = self.mw.process_response(req2, rsp2, self.spider)
+294 | 
+295 |         self.assertEqual(req2.meta['redirect_reasons'], ['meta refresh'])
+296 |         self.assertEqual(req3.meta['redirect_reasons'], ['meta refresh', 'meta refresh'])
+297 | 
+298 |     def test_ignore_tags_default(self):
+299 |         req = Request(url='http://example.org')
+300 |         body = ('''<noscript><meta http-equiv="refresh" '''
+301 |                 '''content="0;URL='http://example.org/newpage'"></noscript>''')
+302 |         rsp = HtmlResponse(req.url, body=body.encode())
+303 |         response = self.mw.process_response(req, rsp, self.spider)
+304 |         assert isinstance(response, Response)
+305 | 
+306 |     def test_ignore_tags_empty_list(self):
+307 |         crawler = get_crawler(Spider, {'METAREFRESH_IGNORE_TAGS': []})
+308 |         mw = MetaRefreshMiddleware.from_crawler(crawler)
+309 |         req = Request(url='http://example.org')
+310 |         body = ('''<noscript><meta http-equiv="refresh" '''
+311 |                 '''content="0;URL='http://example.org/newpage'"></noscript>''')
+312 |         rsp = HtmlResponse(req.url, body=body.encode())
+313 |         req2 = mw.process_response(req, rsp, self.spider)
+314 |         assert isinstance(req2, Request)
+315 |         self.assertEqual(req2.url, 'http://example.org/newpage')
+316 | 
+317 | if __name__ == "__main__":
+318 |     unittest.main()
+```

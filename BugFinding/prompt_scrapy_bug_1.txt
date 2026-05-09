@@ -1,0 +1,194 @@
+You are given buggy source files and failing test files.
+
+Your task is BUG LOCALIZATION ONLY.
+
+Return only valid JSON using this exact format:
+
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "relative/path.py",
+      "line_start": 1,
+      "line_end": 1,
+      "confidence": "low|medium|high",
+      "reason": "Max 2 sentences."
+    }
+  ]
+}
+
+Rules:
+- Do not propose fixes.
+- Do not rewrite code.
+- Do not explain outside JSON.
+- Line numbers must refer to the numbered buggy source file.
+- Include at most 3 suspected locations.
+- Prefer the smallest line range that identifies the origin of the bug.
+
+
+SOURCE FILES:
+
+[file_1] BugsInPy/workspace/scrapy/scrapy/spidermiddlewares/offsite.py
+```python
+ 1 | """
+ 2 | Offsite Spider Middleware
+ 3 | 
+ 4 | See documentation in docs/topics/spider-middleware.rst
+ 5 | """
+ 6 | import re
+ 7 | import logging
+ 8 | import warnings
+ 9 | 
+10 | from scrapy import signals
+11 | from scrapy.http import Request
+12 | from scrapy.utils.httpobj import urlparse_cached
+13 | 
+14 | logger = logging.getLogger(__name__)
+15 | 
+16 | 
+17 | class OffsiteMiddleware(object):
+18 | 
+19 |     def __init__(self, stats):
+20 |         self.stats = stats
+21 | 
+22 |     @classmethod
+23 |     def from_crawler(cls, crawler):
+24 |         o = cls(crawler.stats)
+25 |         crawler.signals.connect(o.spider_opened, signal=signals.spider_opened)
+26 |         return o
+27 | 
+28 |     def process_spider_output(self, response, result, spider):
+29 |         for x in result:
+30 |             if isinstance(x, Request):
+31 |                 if x.dont_filter or self.should_follow(x, spider):
+32 |                     yield x
+33 |                 else:
+34 |                     domain = urlparse_cached(x).hostname
+35 |                     if domain and domain not in self.domains_seen:
+36 |                         self.domains_seen.add(domain)
+37 |                         logger.debug(
+38 |                             "Filtered offsite request to %(domain)r: %(request)s",
+39 |                             {'domain': domain, 'request': x}, extra={'spider': spider})
+40 |                         self.stats.inc_value('offsite/domains', spider=spider)
+41 |                     self.stats.inc_value('offsite/filtered', spider=spider)
+42 |             else:
+43 |                 yield x
+44 | 
+45 |     def should_follow(self, request, spider):
+46 |         regex = self.host_regex
+47 |         # hostname can be None for wrong urls (like javascript links)
+48 |         host = urlparse_cached(request).hostname or ''
+49 |         return bool(regex.search(host))
+50 | 
+51 |     def get_host_regex(self, spider):
+52 |         """Override this method to implement a different offsite policy"""
+53 |         allowed_domains = getattr(spider, 'allowed_domains', None)
+54 |         if not allowed_domains:
+55 |             return re.compile('')  # allow all by default
+56 |         url_pattern = re.compile("^https?://.*$")
+57 |         for domain in allowed_domains:
+58 |             if url_pattern.match(domain):
+59 |                 message = ("allowed_domains accepts only domains, not URLs. "
+60 |                            "Ignoring URL entry %s in allowed_domains." % domain)
+61 |                 warnings.warn(message, URLWarning)
+62 |         domains = [re.escape(d) for d in allowed_domains if d is not None]
+63 |         regex = r'^(.*\.)?(%s)$' % '|'.join(domains)
+64 |         return re.compile(regex)
+65 | 
+66 |     def spider_opened(self, spider):
+67 |         self.host_regex = self.get_host_regex(spider)
+68 |         self.domains_seen = set()
+69 | 
+70 | 
+71 | class URLWarning(Warning):
+72 |     pass
+```
+
+
+FAILING TEST FILES:
+
+[test_file_1] BugsInPy/workspace/scrapy/tests/test_spidermiddleware_offsite.py
+```python
+ 1 | from unittest import TestCase
+ 2 | from urllib.parse import urlparse
+ 3 | import warnings
+ 4 | 
+ 5 | from scrapy.http import Response, Request
+ 6 | from scrapy.spiders import Spider
+ 7 | from scrapy.spidermiddlewares.offsite import OffsiteMiddleware, URLWarning
+ 8 | from scrapy.utils.test import get_crawler
+ 9 | 
+10 | 
+11 | class TestOffsiteMiddleware(TestCase):
+12 | 
+13 |     def setUp(self):
+14 |         crawler = get_crawler(Spider)
+15 |         self.spider = crawler._create_spider(**self._get_spiderargs())
+16 |         self.mw = OffsiteMiddleware.from_crawler(crawler)
+17 |         self.mw.spider_opened(self.spider)
+18 | 
+19 |     def _get_spiderargs(self):
+20 |         return dict(name='foo', allowed_domains=['scrapytest.org', 'scrapy.org', 'scrapy.test.org'])
+21 | 
+22 |     def test_process_spider_output(self):
+23 |         res = Response('http://scrapytest.org')
+24 | 
+25 |         onsite_reqs = [Request('http://scrapytest.org/1'),
+26 |                        Request('http://scrapy.org/1'),
+27 |                        Request('http://sub.scrapy.org/1'),
+28 |                        Request('http://offsite.tld/letmepass', dont_filter=True),
+29 |                        Request('http://scrapy.test.org/')]
+30 |         offsite_reqs = [Request('http://scrapy2.org'),
+31 |                        Request('http://offsite.tld/'),
+32 |                        Request('http://offsite.tld/scrapytest.org'),
+33 |                        Request('http://offsite.tld/rogue.scrapytest.org'),
+34 |                        Request('http://rogue.scrapytest.org.haha.com'),
+35 |                        Request('http://roguescrapytest.org'),
+36 |                        Request('http://test.org/'),
+37 |                        Request('http://notscrapy.test.org/')]
+38 |         reqs = onsite_reqs + offsite_reqs
+39 | 
+40 |         out = list(self.mw.process_spider_output(res, reqs, self.spider))
+41 |         self.assertEqual(out, onsite_reqs)
+42 | 
+43 | 
+44 | class TestOffsiteMiddleware2(TestOffsiteMiddleware):
+45 | 
+46 |     def _get_spiderargs(self):
+47 |         return dict(name='foo', allowed_domains=None)
+48 | 
+49 |     def test_process_spider_output(self):
+50 |         res = Response('http://scrapytest.org')
+51 |         reqs = [Request('http://a.com/b.html'), Request('http://b.com/1')]
+52 |         out = list(self.mw.process_spider_output(res, reqs, self.spider))
+53 |         self.assertEqual(out, reqs)
+54 | 
+55 | 
+56 | class TestOffsiteMiddleware3(TestOffsiteMiddleware2):
+57 | 
+58 |     def _get_spiderargs(self):
+59 |         return dict(name='foo')
+60 | 
+61 | 
+62 | class TestOffsiteMiddleware4(TestOffsiteMiddleware3):
+63 | 
+64 |     def _get_spiderargs(self):
+65 |         bad_hostname = urlparse('http:////scrapytest.org').hostname
+66 |         return dict(name='foo', allowed_domains=['scrapytest.org', None, bad_hostname])
+67 | 
+68 |     def test_process_spider_output(self):
+69 |         res = Response('http://scrapytest.org')
+70 |         reqs = [Request('http://scrapytest.org/1')]
+71 |         out = list(self.mw.process_spider_output(res, reqs, self.spider))
+72 |         self.assertEqual(out, reqs)
+73 | 
+74 | 
+75 | class TestOffsiteMiddleware5(TestOffsiteMiddleware4):
+76 | 
+77 |     def test_get_host_regex(self):
+78 |         self.spider.allowed_domains = ['http://scrapytest.org', 'scrapy.org', 'scrapy.test.org']
+79 |         with warnings.catch_warnings(record=True) as w:
+80 |             warnings.simplefilter("always")
+81 |             self.mw.get_host_regex(self.spider)
+82 |             assert issubclass(w[-1].category, URLWarning)
+```

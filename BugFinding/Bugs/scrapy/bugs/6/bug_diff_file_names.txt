@@ -1,0 +1,4 @@
+# git diff <buggy_version> <patched_version>
+# git diff --name-only 8aa2e4f9976d31bbe3a0014b4f1f96ace1b87043 25f609e2a3c27ca7d7d98dbfddb2c049735935bb
+scrapy/pipelines/images.py
+tests/test_pipeline_images.py

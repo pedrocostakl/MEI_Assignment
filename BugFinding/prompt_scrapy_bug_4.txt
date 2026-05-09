@@ -1,0 +1,406 @@
+You are given buggy source files and failing test files.
+
+Your task is BUG LOCALIZATION ONLY.
+
+Return only valid JSON using this exact format:
+
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "relative/path.py",
+      "line_start": 1,
+      "line_end": 1,
+      "confidence": "low|medium|high",
+      "reason": "Max 2 sentences."
+    }
+  ]
+}
+
+Rules:
+- Do not propose fixes.
+- Do not rewrite code.
+- Do not explain outside JSON.
+- Line numbers must refer to the numbered buggy source file.
+- Include at most 3 suspected locations.
+- Prefer the smallest line range that identifies the origin of the bug.
+
+
+SOURCE FILES:
+
+[file_1] BugsInPy/workspace/scrapy/scrapy/contracts/__init__.py
+```python
+  1 | import sys
+  2 | import re
+  3 | from functools import wraps
+  4 | from unittest import TestCase
+  5 | 
+  6 | from scrapy.http import Request
+  7 | from scrapy.utils.spider import iterate_spider_output
+  8 | from scrapy.utils.python import get_spec
+  9 | 
+ 10 | 
+ 11 | class ContractsManager(object):
+ 12 |     contracts = {}
+ 13 | 
+ 14 |     def __init__(self, contracts):
+ 15 |         for contract in contracts:
+ 16 |             self.contracts[contract.name] = contract
+ 17 | 
+ 18 |     def tested_methods_from_spidercls(self, spidercls):
+ 19 |         methods = []
+ 20 |         for key, value in vars(spidercls).items():
+ 21 |             if (callable(value) and value.__doc__ and
+ 22 |                     re.search(r'^\s*@', value.__doc__, re.MULTILINE)):
+ 23 |                 methods.append(key)
+ 24 | 
+ 25 |         return methods
+ 26 | 
+ 27 |     def extract_contracts(self, method):
+ 28 |         contracts = []
+ 29 |         for line in method.__doc__.split('\n'):
+ 30 |             line = line.strip()
+ 31 | 
+ 32 |             if line.startswith('@'):
+ 33 |                 name, args = re.match(r'@(\w+)\s*(.*)', line).groups()
+ 34 |                 args = re.split(r'\s+', args)
+ 35 | 
+ 36 |                 contracts.append(self.contracts[name](method, *args))
+ 37 | 
+ 38 |         return contracts
+ 39 | 
+ 40 |     def from_spider(self, spider, results):
+ 41 |         requests = []
+ 42 |         for method in self.tested_methods_from_spidercls(type(spider)):
+ 43 |             bound_method = spider.__getattribute__(method)
+ 44 |             requests.append(self.from_method(bound_method, results))
+ 45 | 
+ 46 |         return requests
+ 47 | 
+ 48 |     def from_method(self, method, results):
+ 49 |         contracts = self.extract_contracts(method)
+ 50 |         if contracts:
+ 51 |             # calculate request args
+ 52 |             args, kwargs = get_spec(Request.__init__)
+ 53 |             kwargs['callback'] = method
+ 54 |             for contract in contracts:
+ 55 |                 kwargs = contract.adjust_request_args(kwargs)
+ 56 | 
+ 57 |             # create and prepare request
+ 58 |             args.remove('self')
+ 59 |             if set(args).issubset(set(kwargs)):
+ 60 |                 request = Request(**kwargs)
+ 61 | 
+ 62 |                 # execute pre and post hooks in order
+ 63 |                 for contract in reversed(contracts):
+ 64 |                     request = contract.add_pre_hook(request, results)
+ 65 |                 for contract in contracts:
+ 66 |                     request = contract.add_post_hook(request, results)
+ 67 | 
+ 68 |                 self._clean_req(request, method, results)
+ 69 |                 return request
+ 70 | 
+ 71 |     def _clean_req(self, request, method, results):
+ 72 |         """ stop the request from returning objects and records any errors """
+ 73 | 
+ 74 |         cb = request.callback
+ 75 | 
+ 76 |         @wraps(cb)
+ 77 |         def cb_wrapper(response):
+ 78 |             try:
+ 79 |                 output = cb(response)
+ 80 |                 output = list(iterate_spider_output(output))
+ 81 |             except:
+ 82 |                 case = _create_testcase(method, 'callback')
+ 83 |                 results.addError(case, sys.exc_info())
+ 84 | 
+ 85 |         def eb_wrapper(failure):
+ 86 |             case = _create_testcase(method, 'errback')
+ 87 |             exc_info = failure.value, failure.type, failure.getTracebackObject()
+ 88 |             results.addError(case, exc_info)
+ 89 | 
+ 90 |         request.callback = cb_wrapper
+ 91 |         request.errback = eb_wrapper
+ 92 | 
+ 93 | 
+ 94 | class Contract(object):
+ 95 |     """ Abstract class for contracts """
+ 96 | 
+ 97 |     def __init__(self, method, *args):
+ 98 |         self.testcase_pre = _create_testcase(method, '@%s pre-hook' % self.name)
+ 99 |         self.testcase_post = _create_testcase(method, '@%s post-hook' % self.name)
+100 |         self.args = args
+101 | 
+102 |     def add_pre_hook(self, request, results):
+103 |         if hasattr(self, 'pre_process'):
+104 |             cb = request.callback
+105 | 
+106 |             @wraps(cb)
+107 |             def wrapper(response):
+108 |                 try:
+109 |                     results.startTest(self.testcase_pre)
+110 |                     self.pre_process(response)
+111 |                     results.stopTest(self.testcase_pre)
+112 |                 except AssertionError:
+113 |                     results.addFailure(self.testcase_pre, sys.exc_info())
+114 |                 except Exception:
+115 |                     results.addError(self.testcase_pre, sys.exc_info())
+116 |                 else:
+117 |                     results.addSuccess(self.testcase_pre)
+118 |                 finally:
+119 |                     return list(iterate_spider_output(cb(response)))
+120 | 
+121 |             request.callback = wrapper
+122 | 
+123 |         return request
+124 | 
+125 |     def add_post_hook(self, request, results):
+126 |         if hasattr(self, 'post_process'):
+127 |             cb = request.callback
+128 | 
+129 |             @wraps(cb)
+130 |             def wrapper(response):
+131 |                 output = list(iterate_spider_output(cb(response)))
+132 |                 try:
+133 |                     results.startTest(self.testcase_post)
+134 |                     self.post_process(output)
+135 |                     results.stopTest(self.testcase_post)
+136 |                 except AssertionError:
+137 |                     results.addFailure(self.testcase_post, sys.exc_info())
+138 |                 except Exception:
+139 |                     results.addError(self.testcase_post, sys.exc_info())
+140 |                 else:
+141 |                     results.addSuccess(self.testcase_post)
+142 |                 finally:
+143 |                     return output
+144 | 
+145 |             request.callback = wrapper
+146 | 
+147 |         return request
+148 | 
+149 |     def adjust_request_args(self, args):
+150 |         return args
+151 | 
+152 | 
+153 | def _create_testcase(method, desc):
+154 |     spider = method.__self__.name
+155 | 
+156 |     class ContractTestCase(TestCase):
+157 |         def __str__(_self):
+158 |             return "[%s] %s (%s)" % (spider, method.__name__, desc)
+159 | 
+160 |     name = '%s_%s' % (spider, method.__name__)
+161 |     setattr(ContractTestCase, name, lambda x: x)
+162 |     return ContractTestCase(name)
+```
+
+
+FAILING TEST FILES:
+
+[test_file_1] BugsInPy/workspace/scrapy/tests/test_contracts.py
+```python
+  1 | from unittest import TextTestResult
+  2 | 
+  3 | from twisted.python import failure
+  4 | from twisted.trial import unittest
+  5 | 
+  6 | from scrapy.spidermiddlewares.httperror import HttpError
+  7 | from scrapy.spiders import Spider
+  8 | from scrapy.http import Request
+  9 | from scrapy.item import Item, Field
+ 10 | from scrapy.contracts import ContractsManager
+ 11 | from scrapy.contracts.default import (
+ 12 |     UrlContract,
+ 13 |     ReturnsContract,
+ 14 |     ScrapesContract,
+ 15 | )
+ 16 | 
+ 17 | 
+ 18 | class TestItem(Item):
+ 19 |     name = Field()
+ 20 |     url = Field()
+ 21 | 
+ 22 | 
+ 23 | class ResponseMock(object):
+ 24 |     url = 'http://scrapy.org'
+ 25 | 
+ 26 | 
+ 27 | class TestSpider(Spider):
+ 28 |     name = 'demo_spider'
+ 29 | 
+ 30 |     def returns_request(self, response):
+ 31 |         """ method which returns request
+ 32 |         @url http://scrapy.org
+ 33 |         @returns requests 1
+ 34 |         """
+ 35 |         return Request('http://scrapy.org', callback=self.returns_item)
+ 36 | 
+ 37 |     def returns_item(self, response):
+ 38 |         """ method which returns item
+ 39 |         @url http://scrapy.org
+ 40 |         @returns items 1 1
+ 41 |         """
+ 42 |         return TestItem(url=response.url)
+ 43 | 
+ 44 |     def returns_dict_item(self, response):
+ 45 |         """ method which returns item
+ 46 |         @url http://scrapy.org
+ 47 |         @returns items 1 1
+ 48 |         """
+ 49 |         return {"url": response.url}
+ 50 | 
+ 51 |     def returns_fail(self, response):
+ 52 |         """ method which returns item
+ 53 |         @url http://scrapy.org
+ 54 |         @returns items 0 0
+ 55 |         """
+ 56 |         return TestItem(url=response.url)
+ 57 | 
+ 58 |     def returns_dict_fail(self, response):
+ 59 |         """ method which returns item
+ 60 |         @url http://scrapy.org
+ 61 |         @returns items 0 0
+ 62 |         """
+ 63 |         return {'url': response.url}
+ 64 | 
+ 65 |     def scrapes_item_ok(self, response):
+ 66 |         """ returns item with name and url
+ 67 |         @url http://scrapy.org
+ 68 |         @returns items 1 1
+ 69 |         @scrapes name url
+ 70 |         """
+ 71 |         return TestItem(name='test', url=response.url)
+ 72 | 
+ 73 |     def scrapes_dict_item_ok(self, response):
+ 74 |         """ returns item with name and url
+ 75 |         @url http://scrapy.org
+ 76 |         @returns items 1 1
+ 77 |         @scrapes name url
+ 78 |         """
+ 79 |         return {'name': 'test', 'url': response.url}
+ 80 | 
+ 81 |     def scrapes_item_fail(self, response):
+ 82 |         """ returns item with no name
+ 83 |         @url http://scrapy.org
+ 84 |         @returns items 1 1
+ 85 |         @scrapes name url
+ 86 |         """
+ 87 |         return TestItem(url=response.url)
+ 88 | 
+ 89 |     def scrapes_dict_item_fail(self, response):
+ 90 |         """ returns item with no name
+ 91 |         @url http://scrapy.org
+ 92 |         @returns items 1 1
+ 93 |         @scrapes name url
+ 94 |         """
+ 95 |         return {'url': response.url}
+ 96 | 
+ 97 |     def parse_no_url(self, response):
+ 98 |         """ method with no url
+ 99 |         @returns items 1 1
+100 |         """
+101 |         pass
+102 | 
+103 | 
+104 | class ContractsManagerTest(unittest.TestCase):
+105 |     contracts = [UrlContract, ReturnsContract, ScrapesContract]
+106 | 
+107 |     def setUp(self):
+108 |         self.conman = ContractsManager(self.contracts)
+109 |         self.results = TextTestResult(stream=None, descriptions=False, verbosity=0)
+110 | 
+111 |     def should_succeed(self):
+112 |         self.assertFalse(self.results.failures)
+113 |         self.assertFalse(self.results.errors)
+114 | 
+115 |     def should_fail(self):
+116 |         self.assertTrue(self.results.failures)
+117 |         self.assertFalse(self.results.errors)
+118 | 
+119 |     def test_contracts(self):
+120 |         spider = TestSpider()
+121 | 
+122 |         # extract contracts correctly
+123 |         contracts = self.conman.extract_contracts(spider.returns_request)
+124 |         self.assertEqual(len(contracts), 2)
+125 |         self.assertEqual(frozenset(type(x) for x in contracts),
+126 |             frozenset([UrlContract, ReturnsContract]))
+127 | 
+128 |         # returns request for valid method
+129 |         request = self.conman.from_method(spider.returns_request, self.results)
+130 |         self.assertNotEqual(request, None)
+131 | 
+132 |         # no request for missing url
+133 |         request = self.conman.from_method(spider.parse_no_url, self.results)
+134 |         self.assertEqual(request, None)
+135 | 
+136 |     def test_returns(self):
+137 |         spider = TestSpider()
+138 |         response = ResponseMock()
+139 | 
+140 |         # returns_item
+141 |         request = self.conman.from_method(spider.returns_item, self.results)
+142 |         request.callback(response)
+143 |         self.should_succeed()
+144 | 
+145 |         # returns_dict_item
+146 |         request = self.conman.from_method(spider.returns_dict_item, self.results)
+147 |         request.callback(response)
+148 |         self.should_succeed()
+149 | 
+150 |         # returns_request
+151 |         request = self.conman.from_method(spider.returns_request, self.results)
+152 |         request.callback(response)
+153 |         self.should_succeed()
+154 | 
+155 |         # returns_fail
+156 |         request = self.conman.from_method(spider.returns_fail, self.results)
+157 |         request.callback(response)
+158 |         self.should_fail()
+159 | 
+160 |         # returns_dict_fail
+161 |         request = self.conman.from_method(spider.returns_dict_fail, self.results)
+162 |         request.callback(response)
+163 |         self.should_fail()
+164 | 
+165 |     def test_scrapes(self):
+166 |         spider = TestSpider()
+167 |         response = ResponseMock()
+168 | 
+169 |         # scrapes_item_ok
+170 |         request = self.conman.from_method(spider.scrapes_item_ok, self.results)
+171 |         request.callback(response)
+172 |         self.should_succeed()
+173 | 
+174 |         # scrapes_dict_item_ok
+175 |         request = self.conman.from_method(spider.scrapes_dict_item_ok, self.results)
+176 |         request.callback(response)
+177 |         self.should_succeed()
+178 | 
+179 |         # scrapes_item_fail
+180 |         request = self.conman.from_method(spider.scrapes_item_fail,
+181 |                 self.results)
+182 |         request.callback(response)
+183 |         self.should_fail()
+184 | 
+185 |         # scrapes_dict_item_fail
+186 |         request = self.conman.from_method(spider.scrapes_dict_item_fail,
+187 |                 self.results)
+188 |         request.callback(response)
+189 |         self.should_fail()
+190 | 
+191 |     def test_errback(self):
+192 |         spider = TestSpider()
+193 |         response = ResponseMock()
+194 | 
+195 |         try:
+196 |             raise HttpError(response, 'Ignoring non-200 response')
+197 |         except HttpError:
+198 |             failure_mock = failure.Failure()
+199 | 
+200 |         request = self.conman.from_method(spider.returns_request, self.results)
+201 |         request.errback(failure_mock)
+202 | 
+203 |         self.assertFalse(self.results.failures)
+204 |         self.assertTrue(self.results.errors)
+```
