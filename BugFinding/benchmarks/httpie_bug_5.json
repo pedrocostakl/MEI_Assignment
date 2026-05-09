@@ -1,0 +1,9 @@
+{
+  "bug_locations": [
+    {
+      "file_path": "BugsInPy/workspace/httpie/httpie/cli.py",
+      "line_start": 36,
+      "line_end": 49
+    }
+  ]
+}

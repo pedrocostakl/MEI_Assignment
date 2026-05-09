@@ -1,0 +1,9 @@
+{
+  "bug_locations": [
+    {
+      "file_path": "BugsInPy/workspace/httpie/httpie/sessions.py",
+      "line_start": 101,
+      "line_end": 106
+    }
+  ]
+}

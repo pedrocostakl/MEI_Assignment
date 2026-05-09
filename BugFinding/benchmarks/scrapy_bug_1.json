@@ -1,0 +1,9 @@
+{
+  "bug_locations": [
+    {
+      "file_path": "BugsInPy/workspace/scrapy/scrapy/spidermiddlewares/offsite.py",
+      "line_start": 54,
+      "line_end": 65
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "bug_locations": [
+    {
+      "file_path": "BugsInPy/workspace/tornado/tornado/http1connection.py",
+      "line_start": 481,
+      "line_end": 487
+    },
+    {
+      "file_path": "BugsInPy/workspace/tornado/tornado/test/runtests.py",
+      "line_start": 29,
+      "line_end": 34
+    }
+  ]
+}

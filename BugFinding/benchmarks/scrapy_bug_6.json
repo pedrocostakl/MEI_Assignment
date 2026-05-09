@@ -1,0 +1,9 @@
+{
+  "bug_locations": [
+    {
+      "file_path": "BugsInPy/workspace/scrapy/scrapy/pipelines/images.py",
+      "line_start": 132,
+      "line_end": 137
+    }
+  ]
+}

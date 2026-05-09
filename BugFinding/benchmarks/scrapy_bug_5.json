@@ -1,0 +1,9 @@
+{
+  "bug_locations": [
+    {
+      "file_path": "BugsInPy/workspace/scrapy/scrapy/http/response/__init__.py",
+      "line_start": 120,
+      "line_end": 125
+    }
+  ]
+}

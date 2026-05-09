@@ -1,0 +1,9 @@
+{
+  "bug_locations": [
+    {
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/encoders.py",
+      "line_start": 15,
+      "line_end": 31
+    }
+  ]
+}
