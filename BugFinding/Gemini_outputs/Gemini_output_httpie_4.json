@@ -1,0 +1,12 @@
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "httpie/models.py",
+      "line_start": 106,
+      "line_end": 107,
+      "confidence": "high",
+      "reason": "The code checks for 'Host' (case-sensitive) but HTTP headers are case-insensitive; if a user provides 'host', this block incorrectly adds a second Host header from the URL."
+    }
+  ]
+}

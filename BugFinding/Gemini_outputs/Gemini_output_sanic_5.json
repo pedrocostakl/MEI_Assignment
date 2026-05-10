@@ -1,0 +1,12 @@
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "sanic/log.py",
+      "line_start": 56,
+      "line_end": 56,
+      "confidence": "high",
+      "reason": "The logger is instantiated with the name 'sanic.root', but the configuration dictionary defines a logger named 'root' at line 9. This name mismatch prevents the logger from inheriting the intended default configuration."
+    }
+  ]
+}

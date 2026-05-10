@@ -1,0 +1,12 @@
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "tornado/ioloop.py",
+      "line_start": 252,
+      "line_end": 252,
+      "confidence": "high",
+      "reason": "The condition for raising a RuntimeError when make_current=True is inverted; it currently raises if the current loop IS None, but it should raise if a current loop already exists (is NOT None)."
+    }
+  ]
+}

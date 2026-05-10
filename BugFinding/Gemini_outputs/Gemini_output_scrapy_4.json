@@ -1,0 +1,20 @@
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "scrapy/contracts/__init__.py",
+      "line_start": 12,
+      "line_end": 12,
+      "confidence": "high",
+      "reason": "The contracts dictionary is defined as a class attribute instead of an instance attribute, causing state to persist across different ContractsManager instances and tests."
+    },
+    {
+      "file_id": "file_1",
+      "file_path": "scrapy/contracts/__init__.py",
+      "line_start": 14,
+      "line_end": 16,
+      "confidence": "high",
+      "reason": "The __init__ method populates the shared class-level contracts dictionary instead of a per-instance dictionary, leading to potential pollution and incorrect contract lookups."
+    }
+  ]
+}

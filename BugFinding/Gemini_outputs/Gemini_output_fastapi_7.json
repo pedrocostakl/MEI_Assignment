@@ -1,0 +1,12 @@
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "fastapi/exception_handlers.py",
+      "line_start": 22,
+      "line_end": 22,
+      "confidence": "high",
+      "reason": "The request_validation_exception_handler returns exc.errors() directly, which contains non-JSON serializable objects like Decimals or Pydantic error contexts, causing serialization failures in some environments."
+    }
+  ]
+}

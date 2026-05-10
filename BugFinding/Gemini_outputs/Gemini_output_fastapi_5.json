@@ -1,0 +1,12 @@
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "fastapi/utils.py",
+      "line_start": 99,
+      "line_end": 100,
+      "confidence": "high",
+      "reason": "When cloning a field that is a Pydantic model, the fields of the original model are copied by reference to the new model, which prevents recursive filtering of sub-models."
+    }
+  ]
+}

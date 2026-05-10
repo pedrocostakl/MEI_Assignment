@@ -1,0 +1,20 @@
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "BugsInPy/workspace/tornado/tornado/httpclient.py",
+      "line_start": 207,
+      "line_end": 209,
+      "confidence": "high",
+      "reason": "The AsyncHTTPClient cache uses instance.io_loop as a key, but the instance's io_loop property might not be initialized or consistent with the loop used to check the cache in __new__."
+    },
+    {
+      "file_id": "file_1",
+      "file_path": "BugsInPy/workspace/tornado/tornado/httpclient.py",
+      "line_start": 235,
+      "line_end": 238,
+      "confidence": "medium",
+      "reason": "The close() method attempts to delete from the cache using self.io_loop, which can trigger the 'inconsistent AsyncHTTPClient cache' RuntimeError if the loop association has changed or was incorrectly cached during __new__."
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "bug_locations": [
+    {
+      "file_id": "file_2",
+      "file_path": "tornado/websocket.py",
+      "line_start": 166,
+      "line_end": 167,
+      "confidence": "high",
+      "reason": "The code uses map() in Python 3, which returns an iterator instead of a list. This causes the 'upgrade' in connection check to fail because an iterator cannot be checked for membership multiple times or compared directly to a list in this context."
+    }
+  ]
+}

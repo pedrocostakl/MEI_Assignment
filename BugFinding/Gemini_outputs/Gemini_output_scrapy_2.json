@@ -1,0 +1,12 @@
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "scrapy/utils/datatypes.py",
+      "line_start": 318,
+      "line_end": 318,
+      "confidence": "high",
+      "reason": "The while loop checks if len(self) >= self.limit, which causes a TypeError when self.limit is None (the default value)."
+    }
+  ]
+}

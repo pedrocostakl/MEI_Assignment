@@ -1,0 +1,20 @@
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "BugsInPy/workspace/tornado/tornado/auth.py",
+      "line_start": 663,
+      "line_end": 663,
+      "confidence": "high",
+      "reason": "The oauth2_request method incorrectly appends query parameters using a '?' without checking if the base URL already contains one, which occurs in the FacebookGraphMixin."
+    },
+    {
+      "file_id": "file_1",
+      "file_path": "BugsInPy/workspace/tornado/tornado/auth.py",
+      "line_start": 806,
+      "line_end": 806,
+      "confidence": "high",
+      "reason": "The twitter_request method unconditionally appends parameters using '?' which causes invalid URLs if the base URL (constructed with '.json') already has a query string."
+    }
+  ]
+}

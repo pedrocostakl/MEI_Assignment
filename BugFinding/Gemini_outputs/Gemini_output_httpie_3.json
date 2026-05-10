@@ -1,0 +1,12 @@
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "BugsInPy/workspace/httpie/httpie/sessions.py",
+      "line_start": 104,
+      "line_end": 104,
+      "confidence": "high",
+      "reason": "The code assumes header values are bytes by calling .decode('utf8'), which will fail in environments where headers are already passed as strings (standard in Python 3)."
+    }
+  ]
+}

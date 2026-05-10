@@ -1,0 +1,12 @@
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "fastapi/routing.py",
+      "line_start": 63,
+      "line_end": 69,
+      "confidence": "high",
+      "reason": "The serialize_response function prematurely calls .dict() on the response_content when exclude_unset is True. This transforms a Pydantic model into a dictionary before it can be validated against the response_field (which may be a list or dict of models), causing validation or serialization errors."
+    }
+  ]
+}

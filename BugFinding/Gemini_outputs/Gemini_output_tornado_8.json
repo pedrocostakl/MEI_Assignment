@@ -1,0 +1,28 @@
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "tornado/websocket.py",
+      "line_start": 803,
+      "line_end": 803,
+      "confidence": "high",
+      "reason": "The RSV1 bit (compression flag) is incorrectly extracted from 'reserved_bits' (which contains RSV1-3) before the bitwise AND operation, potentially leading to incorrect truthiness if other reserved bits are set."
+    },
+    {
+      "file_id": "file_1",
+      "file_path": "tornado/websocket.py",
+      "line_start": 521,
+      "line_end": 523,
+      "confidence": "high",
+      "reason": "The error message in the ValueError uses incorrect string formatting syntax for multiple arguments, causing a TypeError when raised because it passes 3 arguments to a format string expecting none or 1."
+    },
+    {
+      "file_id": "file_1",
+      "file_path": "tornado/websocket.py",
+      "line_start": 557,
+      "line_end": 558,
+      "confidence": "high",
+      "reason": "Similar to line 521, this ValueError uses incorrect string formatting for its arguments, which will cause a crash during the exception raising process."
+    }
+  ]
+}

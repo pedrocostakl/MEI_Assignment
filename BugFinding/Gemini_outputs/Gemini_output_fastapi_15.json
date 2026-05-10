@@ -1,0 +1,12 @@
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "fastapi/routing.py",
+      "line_start": 248,
+      "line_end": 273,
+      "confidence": "high",
+      "reason": "The include_router method only handles APIRoute and routing.Route objects, but it fails to iterate over and include websocket_route (routing.WebSocketRoute) objects when merging routers."
+    }
+  ]
+}

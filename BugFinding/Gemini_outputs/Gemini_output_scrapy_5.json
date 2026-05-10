@@ -1,0 +1,12 @@
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "BugsInPy/workspace/scrapy/scrapy/contracts/__init__.py",
+      "line_start": 12,
+      "line_end": 12,
+      "confidence": "high",
+      "reason": "The 'contracts' variable is defined as a class attribute and shared across all instances of ContractsManager, causing state to persist between tests."
+    }
+  ]
+}

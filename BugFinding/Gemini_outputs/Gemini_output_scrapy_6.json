@@ -1,0 +1,28 @@
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "scrapy/pipelines/images.py",
+      "line_start": 64,
+      "line_end": 67,
+      "confidence": "high",
+      "reason": "The constructor checks for 'IMAGES_RESULT_FIELD' and 'IMAGES_URLS_FIELD' on the instance, but these are defined as DEFAULT_ prefixed attributes or should be accessed via the class."
+    },
+    {
+      "file_id": "file_1",
+      "file_path": "scrapy/pipelines/images.py",
+      "line_start": 214,
+      "line_end": 214,
+      "confidence": "high",
+      "reason": "The deprecated image_key method incorrectly calls self.file_path(url) with a string instead of a Request object, causing an AttributeError in file_path."
+    },
+    {
+      "file_id": "file_1",
+      "file_path": "scrapy/pipelines/images.py",
+      "line_start": 219,
+      "line_end": 219,
+      "confidence": "high",
+      "reason": "The deprecated thumb_key method incorrectly calls self.thumb_path(url, thumb_id) with a string instead of a Request object."
+    }
+  ]
+}

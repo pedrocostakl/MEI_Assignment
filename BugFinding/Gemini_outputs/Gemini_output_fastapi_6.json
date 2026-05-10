@@ -1,0 +1,12 @@
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "fastapi/dependencies/utils.py",
+      "line_start": 632,
+      "line_end": 635,
+      "confidence": "high",
+      "reason": "The logic for extracting form data only checks for field.shape in sequence_shapes (which corresponds to typing.List, etc.), but fails to handle built-in collection types like list, set, or tuple when they are used as Form parameters."
+    }
+  ]
+}

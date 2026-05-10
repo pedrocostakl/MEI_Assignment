@@ -1,0 +1,12 @@
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "tornado/web.py",
+      "line_start": 312,
+      "line_end": 312,
+      "confidence": "high",
+      "reason": "The RequestHandler.on_connection_close method calls self.request._body_future.exception() which, in concurrent.Future, raises the exception if one exists, likely causing an unhandled error during connection close."
+    }
+  ]
+}

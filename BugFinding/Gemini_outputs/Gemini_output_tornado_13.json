@@ -1,0 +1,12 @@
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "tornado/http1connection.py",
+      "line_start": 482,
+      "line_end": 484,
+      "confidence": "high",
+      "reason": "The _can_keep_alive method fails to account for HTTP/1.0 responses that lack a Content-Length header or chunked encoding, which should default to closing the connection."
+    }
+  ]
+}

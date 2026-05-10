@@ -1,0 +1,12 @@
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "BugsInPy/workspace/scrapy/scrapy/downloadermiddlewares/redirect.py",
+      "line_start": 39,
+      "line_end": 40,
+      "confidence": "high",
+      "reason": "The BaseRedirectMiddleware fails to preserve the 'priority' and 'dont_filter' attributes from the original request when creating the redirected request, causing priority-related tests to fail."
+    }
+  ]
+}

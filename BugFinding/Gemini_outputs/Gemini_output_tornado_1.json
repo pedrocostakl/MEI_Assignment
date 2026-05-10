@@ -1,0 +1,12 @@
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "tornado/websocket.py",
+      "line_start": 247,
+      "line_end": 249,
+      "confidence": "high",
+      "reason": "The 'connection' variable is initialized using 'map', which in Python 3 returns an iterator; the subsequent 'in' check fails because it doesn't evaluate as a collection."
+    }
+  ]
+}

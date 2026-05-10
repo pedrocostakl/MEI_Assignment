@@ -1,0 +1,20 @@
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "httpie/cli.py",
+      "line_start": 43,
+      "line_end": 44,
+      "confidence": "high",
+      "reason": "The regex '[^\\\\]' + sep requires a non-backslash character before the separator, causing it to fail at the very beginning of a string or incorrectly consume characters."
+    },
+    {
+      "file_id": "file_1",
+      "file_path": "httpie/cli.py",
+      "line_start": 99,
+      "line_end": 99,
+      "confidence": "medium",
+      "reason": "The ParseError exception is instantiated but not raised, which prevents the program from signaling duplicate item errors."
+    }
+  ]
+}

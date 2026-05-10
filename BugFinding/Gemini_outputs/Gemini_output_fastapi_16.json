@@ -1,0 +1,20 @@
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "fastapi/encoders.py",
+      "line_start": 17,
+      "line_end": 28,
+      "confidence": "high",
+      "reason": "When a Pydantic model has custom json_encoders, the recursive call to jsonable_encoder does not pass the custom_encoder argument, causing it to be lost during nested serialization."
+    },
+    {
+      "file_id": "file_1",
+      "file_path": "fastapi/encoders.py",
+      "line_start": 79,
+      "line_end": 79,
+      "confidence": "high",
+      "reason": "The final recursive call for objects converted via dict() or vars() fails to pass the custom_encoder, breaking custom serialization for non-Pydantic objects or nested structures."
+    }
+  ]
+}

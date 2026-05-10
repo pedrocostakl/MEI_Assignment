@@ -1,0 +1,12 @@
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "tornado/http1connection.py",
+      "line_start": 216,
+      "line_end": 216,
+      "confidence": "high",
+      "reason": "The 100-continue response incorrectly includes '(Continue)' in the status line, which violates RFC 7230/7231 as it is not a standard reason phrase for status code 100."
+    }
+  ]
+}

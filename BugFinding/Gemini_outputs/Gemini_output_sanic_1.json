@@ -1,0 +1,20 @@
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "sanic/app.py",
+      "line_start": 961,
+      "line_end": 963,
+      "confidence": "high",
+      "reason": "The code calls self._build_endpoint_name with only the handler name, but that helper function prepends self.name (the app name). This incorrectly creates an endpoint like 'sanic.handler_name' instead of just 'handler_name' for non-blueprint routes."
+    },
+    {
+      "file_id": "file_1",
+      "file_path": "sanic/app.py",
+      "line_start": 965,
+      "line_end": 968,
+      "confidence": "high",
+      "reason": "When a blueprint is present, the app name is prepended again via _build_endpoint_name, resulting in 'app_name.blueprint_name.handler_name', which causes failures in test_bp_middleware and others checking for specific endpoint naming conventions."
+    }
+  ]
+}

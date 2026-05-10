@@ -1,0 +1,12 @@
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "fastapi/dependencies/utils.py",
+      "line_start": 458,
+      "line_end": 459,
+      "confidence": "high",
+      "reason": "When a single body parameter is used without 'embed', the logic wraps the 'received_body' in a dictionary using the parameter's alias. This prevents Pydantic from correctly validating 'Union' types or models that expect the raw body content."
+    }
+  ]
+}

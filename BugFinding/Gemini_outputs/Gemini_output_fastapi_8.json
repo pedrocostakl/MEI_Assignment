@@ -1,0 +1,12 @@
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "fastapi/routing.py",
+      "line_start": 468,
+      "line_end": 468,
+      "confidence": "high",
+      "reason": "When including a router, the 'add_api_route' method is called directly on the parent router, which uses the parent's 'self.route_class' instead of preserving the original route's class."
+    }
+  ]
+}

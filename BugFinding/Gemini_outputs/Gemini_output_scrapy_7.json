@@ -1,0 +1,12 @@
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "scrapy/http/request/form.py",
+      "line_start": 119,
+      "line_end": 119,
+      "confidence": "high",
+      "reason": "The XPath expression uses '../@checked' to filter inputs, which incorrectly looks for a 'checked' attribute on the parent node instead of the input node itself."
+    }
+  ]
+}

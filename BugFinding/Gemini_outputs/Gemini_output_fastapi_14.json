@@ -1,0 +1,20 @@
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "fastapi/openapi/models.py",
+      "line_start": 102,
+      "line_end": 102,
+      "confidence": "high",
+      "reason": "The SchemaBase class incorrectly allows Any in additionalProperties, which interferes with Pydantic's ability to correctly model and validate the OpenAPI schema for dictionaries."
+    },
+    {
+      "file_id": "file_1",
+      "file_path": "fastapi/openapi/models.py",
+      "line_start": 123,
+      "line_end": 123,
+      "confidence": "high",
+      "reason": "The Schema class overrides additionalProperties but still allows Union[bool, SchemaBase], which may cause validation issues when the schema needs to represent Dict[str, type]."
+    }
+  ]
+}

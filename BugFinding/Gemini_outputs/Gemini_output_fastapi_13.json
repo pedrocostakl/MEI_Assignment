@@ -1,0 +1,12 @@
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "fastapi/routing.py",
+      "line_start": 290,
+      "line_end": 292,
+      "confidence": "high",
+      "reason": "The 'responses' dictionary is modified and shared across all routes in the loop, causing responses from previous routes to leak into subsequent ones."
+    }
+  ]
+}

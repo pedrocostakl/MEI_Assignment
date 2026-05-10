@@ -1,0 +1,12 @@
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "tornado/ioloop.py",
+      "line_start": 1222,
+      "line_end": 1223,
+      "confidence": "high",
+      "reason": "The logic for calculating the next timeout when a callback overruns uses the millisecond-based callback_time instead of the second-based callback_time_sec, leading to incorrect scheduling."
+    }
+  ]
+}
