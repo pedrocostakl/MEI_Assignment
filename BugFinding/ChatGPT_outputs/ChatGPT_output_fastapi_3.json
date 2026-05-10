@@ -1,0 +1,20 @@
+{
+    "bug_locations": [
+        {
+            "file_id": "file_1",
+            "file_path": "BugsInPy/workspace/fastapi/fastapi/routing.py",
+            "line_start": 63,
+            "line_end": 69,
+            "confidence": "high",
+            "reason": "The code converts BaseModel instances to dicts before validation when exclude_unset is enabled. This likely strips model field metadata needed for correct response-model serialization and nested exclude_unset handling."
+        },
+        {
+            "file_id": "file_1",
+            "file_path": "BugsInPy/workspace/fastapi/fastapi/routing.py",
+            "line_start": 82,
+            "line_end": 88,
+            "confidence": "medium",
+            "reason": "Serialization applies exclude_unset only during jsonable_encoder after validation. This may fail for lists/dicts of models because unset-field filtering is not preserved through validation."
+        }
+    ]
+}

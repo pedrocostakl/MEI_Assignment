@@ -1,0 +1,20 @@
+{
+    "bug_locations": [
+        {
+            "file_id": "file_1",
+            "file_path": "BugsInPy/workspace/sanic/sanic/app.py",
+            "line_start": 194,
+            "line_end": 195,
+            "confidence": "high",
+            "reason": "Route registration falls back to the app-level strict_slashes setting, which can override or ignore blueprint-level defaults involved in the failing strict slash blueprint tests."
+        },
+        {
+            "file_id": "file_1",
+            "file_path": "BugsInPy/workspace/sanic/sanic/app.py",
+            "line_start": 449,
+            "line_end": 450,
+            "confidence": "medium",
+            "reason": "add_route also forces strict_slashes from the app when unspecified, potentially bypassing blueprint-specific strict slash behavior during route registration."
+        }
+    ]
+}
