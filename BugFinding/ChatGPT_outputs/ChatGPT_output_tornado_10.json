@@ -1,0 +1,20 @@
+{
+   "bug_locations":[
+      {
+         "file_id":"file_1",
+         "file_path":"BugsInPy/workspace/tornado/tornado/web.py",
+         "line_start":1269,
+         "line_end":1275,
+         "confidence":"high",
+         "reason":"The XSRF version-2 cookie decoding logic mixes byte/string handling and may incorrectly parse masked tokens. This can cause valid XSRF tokens to be rejected during websocket-related requests."
+      },
+      {
+         "file_id":"file_1",
+         "file_path":"BugsInPy/workspace/tornado/tornado/web.py",
+         "line_start":1320,
+         "line_end":1329,
+         "confidence":"medium",
+         "reason":"The XSRF validation path depends on token extraction and decoding behavior that may mishandle websocket or header-based requests. Failures here would surface as authentication or handshake errors in websocket tests."
+      }
+   ]
+}

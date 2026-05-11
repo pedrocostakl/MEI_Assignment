@@ -1,0 +1,20 @@
+{
+   "bug_locations":[
+      {
+         "file_id":"file_1",
+         "file_path":"BugsInPy/workspace/tornado/tornado/gen.py",
+         "line_start":649,
+         "line_end":679,
+         "confidence":"high",
+         "reason":"multi_future tracks unfinished futures in a set, which collapses duplicate Future objects. The failing test includes duplicate futures and callback/remove logic can mis-handle them."
+      },
+      {
+         "file_id":"file_1",
+         "file_path":"BugsInPy/workspace/tornado/tornado/gen.py",
+         "line_start":655,
+         "line_end":657,
+         "confidence":"medium",
+         "reason":"The callback removes the completed future from a set of unfinished children, which is unsafe when the same Future appears multiple times in the input list."
+      }
+   ]
+}

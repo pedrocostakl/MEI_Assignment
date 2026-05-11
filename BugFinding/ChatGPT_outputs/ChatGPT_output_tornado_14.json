@@ -1,0 +1,12 @@
+{
+   "bug_locations":[
+      {
+         "file_id":"file_1",
+         "file_path":"BugsInPy/workspace/tornado/tornado/ioloop.py",
+         "line_start":251,
+         "line_end":253,
+         "confidence":"high",
+         "reason":"The logic for the make_current argument is inverted. It raises an error when there is no current IOLoop instead of when one already exists."
+      }
+   ]
+}

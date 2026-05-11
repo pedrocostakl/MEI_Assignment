@@ -1,0 +1,20 @@
+{
+   "bug_locations":[
+      {
+         "file_id":"file_1",
+         "file_path":"BugsInPy/workspace/tornado/tornado/web.py",
+         "line_start":1234,
+         "line_end":1236,
+         "confidence":"high",
+         "reason":"The decoded token may be None when `_decode_xsrf_token` fails, but `utf8(token)` is still called unconditionally. This can cause incorrect behavior or exceptions during XSRF validation."
+      },
+      {
+         "file_id":"file_1",
+         "file_path":"BugsInPy/workspace/tornado/tornado/web.py",
+         "line_start":1176,
+         "line_end":1188,
+         "confidence":"medium",
+         "reason":"Version parsing for XSRF cookies rejects all versions except 2 by raising a generic exception, which may incorrectly invalidate otherwise acceptable tokens or malformed inputs."
+      }
+   ]
+}

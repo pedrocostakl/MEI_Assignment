@@ -1,0 +1,28 @@
+{
+   "bug_locations":[
+      {
+         "file_id":"file_1",
+         "file_path":"BugsInPy/workspace/tornado/tornado/httpclient.py",
+         "line_start":520,
+         "line_end":523,
+         "confidence":"high",
+         "reason":"The handling of `decompress_response` and deprecated `use_gzip` can leave `self.decompress_response` unset or incorrectly inherited when both values are `None`. This area directly affects request option defaults and compatibility behavior."
+      },
+      {
+         "file_id":"file_1",
+         "file_path":"BugsInPy/workspace/tornado/tornado/httpclient.py",
+         "line_start":730,
+         "line_end":735,
+         "confidence":"medium",
+         "reason":"`_RequestProxy.__getattr__` falls back to defaults only when the request attribute is `None`, which may mishandle falsy-but-valid values such as `False` or empty strings. Several tests exercise precedence between explicit request values and defaults."
+      },
+      {
+         "file_id":"file_1",
+         "file_path":"BugsInPy/workspace/tornado/tornado/httpclient.py",
+         "line_start":556,
+         "line_end":558,
+         "confidence":"medium",
+         "reason":"The `body` setter unconditionally applies `utf8(value)`, which may incorrectly transform or reject `None` and certain byte/string combinations. Multiple tests validate body handling and encoding semantics."
+      }
+   ]
+}
