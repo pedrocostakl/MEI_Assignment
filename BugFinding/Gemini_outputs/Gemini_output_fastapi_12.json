@@ -6,7 +6,7 @@
       "line_start": 114,
       "line_end": 118,
       "confidence": "high",
-      "reason": "The HTTPBearer class raises an HTTPException even when auto_error is False if the scheme is not 'bearer', causing test_security_http_bearer_incorrect_scheme_credentials to fail."
+      "reason": "When the scheme does not match 'bearer', it raises an HTTPException instead of checking self.auto_error and returning None if auto_error is False."
     },
     {
       "file_id": "file_1",
@@ -14,7 +14,7 @@
       "line_start": 140,
       "line_end": 144,
       "confidence": "high",
-      "reason": "The HTTPDigest class similarly raises an HTTPException regardless of the auto_error setting when the scheme is incorrect."
+      "reason": "Similar to HTTPBearer, HTTPDigest unconditionally raises an HTTPException instead of respecting the auto_error parameter when the scheme does not match."
     }
   ]
 }

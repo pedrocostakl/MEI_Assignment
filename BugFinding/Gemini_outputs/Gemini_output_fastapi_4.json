@@ -3,18 +3,10 @@
     {
       "file_id": "file_1",
       "file_path": "fastapi/openapi/utils.py",
-      "line_start": 68,
-      "line_end": 68,
+      "line_start": 95,
+      "line_end": 110,
       "confidence": "high",
-      "reason": "The get_openapi_params function uses skip_repeats=True when calling get_flat_dependant, which likely filters out parameters that appear in both the route function and its dependencies."
-    },
-    {
-      "file_id": "file_1",
-      "file_path": "fastapi/openapi/utils.py",
-      "line_start": 171,
-      "line_end": 171,
-      "confidence": "medium",
-      "reason": "The get_openapi_path function also uses skip_repeats=True when flattening the dependant, potentially causing shared parameters to be incorrectly omitted from the OpenAPI schema."
+      "reason": "The function `get_openapi_operation_parameters` appends parameters to the list without checking for duplicates. This causes parameters shared between paths and dependencies to appear multiple times in the OpenAPI schema."
     }
   ]
 }
