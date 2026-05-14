@@ -1,0 +1,12 @@
+{
+   "bug_locations":[
+      {
+         "file_id":"file_1",
+         "file_path":"BugsInPy/workspace/tornado/tornado/http1connection.py",
+         "line_start":390,
+         "line_end":394,
+         "confidence":"high",
+         "reason":"The logic deciding when to enable chunked transfer encoding for client requests is method-specific and directly affects PATCH request body handling. The failing tests newly exercise PATCH payload semantics and redirects."
+      }
+   ]
+}

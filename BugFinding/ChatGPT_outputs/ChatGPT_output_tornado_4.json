@@ -1,0 +1,28 @@
+{
+   "bug_locations":[
+      {
+         "file_id":"file_1",
+         "file_path":"BugsInPy/workspace/tornado/tornado/web.py",
+         "line_start":896,
+         "line_end":896,
+         "confidence":"high",
+         "reason":"render() assumes the rendered HTML always contains a closing </body> tag and calls rindex(), which raises ValueError when absent. Failing tests likely exercise rendering templates without a body tag."
+      },
+      {
+         "file_id":"file_1",
+         "file_path":"BugsInPy/workspace/tornado/tornado/web.py",
+         "line_start":900,
+         "line_end":900,
+         "confidence":"high",
+         "reason":"Embedded JavaScript insertion also unconditionally requires </body> via rindex(), causing failures for minimal or fragment templates."
+      },
+      {
+         "file_id":"file_1",
+         "file_path":"BugsInPy/workspace/tornado/tornado/web.py",
+         "line_start":904,
+         "line_end":904,
+         "confidence":"medium",
+         "reason":"CSS insertion assumes a closing </head> tag exists and uses index(), which can fail on templates lacking a head section."
+      }
+   ]
+}

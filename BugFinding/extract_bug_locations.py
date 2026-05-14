@@ -10,6 +10,7 @@ Example usage:
     python extract_bug_locations.py Bugs/httpie/bugs/1/bug_patch.txt BugsInPy/workspace/httpie httpie_bug_1.json
     python extract_bug_locations.py Bugs/sanic/bugs/1/bug_patch.txt BugsInPy/workspace/sanic sanic_bug_1.json
     python extract_bug_locations.py Bugs/tornado/bugs/1/bug_patch.txt BugsInPy/workspace/tornado tornado_bug_1.json
+    python extract_bug_locations.py Bugs/scrapy/bugs/1/bug_patch.txt BugsInPy/workspace/scrapy scrapy_bug_1.json
 """
 
 def extract_bug_locations(
