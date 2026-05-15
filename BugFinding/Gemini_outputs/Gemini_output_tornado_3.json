@@ -2,19 +2,11 @@
   "bug_locations": [
     {
       "file_id": "file_1",
-      "file_path": "BugsInPy/workspace/tornado/tornado/httpclient.py",
-      "line_start": 207,
-      "line_end": 209,
+      "file_path": "tornado/web.py",
+      "line_start": 2484,
+      "line_end": 2489,
       "confidence": "high",
-      "reason": "The AsyncHTTPClient cache uses instance.io_loop as a key, but the instance's io_loop property might not be initialized or consistent with the loop used to check the cache in __new__."
-    },
-    {
-      "file_id": "file_1",
-      "file_path": "BugsInPy/workspace/tornado/tornado/httpclient.py",
-      "line_start": 235,
-      "line_end": 238,
-      "confidence": "medium",
-      "reason": "The close() method attempts to delete from the cache using self.io_loop, which can trigger the 'inconsistent AsyncHTTPClient cache' RuntimeError if the loop association has changed or was incorrectly cached during __new__."
+      "reason": "self.request.query_arguments contains byte values. When passed to httputil.url_concat (which uses urllib's urlencode with doseq=True), the bytes object is iterated over as a sequence of integers, producing an incorrect query string."
     }
   ]
 }

@@ -3,10 +3,10 @@
     {
       "file_id": "file_1",
       "file_path": "tornado/http1connection.py",
-      "line_start": 216,
-      "line_end": 216,
+      "line_start": 722,
+      "line_end": 724,
       "confidence": "high",
-      "reason": "The 100-continue response incorrectly includes '(Continue)' in the status line, which violates RFC 7230/7231 as it is not a standard reason phrase for status code 100."
+      "reason": "When an `iostream.UnsatisfiableReadError` is caught (e.g., when headers exceed the maximum size), the connection is not explicitly closed before returning. This leaves the stream open and can cause the client to hang or fail incorrectly instead of properly receiving a dropped connection."
     }
   ]
 }

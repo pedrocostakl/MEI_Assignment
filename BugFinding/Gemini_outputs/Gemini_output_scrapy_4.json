@@ -3,18 +3,26 @@
     {
       "file_id": "file_1",
       "file_path": "scrapy/contracts/__init__.py",
-      "line_start": 12,
-      "line_end": 12,
+      "line_start": 87,
+      "line_end": 87,
       "confidence": "high",
-      "reason": "The contracts dictionary is defined as a class attribute instead of an instance attribute, causing state to persist across different ContractsManager instances and tests."
+      "reason": "The exc_info tuple is constructed in the wrong order: (value, type, traceback) instead of the standard (type, value, traceback). This causes errors when the test runner attempts to format the traceback."
     },
     {
       "file_id": "file_1",
       "file_path": "scrapy/contracts/__init__.py",
-      "line_start": 14,
-      "line_end": 16,
+      "line_start": 36,
+      "line_end": 36,
       "confidence": "high",
-      "reason": "The __init__ method populates the shared class-level contracts dictionary instead of a per-instance dictionary, leading to potential pollution and incorrect contract lookups."
+      "reason": "Accessing self.contracts[name] without verifying if the name exists raises a KeyError for any unrecognized docstring decorators (e.g., @property or standard Sphinx tags)."
+    },
+    {
+      "file_id": "file_1",
+      "file_path": "scrapy/contracts/__init__.py",
+      "line_start": 34,
+      "line_end": 34,
+      "confidence": "medium",
+      "reason": "If 'args' is empty, re.split(r'\\s+', args) returns [''] rather than an empty list, which erroneously passes an empty string as an argument to the contract's constructor."
     }
   ]
 }

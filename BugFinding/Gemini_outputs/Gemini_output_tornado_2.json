@@ -2,19 +2,19 @@
   "bug_locations": [
     {
       "file_id": "file_1",
-      "file_path": "tornado/http1connection.py",
-      "line_start": 212,
-      "line_end": 214,
+      "file_path": "BugsInPy/workspace/tornado/tornado/http1connection.py",
+      "line_start": 288,
+      "line_end": 293,
       "confidence": "high",
-      "reason": "The server-side logic correctly checks for keep-alive, but in client mode (is_client=True), _disconnect_on_finish is hardcoded to False at line 206, preventing the client from closing connections when 'Connection: close' is received."
+      "reason": "When the client request is cancelled, `_read_message` does not catch `asyncio.CancelledError` to close the connection. This leaves pending `IOStream` reads active, which then try to resolve the cancelled future when data eventually arrives, causing the logged exception."
     },
     {
       "file_id": "file_1",
-      "file_path": "tornado/http1connection.py",
-      "line_start": 206,
-      "line_end": 206,
+      "file_path": "BugsInPy/workspace/tornado/tornado/http1connection.py",
+      "line_start": 815,
+      "line_end": 820,
       "confidence": "high",
-      "reason": "This line explicitly disables disconnect logic for clients, which causes the client to hang or fail to close the stream when the server indicates the connection should be terminated."
+      "reason": "Similarly, `_server_request_loop` catches `asyncio.CancelledError` but returns without calling `conn.close()`, leaving the connection open and leaking resources on cancellation."
     }
   ]
 }

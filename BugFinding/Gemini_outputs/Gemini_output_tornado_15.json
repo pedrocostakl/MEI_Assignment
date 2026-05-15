@@ -3,10 +3,10 @@
     {
       "file_id": "file_1",
       "file_path": "tornado/web.py",
-      "line_start": 1356,
-      "line_end": 1356,
+      "line_start": 1381,
+      "line_end": 1383,
       "confidence": "high",
-      "reason": "The etag comparison logic fails to handle bytes correctly in Python 3; the lambda function val(x) returns a single integer when slicing/indexing bytes, causing a mismatch against the byte string val(computed_etag)."
+      "reason": "When regex matches contain optional groups, `args` or `kwargs` can contain `None`. `decode_argument` shouldn't be called on `None` values, so a conditional check (`if arg is not None else None`) is missing here."
     }
   ]
 }

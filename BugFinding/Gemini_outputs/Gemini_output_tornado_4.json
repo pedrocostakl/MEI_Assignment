@@ -3,10 +3,10 @@
     {
       "file_id": "file_1",
       "file_path": "tornado/web.py",
-      "line_start": 312,
-      "line_end": 312,
+      "line_start": 2484,
+      "line_end": 2489,
       "confidence": "high",
-      "reason": "The RequestHandler.on_connection_close method calls self.request._body_future.exception() which, in concurrent.Future, raises the exception if one exists, likely causing an unhandled error during connection close."
+      "reason": "The query arguments from `self.request.query_arguments` contain `bytes` values. Passing them through `qs_to_qsl` to `url_concat` without decoding causes `b'...'` string representations in the redirect URL instead of the properly encoded values."
     }
   ]
 }

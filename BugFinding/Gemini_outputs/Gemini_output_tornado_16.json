@@ -2,19 +2,11 @@
   "bug_locations": [
     {
       "file_id": "file_1",
-      "file_path": "BugsInPy/workspace/tornado/tornado/gen.py",
-      "line_start": 346,
-      "line_end": 347,
+      "file_path": "tornado/gen.py",
+      "line_start": 358,
+      "line_end": 363,
       "confidence": "high",
-      "reason": "The done() method incorrectly returns False if self._unfinished is not empty, even if those futures are actually finished but haven't triggered the callback yet or aren't in the _finished queue."
-    },
-    {
-      "file_id": "file_1",
-      "file_path": "BugsInPy/workspace/tornado/tornado/gen.py",
-      "line_start": 360,
-      "line_end": 361,
-      "confidence": "high",
-      "reason": "The next() method only returns a result if it's already in the _finished queue, but it doesn't check if there are pending futures in _unfinished that might already be done."
+      "reason": "WaitIterator's next() returns a Future, but because WaitIterator only holds weak references to avoid cycles, it gets prematurely garbage-collected if the caller only holds a reference to the returned Future. Attaching a hard reference of the WaitIterator (`self`) to the `_running_future` before returning it will keep it alive."
     }
   ]
 }

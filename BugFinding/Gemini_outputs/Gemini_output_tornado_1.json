@@ -3,10 +3,26 @@
     {
       "file_id": "file_1",
       "file_path": "tornado/websocket.py",
-      "line_start": 247,
-      "line_end": 249,
+      "line_start": 1487,
+      "line_end": 1499,
       "confidence": "high",
-      "reason": "The 'connection' variable is initialized using 'map', which in Python 3 returns an iterator; the subsequent 'in' check fails because it doesn't evaluate as a collection."
+      "reason": "WebSocketClientConnection's write_message method does not check if the connection is already closed or closing before delegating to the protocol. It should raise a WebSocketClosedError if `self.protocol is None or self.protocol.is_closing()`."
+    },
+    {
+      "file_id": "file_1",
+      "file_path": "tornado/websocket.py",
+      "line_start": 1532,
+      "line_end": 1549,
+      "confidence": "medium",
+      "reason": "Similarly, the ping method checks if `self.protocol is None` but fails to check if `self.protocol.is_closing()` is True. It should also raise WebSocketClosedError in this state."
+    },
+    {
+      "file_id": "file_1",
+      "file_path": "tornado/websocket.py",
+      "line_start": 1073,
+      "line_end": 1104,
+      "confidence": "medium",
+      "reason": "Alternatively, WebSocketProtocol13.write_message could be responsible for checking if the stream is already closing (`self.is_closing()`) to instantly raise WebSocketClosedError rather than pushing closed frames."
     }
   ]
 }
