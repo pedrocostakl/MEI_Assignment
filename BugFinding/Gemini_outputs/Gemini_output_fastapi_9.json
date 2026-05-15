@@ -3,10 +3,10 @@
     {
       "file_id": "file_1",
       "file_path": "fastapi/dependencies/utils.py",
-      "line_start": 577,
-      "line_end": 577,
+      "line_start": 569,
+      "line_end": 578,
       "confidence": "high",
-      "reason": "The get_body_field function initializes BodySchema with None, which loses the media_type and other metadata configured in the original body parameters."
+      "reason": "When combining multiple body parameters or handling an embedded parameter, a new Field is created with `schema=BodySchema(None)`. This discards the `media_type` configured on the original body parameter(s)."
     }
   ]
 }

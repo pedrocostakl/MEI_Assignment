@@ -6,7 +6,7 @@
       "line_start": 102,
       "line_end": 102,
       "confidence": "high",
-      "reason": "The SchemaBase class incorrectly allows Any in additionalProperties, which interferes with Pydantic's ability to correctly model and validate the OpenAPI schema for dictionaries."
+      "reason": "The 'additionalProperties' field uses 'Union[bool, Any]' which can cause schema dictionaries to be incorrectly evaluated or coerced to booleans due to Pydantic's left-to-right Union evaluation order."
     },
     {
       "file_id": "file_1",
@@ -14,7 +14,7 @@
       "line_start": 123,
       "line_end": 123,
       "confidence": "high",
-      "reason": "The Schema class overrides additionalProperties but still allows Union[bool, SchemaBase], which may cause validation issues when the schema needs to represent Dict[str, type]."
+      "reason": "The 'additionalProperties' field uses 'Union[bool, SchemaBase]'. Placing 'bool' first can lead to improper coercion of schema definitions into booleans, dropping nested constraints."
     }
   ]
 }

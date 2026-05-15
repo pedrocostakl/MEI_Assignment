@@ -3,18 +3,10 @@
     {
       "file_id": "file_1",
       "file_path": "httpie/downloads.py",
-      "line_start": 304,
-      "line_end": 304,
+      "line_start": 97,
+      "line_end": 98,
       "confidence": "high",
-      "reason": "The file is opened in 'a+b' mode (append), which causes new downloads of existing files to incorrectly append data instead of overwriting, even if the file is fresh."
-    },
-    {
-      "file_id": "file_1",
-      "file_path": "httpie/downloads.py",
-      "line_start": 242,
-      "line_end": 243,
-      "confidence": "medium",
-      "reason": "When an output file is provided via --output and resume is NOT used, the code attempts to seek(0) and truncate(), but this is inside a block that doesn't execute when the filename is guessed automatically."
+      "reason": "The function uses `mailbox.Message` (which relies on Python's legacy email API / compat32 policy) to parse the `Content-Disposition` header. This legacy parser does not correctly handle unquoting strings with escaped quotes, leading to the failing test case."
     }
   ]
 }

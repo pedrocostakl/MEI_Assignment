@@ -6,7 +6,7 @@
       "line_start": 106,
       "line_end": 107,
       "confidence": "high",
-      "reason": "The code checks for 'Host' (case-sensitive) but HTTP headers are case-insensitive; if a user provides 'host', this block incorrectly adds a second Host header from the URL."
+      "reason": "The check `if 'Host' not in headers` fails to account for case-insensitivity because `headers` is a standard `dict` (e.g., if the user passed 'host: ...'). It should check against the original `self._orig.headers` which is a `CaseInsensitiveDict`."
     }
   ]
 }

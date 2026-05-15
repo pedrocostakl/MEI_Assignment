@@ -3,18 +3,10 @@
     {
       "file_id": "file_1",
       "file_path": "httpie/client.py",
-      "line_start": 143,
-      "line_end": 143,
+      "line_start": 42,
+      "line_end": 43,
       "confidence": "high",
-      "reason": "The 'allow_redirects' parameter in the requests keyword arguments is incorrectly hardcoded to 'args.follow'. It should instead be set to True if '--follow' is present, but limited by 'args.max_redirects' to avoid the library's default behavior overriding custom limits."
-    },
-    {
-      "file_id": "file_1",
-      "file_path": "httpie/client.py",
-      "line_start": 128,
-      "line_end": 145,
-      "confidence": "medium",
-      "reason": "The 'max_redirects' argument from the CLI is never passed into the 'kwargs' dictionary, meaning 'requests' uses its default limit (usually 30) instead of the user-specified one."
+      "reason": "The requests_session is created here, but its max_redirects attribute is not set using args.max_redirects. Because of this, the underlying requests library uses its default limit (30) instead of the user-specified limit."
     }
   ]
 }
