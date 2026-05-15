@@ -1,0 +1,10 @@
+{
+  "case_name": "scrapy_5",
+  "output_file": "Gemini_outputs\\Gemini_output_scrapy_5.json",
+  "benchmark_file": "benchmarks\\scrapy_bug_5.json",
+  "num_real_bugs": 1,
+  "num_reported_bugs": 1,
+  "true_positives": 0,
+  "false_positives": 1,
+  "false_negatives": 1
+}

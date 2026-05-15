@@ -14,7 +14,7 @@
             "line_start": 60,
             "line_end": 62,
             "confidence": "high",
-            "reason": "Escaped separator replacement iterates separators in declaration order, causing shorter separators like ':' to be unescaped before longer ones like ':='. This can corrupt parsing of escaped long separators such as '\:='."
+            "reason": "Escaped separator replacement iterates separators in declaration order, causing shorter separators like ':' to be unescaped before longer ones like ':='. This can corrupt parsing of escaped long separators such as '\\:='."
         }
     ]
 }

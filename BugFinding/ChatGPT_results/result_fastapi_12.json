@@ -1,0 +1,10 @@
+{
+  "case_name": "fastapi_12",
+  "output_file": "ChatGPT_outputs\\ChatGPT_output_fastapi_12.json",
+  "benchmark_file": "benchmarks\\fastapi_bug_12.json",
+  "num_real_bugs": 1,
+  "num_reported_bugs": 1,
+  "true_positives": 1,
+  "false_positives": 0,
+  "false_negatives": 0
+}

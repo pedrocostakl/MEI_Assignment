@@ -1,0 +1,10 @@
+{
+  "case_name": "tornado_16",
+  "output_file": "ChatGPT_outputs\\ChatGPT_output_tornado_16.json",
+  "benchmark_file": "benchmarks\\tornado_bug_16.json",
+  "num_real_bugs": 2,
+  "num_reported_bugs": 2,
+  "true_positives": 0,
+  "false_positives": 2,
+  "false_negatives": 2
+}
