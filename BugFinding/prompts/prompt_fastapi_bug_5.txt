@@ -1,0 +1,292 @@
+You are given buggy source files and failing test files.
+
+Your task is BUG LOCALIZATION ONLY.
+
+Return only valid JSON using this exact format:
+
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "relative/path.py",
+      "line_start": 1,
+      "line_end": 1,
+      "confidence": "low|medium|high",
+      "reason": "Max 2 sentences."
+    }
+  ]
+}
+
+Rules:
+- Do not propose fixes.
+- Do not rewrite code.
+- Do not explain outside JSON.
+- Line numbers must refer to the numbered buggy source file.
+- Include at most the number of suspected locations you think there are.
+- Prefer the smallest line range that identifies the origin of the bug.
+
+
+SOURCE FILES:
+
+[file_1] BugsInPy/workspace/fastapi/fastapi/utils.py
+```python
+  1 | import re
+  2 | from dataclasses import is_dataclass
+  3 | from typing import Any, Dict, List, Sequence, Set, Type, cast
+  4 | 
+  5 | from fastapi import routing
+  6 | from fastapi.logger import logger
+  7 | from fastapi.openapi.constants import REF_PREFIX
+  8 | from pydantic import BaseConfig, BaseModel, create_model
+  9 | from pydantic.schema import get_flat_models_from_fields, model_process_schema
+ 10 | from pydantic.utils import lenient_issubclass
+ 11 | from starlette.routing import BaseRoute
+ 12 | 
+ 13 | try:
+ 14 |     from pydantic.fields import FieldInfo, ModelField
+ 15 | 
+ 16 |     PYDANTIC_1 = True
+ 17 | except ImportError:  # pragma: nocover
+ 18 |     # TODO: remove when removing support for Pydantic < 1.0.0
+ 19 |     from pydantic.fields import Field as ModelField  # type: ignore
+ 20 |     from pydantic import Schema as FieldInfo  # type: ignore
+ 21 | 
+ 22 |     logger.warning(
+ 23 |         "Pydantic versions < 1.0.0 are deprecated in FastAPI and support will be "
+ 24 |         "removed soon."
+ 25 |     )
+ 26 |     PYDANTIC_1 = False
+ 27 | 
+ 28 | 
+ 29 | # TODO: remove when removing support for Pydantic < 1.0.0
+ 30 | def get_field_info(field: ModelField) -> FieldInfo:
+ 31 |     if PYDANTIC_1:
+ 32 |         return field.field_info  # type: ignore
+ 33 |     else:
+ 34 |         return field.schema  # type: ignore  # pragma: nocover
+ 35 | 
+ 36 | 
+ 37 | # TODO: remove when removing support for Pydantic < 1.0.0
+ 38 | def warning_response_model_skip_defaults_deprecated() -> None:
+ 39 |     logger.warning(  # pragma: nocover
+ 40 |         "response_model_skip_defaults has been deprecated in favor of "
+ 41 |         "response_model_exclude_unset to keep in line with Pydantic v1, support for "
+ 42 |         "it will be removed soon."
+ 43 |     )
+ 44 | 
+ 45 | 
+ 46 | def get_flat_models_from_routes(routes: Sequence[BaseRoute]) -> Set[Type[BaseModel]]:
+ 47 |     body_fields_from_routes: List[ModelField] = []
+ 48 |     responses_from_routes: List[ModelField] = []
+ 49 |     callback_flat_models: Set[Type[BaseModel]] = set()
+ 50 |     for route in routes:
+ 51 |         if getattr(route, "include_in_schema", None) and isinstance(
+ 52 |             route, routing.APIRoute
+ 53 |         ):
+ 54 |             if route.body_field:
+ 55 |                 assert isinstance(
+ 56 |                     route.body_field, ModelField
+ 57 |                 ), "A request body must be a Pydantic Field"
+ 58 |                 body_fields_from_routes.append(route.body_field)
+ 59 |             if route.response_field:
+ 60 |                 responses_from_routes.append(route.response_field)
+ 61 |             if route.response_fields:
+ 62 |                 responses_from_routes.extend(route.response_fields.values())
+ 63 |             if route.callbacks:
+ 64 |                 callback_flat_models |= get_flat_models_from_routes(route.callbacks)
+ 65 |     flat_models = callback_flat_models | get_flat_models_from_fields(
+ 66 |         body_fields_from_routes + responses_from_routes, known_models=set()
+ 67 |     )
+ 68 |     return flat_models
+ 69 | 
+ 70 | 
+ 71 | def get_model_definitions(
+ 72 |     *, flat_models: Set[Type[BaseModel]], model_name_map: Dict[Type[BaseModel], str]
+ 73 | ) -> Dict[str, Any]:
+ 74 |     definitions: Dict[str, Dict] = {}
+ 75 |     for model in flat_models:
+ 76 |         m_schema, m_definitions, m_nested_models = model_process_schema(
+ 77 |             model, model_name_map=model_name_map, ref_prefix=REF_PREFIX
+ 78 |         )
+ 79 |         definitions.update(m_definitions)
+ 80 |         model_name = model_name_map[model]
+ 81 |         definitions[model_name] = m_schema
+ 82 |     return definitions
+ 83 | 
+ 84 | 
+ 85 | def get_path_param_names(path: str) -> Set[str]:
+ 86 |     return {item.strip("{}") for item in re.findall("{[^}]*}", path)}
+ 87 | 
+ 88 | 
+ 89 | def create_cloned_field(field: ModelField) -> ModelField:
+ 90 |     original_type = field.type_
+ 91 |     if is_dataclass(original_type) and hasattr(original_type, "__pydantic_model__"):
+ 92 |         original_type = original_type.__pydantic_model__  # type: ignore
+ 93 |     use_type = original_type
+ 94 |     if lenient_issubclass(original_type, BaseModel):
+ 95 |         original_type = cast(Type[BaseModel], original_type)
+ 96 |         use_type = create_model(
+ 97 |             original_type.__name__, __config__=original_type.__config__
+ 98 |         )
+ 99 |         for f in original_type.__fields__.values():
+100 |             use_type.__fields__[f.name] = f
+101 |         use_type.__validators__ = original_type.__validators__
+102 |     if PYDANTIC_1:
+103 |         new_field = ModelField(
+104 |             name=field.name,
+105 |             type_=use_type,
+106 |             class_validators={},
+107 |             default=None,
+108 |             required=False,
+109 |             model_config=BaseConfig,
+110 |             field_info=FieldInfo(None),
+111 |         )
+112 |     else:  # pragma: nocover
+113 |         new_field = ModelField(  # type: ignore
+114 |             name=field.name,
+115 |             type_=use_type,
+116 |             class_validators={},
+117 |             default=None,
+118 |             required=False,
+119 |             model_config=BaseConfig,
+120 |             schema=FieldInfo(None),
+121 |         )
+122 |     new_field.has_alias = field.has_alias
+123 |     new_field.alias = field.alias
+124 |     new_field.class_validators = field.class_validators
+125 |     new_field.default = field.default
+126 |     new_field.required = field.required
+127 |     new_field.model_config = field.model_config
+128 |     if PYDANTIC_1:
+129 |         new_field.field_info = field.field_info
+130 |     else:  # pragma: nocover
+131 |         new_field.schema = field.schema  # type: ignore
+132 |     new_field.allow_none = field.allow_none
+133 |     new_field.validate_always = field.validate_always
+134 |     if field.sub_fields:
+135 |         new_field.sub_fields = [
+136 |             create_cloned_field(sub_field) for sub_field in field.sub_fields
+137 |         ]
+138 |     if field.key_field:
+139 |         new_field.key_field = create_cloned_field(field.key_field)
+140 |     new_field.validators = field.validators
+141 |     if PYDANTIC_1:
+142 |         new_field.pre_validators = field.pre_validators
+143 |         new_field.post_validators = field.post_validators
+144 |     else:  # pragma: nocover
+145 |         new_field.whole_pre_validators = field.whole_pre_validators  # type: ignore
+146 |         new_field.whole_post_validators = field.whole_post_validators  # type: ignore
+147 |     new_field.parse_json = field.parse_json
+148 |     new_field.shape = field.shape
+149 |     try:
+150 |         new_field.populate_validators()
+151 |     except AttributeError:  # pragma: nocover
+152 |         # TODO: remove when removing support for Pydantic < 1.0.0
+153 |         new_field._populate_validators()  # type: ignore
+154 |     return new_field
+155 | 
+156 | 
+157 | def generate_operation_id_for_path(*, name: str, path: str, method: str) -> str:
+158 |     operation_id = name + path
+159 |     operation_id = re.sub("[^0-9a-zA-Z_]", "_", operation_id)
+160 |     operation_id = operation_id + "_" + method.lower()
+161 |     return operation_id
+```
+
+
+FAILING TEST FILES:
+
+[test_file_1] BugsInPy/workspace/fastapi/tests/test_filter_pydantic_sub_model.py
+```python
+ 1 | from fastapi import Depends, FastAPI
+ 2 | from pydantic import BaseModel
+ 3 | from starlette.testclient import TestClient
+ 4 | 
+ 5 | app = FastAPI()
+ 6 | 
+ 7 | 
+ 8 | class ModelB(BaseModel):
+ 9 |     username: str
+10 | 
+11 | 
+12 | class ModelC(ModelB):
+13 |     password: str
+14 | 
+15 | 
+16 | class ModelA(BaseModel):
+17 |     name: str
+18 |     description: str = None
+19 |     model_b: ModelB
+20 | 
+21 | 
+22 | async def get_model_c() -> ModelC:
+23 |     return ModelC(username="test-user", password="test-password")
+24 | 
+25 | 
+26 | @app.get("/model", response_model=ModelA)
+27 | async def get_model_a(model_c=Depends(get_model_c)):
+28 |     return {"name": "model-a-name", "description": "model-a-desc", "model_b": model_c}
+29 | 
+30 | 
+31 | client = TestClient(app)
+32 | 
+33 | 
+34 | openapi_schema = {
+35 |     "openapi": "3.0.2",
+36 |     "info": {"title": "Fast API", "version": "0.1.0"},
+37 |     "paths": {
+38 |         "/model": {
+39 |             "get": {
+40 |                 "summary": "Get Model A",
+41 |                 "operationId": "get_model_a_model_get",
+42 |                 "responses": {
+43 |                     "200": {
+44 |                         "description": "Successful Response",
+45 |                         "content": {
+46 |                             "application/json": {
+47 |                                 "schema": {"$ref": "#/components/schemas/ModelA"}
+48 |                             }
+49 |                         },
+50 |                     }
+51 |                 },
+52 |             }
+53 |         }
+54 |     },
+55 |     "components": {
+56 |         "schemas": {
+57 |             "ModelA": {
+58 |                 "title": "ModelA",
+59 |                 "required": ["name", "model_b"],
+60 |                 "type": "object",
+61 |                 "properties": {
+62 |                     "name": {"title": "Name", "type": "string"},
+63 |                     "description": {"title": "Description", "type": "string"},
+64 |                     "model_b": {"$ref": "#/components/schemas/ModelB"},
+65 |                 },
+66 |             },
+67 |             "ModelB": {
+68 |                 "title": "ModelB",
+69 |                 "required": ["username"],
+70 |                 "type": "object",
+71 |                 "properties": {"username": {"title": "Username", "type": "string"}},
+72 |             },
+73 |         }
+74 |     },
+75 | }
+76 | 
+77 | 
+78 | def test_openapi_schema():
+79 |     response = client.get("/openapi.json")
+80 |     assert response.status_code == 200
+81 |     assert response.json() == openapi_schema
+82 | 
+83 | 
+84 | def test_filter_sub_model():
+85 |     response = client.get("/model")
+86 |     assert response.status_code == 200
+87 |     assert response.json() == {
+88 |         "name": "model-a-name",
+89 |         "description": "model-a-desc",
+90 |         "model_b": {"username": "test-user"},
+91 |     }
+```

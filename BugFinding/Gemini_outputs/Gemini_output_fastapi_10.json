@@ -1,0 +1,12 @@
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "fastapi/routing.py",
+      "line_start": 48,
+      "line_end": 48,
+      "confidence": "high",
+      "reason": "When the response is a Pydantic BaseModel instance, passing it directly to `field.validate` causes Pydantic to internally call `dict()`, which includes all default values. This falsely populates the `__fields_set__` of the cloned model with defaults, breaking the `skip_defaults` serialization."
+    }
+  ]
+}

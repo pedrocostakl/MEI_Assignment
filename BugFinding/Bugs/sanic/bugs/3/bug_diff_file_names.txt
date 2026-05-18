@@ -1,0 +1,5 @@
+# git diff <buggy_version> <patched_version>
+# git diff --name-only 91f6abaa81248189fbcbdf685e8bdcbb7846609f 861e87347a2d373d6ffa387965a6887c83af632c
+# change from buggy → fixed.
+sanic/app.py
+tests/test_url_for.py

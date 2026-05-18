@@ -1,0 +1,214 @@
+You are given buggy source files and failing test files.
+
+Your task is BUG LOCALIZATION ONLY.
+
+Return only valid JSON using this exact format:
+
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "relative/path.py",
+      "line_start": 1,
+      "line_end": 1,
+      "confidence": "low|medium|high",
+      "reason": "Max 2 sentences."
+    }
+  ]
+}
+
+Rules:
+- Do not propose fixes.
+- Do not rewrite code.
+- Do not explain outside JSON.
+- Line numbers must refer to the numbered buggy source file.
+- Include at most the number of suspected locations you think there are.
+- Prefer the smallest line range that identifies the origin of the bug.
+
+
+SOURCE FILES:
+
+[file_1] BugsInPy/workspace/sanic/sanic/log.py
+```python
+ 1 | import logging
+ 2 | import sys
+ 3 | 
+ 4 | 
+ 5 | LOGGING_CONFIG_DEFAULTS = dict(
+ 6 |     version=1,
+ 7 |     disable_existing_loggers=False,
+ 8 |     loggers={
+ 9 |         "root": {"level": "INFO", "handlers": ["console"]},
+10 |         "sanic.error": {
+11 |             "level": "INFO",
+12 |             "handlers": ["error_console"],
+13 |             "propagate": True,
+14 |             "qualname": "sanic.error",
+15 |         },
+16 |         "sanic.access": {
+17 |             "level": "INFO",
+18 |             "handlers": ["access_console"],
+19 |             "propagate": True,
+20 |             "qualname": "sanic.access",
+21 |         },
+22 |     },
+23 |     handlers={
+24 |         "console": {
+25 |             "class": "logging.StreamHandler",
+26 |             "formatter": "generic",
+27 |             "stream": sys.stdout,
+28 |         },
+29 |         "error_console": {
+30 |             "class": "logging.StreamHandler",
+31 |             "formatter": "generic",
+32 |             "stream": sys.stderr,
+33 |         },
+34 |         "access_console": {
+35 |             "class": "logging.StreamHandler",
+36 |             "formatter": "access",
+37 |             "stream": sys.stdout,
+38 |         },
+39 |     },
+40 |     formatters={
+41 |         "generic": {
+42 |             "format": "%(asctime)s [%(process)d] [%(levelname)s] %(message)s",
+43 |             "datefmt": "[%Y-%m-%d %H:%M:%S %z]",
+44 |             "class": "logging.Formatter",
+45 |         },
+46 |         "access": {
+47 |             "format": "%(asctime)s - (%(name)s)[%(levelname)s][%(host)s]: "
+48 |             + "%(request)s %(message)s %(status)d %(byte)d",
+49 |             "datefmt": "[%Y-%m-%d %H:%M:%S %z]",
+50 |             "class": "logging.Formatter",
+51 |         },
+52 |     },
+53 | )
+54 | 
+55 | 
+56 | logger = logging.getLogger("sanic.root")
+57 | error_logger = logging.getLogger("sanic.error")
+58 | access_logger = logging.getLogger("sanic.access")
+```
+
+
+FAILING TEST FILES:
+
+[test_file_1] BugsInPy/workspace/sanic/tests/test_logging.py
+```python
+  1 | import uuid
+  2 | import logging
+  3 | 
+  4 | from io import StringIO
+  5 | from importlib import reload
+  6 | 
+  7 | import pytest
+  8 | from unittest.mock import Mock
+  9 | 
+ 10 | import sanic
+ 11 | from sanic.response import text
+ 12 | from sanic.log import LOGGING_CONFIG_DEFAULTS
+ 13 | from sanic import Sanic
+ 14 | 
+ 15 | 
+ 16 | logging_format = '''module: %(module)s; \
+ 17 | function: %(funcName)s(); \
+ 18 | message: %(message)s'''
+ 19 | 
+ 20 | 
+ 21 | def reset_logging():
+ 22 |     logging.shutdown()
+ 23 |     reload(logging)
+ 24 | 
+ 25 | 
+ 26 | def test_log(app):
+ 27 |     log_stream = StringIO()
+ 28 |     for handler in logging.root.handlers[:]:
+ 29 |         logging.root.removeHandler(handler)
+ 30 |     logging.basicConfig(
+ 31 |         format=logging_format,
+ 32 |         level=logging.DEBUG,
+ 33 |         stream=log_stream
+ 34 |     )
+ 35 |     log = logging.getLogger()
+ 36 |     rand_string = str(uuid.uuid4())
+ 37 | 
+ 38 |     @app.route('/')
+ 39 |     def handler(request):
+ 40 |         log.info(rand_string)
+ 41 |         return text('hello')
+ 42 | 
+ 43 |     request, response = app.test_client.get('/')
+ 44 |     log_text = log_stream.getvalue()
+ 45 |     assert rand_string in log_text
+ 46 | 
+ 47 | 
+ 48 | def test_logging_defaults():
+ 49 |     reset_logging()
+ 50 |     app = Sanic("test_logging")
+ 51 | 
+ 52 |     for fmt in [h.formatter for h in logging.getLogger('sanic.root').handlers]:
+ 53 |         assert fmt._fmt == LOGGING_CONFIG_DEFAULTS['formatters']['generic']['format']
+ 54 | 
+ 55 |     for fmt in [h.formatter for h in logging.getLogger('sanic.error').handlers]:
+ 56 |         assert fmt._fmt == LOGGING_CONFIG_DEFAULTS['formatters']['generic']['format']
+ 57 | 
+ 58 |     for fmt in [h.formatter for h in logging.getLogger('sanic.access').handlers]:
+ 59 |         assert fmt._fmt == LOGGING_CONFIG_DEFAULTS['formatters']['access']['format']
+ 60 | 
+ 61 | 
+ 62 | def test_logging_pass_customer_logconfig():
+ 63 |     reset_logging()
+ 64 | 
+ 65 |     modified_config = LOGGING_CONFIG_DEFAULTS
+ 66 |     modified_config['formatters']['generic']['format'] = '%(asctime)s - (%(name)s)[%(levelname)s]: %(message)s'
+ 67 |     modified_config['formatters']['access']['format'] = '%(asctime)s - (%(name)s)[%(levelname)s]: %(message)s'
+ 68 | 
+ 69 |     app = Sanic("test_logging", log_config=modified_config)
+ 70 | 
+ 71 |     for fmt in [h.formatter for h in logging.getLogger('sanic.root').handlers]:
+ 72 |         assert fmt._fmt == modified_config['formatters']['generic']['format']
+ 73 | 
+ 74 |     for fmt in [h.formatter for h in logging.getLogger('sanic.error').handlers]:
+ 75 |         assert fmt._fmt == modified_config['formatters']['generic']['format']
+ 76 | 
+ 77 |     for fmt in [h.formatter for h in logging.getLogger('sanic.access').handlers]:
+ 78 |         assert fmt._fmt == modified_config['formatters']['access']['format']
+ 79 | 
+ 80 | 
+ 81 | @pytest.mark.parametrize('debug', (True, False, ))
+ 82 | def test_log_connection_lost(app, debug, monkeypatch):
+ 83 |     """ Should not log Connection lost exception on non debug """
+ 84 |     stream = StringIO()
+ 85 |     root = logging.getLogger('sanic.root')
+ 86 |     root.addHandler(logging.StreamHandler(stream))
+ 87 |     monkeypatch.setattr(sanic.server, 'logger', root)
+ 88 | 
+ 89 |     @app.route('/conn_lost')
+ 90 |     async def conn_lost(request):
+ 91 |         response = text('Ok')
+ 92 |         response.output = Mock(side_effect=RuntimeError)
+ 93 |         return response
+ 94 | 
+ 95 |     with pytest.raises(ValueError):
+ 96 |         # catch ValueError: Exception during request
+ 97 |         app.test_client.get('/conn_lost', debug=debug)
+ 98 | 
+ 99 |     log = stream.getvalue()
+100 | 
+101 |     if debug:
+102 |         assert 'Connection lost before response written @' in log
+103 |     else:
+104 |         assert 'Connection lost before response written @' not in log
+105 | 
+106 | 
+107 | def test_logging_modified_root_logger_config():
+108 |     reset_logging()
+109 | 
+110 |     modified_config = LOGGING_CONFIG_DEFAULTS
+111 |     modified_config['loggers']['sanic.root']['level'] = 'DEBUG'
+112 | 
+113 |     app = Sanic("test_logging", log_config=modified_config)
+114 | 
+115 |     assert logging.getLogger('sanic.root').getEffectiveLevel() == logging.DEBUG
+116 | 
+```

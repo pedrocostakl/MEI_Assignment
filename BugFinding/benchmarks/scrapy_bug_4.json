@@ -1,0 +1,9 @@
+{
+  "bug_locations": [
+    {
+      "file_path": "BugsInPy/workspace/scrapy/scrapy/contracts/__init__.py",
+      "line_start": 84,
+      "line_end": 90
+    }
+  ]
+}

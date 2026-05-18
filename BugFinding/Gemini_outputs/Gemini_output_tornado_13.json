@@ -1,0 +1,12 @@
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "BugsInPy/workspace/tornado/tornado/http1connection.py",
+      "line_start": 482,
+      "line_end": 485,
+      "confidence": "high",
+      "reason": "The `_can_keep_alive` method checks `start_line.method`, assuming it is a request line. For an HTTP/1.0 response, `start_line` is a `ResponseStartLine` which lacks a `method` attribute, causing an AttributeError to be raised."
+    }
+  ]
+}

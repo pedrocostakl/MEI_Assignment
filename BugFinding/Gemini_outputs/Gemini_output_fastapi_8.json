@@ -1,0 +1,20 @@
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "fastapi/routing.py",
+      "line_start": 350,
+      "line_end": 353,
+      "confidence": "high",
+      "reason": "`add_api_route` is hardcoded to instantiate `self.route_class`, making it impossible to preserve a custom route class from an included router."
+    },
+    {
+      "file_id": "file_1",
+      "file_path": "fastapi/routing.py",
+      "line_start": 488,
+      "line_end": 490,
+      "confidence": "high",
+      "reason": "`include_router` needs to be updated to extract and pass the original `route.__class__` to `add_api_route` so the custom class is retained."
+    }
+  ]
+}

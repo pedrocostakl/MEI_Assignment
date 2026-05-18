@@ -1,0 +1,12 @@
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "scrapy/item.py",
+      "line_start": 27,
+      "line_end": 29,
+      "confidence": "high",
+      "reason": "The '__classcell__' attribute from Python 3.6+ is passed to the dummy class creation via 'attrs' and then again to the final class creation. This causes a TypeError because the same closure cell cannot be populated by multiple classes."
+    }
+  ]
+}

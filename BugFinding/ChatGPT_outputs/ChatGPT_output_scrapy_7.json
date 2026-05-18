@@ -1,0 +1,12 @@
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "BugsInPy/workspace/scrapy/scrapy/http/request/form.py",
+      "line_start": 183,
+      "line_end": 190,
+      "confidence": "high",
+      "reason": "The nr-based clickdata lookup indexes into list(form.inputs), which includes non-clickable inputs and can select the wrong element or silently ignore invalid indices. The failing tests around clickdata nr selection indicate the lookup should operate on clickable elements only."
+    }
+  ]
+}

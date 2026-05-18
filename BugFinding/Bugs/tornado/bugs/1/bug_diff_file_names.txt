@@ -1,0 +1,5 @@
+# git diff <buggy_version> <patched_version>
+# git diff --name-only 6a5a0bfa370b6c0d3dbbf9589a560a98202d2baa 4677c54cc18bbfbdf0f4dadf11610fab6203fd63
+# change from buggy → fixed.
+tornado/test/websocket_test.py
+tornado/websocket.py

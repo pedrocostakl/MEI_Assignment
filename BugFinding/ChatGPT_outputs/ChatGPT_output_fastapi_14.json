@@ -1,0 +1,20 @@
+{
+    "bug_locations": [
+        {
+            "file_id": "file_1",
+            "file_path": "BugsInPy/workspace/fastapi/fastapi/openapi/models.py",
+            "line_start": 122,
+            "line_end": 123,
+            "confidence": "high",
+            "reason": "The OpenAPI schema for Dict[str, int] relies on nested schemas in additionalProperties. Typing additionalProperties as Union[bool, SchemaBase] likely drops concrete Schema information such as type='integer' during serialization."
+        },
+        {
+            "file_id": "file_1",
+            "file_path": "BugsInPy/workspace/fastapi/fastapi/openapi/models.py",
+            "line_start": 101,
+            "line_end": 102,
+            "confidence": "medium",
+            "reason": "properties and additionalProperties use overly generic Any/SchemaBase types, which may prevent proper serialization of nested object schemas required by the failing additionalProperties test."
+        }
+    ]
+}

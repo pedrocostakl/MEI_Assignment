@@ -1,0 +1,12 @@
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "fastapi/dependencies/utils.py",
+      "line_start": 133,
+      "line_end": 139,
+      "confidence": "high",
+      "reason": "The `is_scalar_field` function does not inspect `field.sub_fields`. When a parameter is a `Union` of `BaseModel`s, `field.sub_fields` is populated but `field.type_` is not evaluated as a `BaseModel` directly, causing the Union of models to be incorrectly classified as a scalar field instead of a body field."
+    }
+  ]
+}

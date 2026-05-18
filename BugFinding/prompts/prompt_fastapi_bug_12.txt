@@ -1,0 +1,253 @@
+You are given buggy source files and failing test files.
+
+Your task is BUG LOCALIZATION ONLY.
+
+Return only valid JSON using this exact format:
+
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "relative/path.py",
+      "line_start": 1,
+      "line_end": 1,
+      "confidence": "low|medium|high",
+      "reason": "Max 2 sentences."
+    }
+  ]
+}
+
+Rules:
+- Do not propose fixes.
+- Do not rewrite code.
+- Do not explain outside JSON.
+- Line numbers must refer to the numbered buggy source file.
+- Include at most the number of suspected locations you think there are.
+- Prefer the smallest line range that identifies the origin of the bug.
+
+
+SOURCE FILES:
+
+[file_1] BugsInPy/workspace/fastapi/fastapi/security/http.py
+```python
+  1 | import binascii
+  2 | from base64 import b64decode
+  3 | from typing import Optional
+  4 | 
+  5 | from fastapi.exceptions import HTTPException
+  6 | from fastapi.openapi.models import (
+  7 |     HTTPBase as HTTPBaseModel,
+  8 |     HTTPBearer as HTTPBearerModel,
+  9 | )
+ 10 | from fastapi.security.base import SecurityBase
+ 11 | from fastapi.security.utils import get_authorization_scheme_param
+ 12 | from pydantic import BaseModel
+ 13 | from starlette.requests import Request
+ 14 | from starlette.status import HTTP_401_UNAUTHORIZED, HTTP_403_FORBIDDEN
+ 15 | 
+ 16 | 
+ 17 | class HTTPBasicCredentials(BaseModel):
+ 18 |     username: str
+ 19 |     password: str
+ 20 | 
+ 21 | 
+ 22 | class HTTPAuthorizationCredentials(BaseModel):
+ 23 |     scheme: str
+ 24 |     credentials: str
+ 25 | 
+ 26 | 
+ 27 | class HTTPBase(SecurityBase):
+ 28 |     def __init__(
+ 29 |         self, *, scheme: str, scheme_name: str = None, auto_error: bool = True
+ 30 |     ):
+ 31 |         self.model = HTTPBaseModel(scheme=scheme)
+ 32 |         self.scheme_name = scheme_name or self.__class__.__name__
+ 33 |         self.auto_error = auto_error
+ 34 | 
+ 35 |     async def __call__(
+ 36 |         self, request: Request
+ 37 |     ) -> Optional[HTTPAuthorizationCredentials]:
+ 38 |         authorization: str = request.headers.get("Authorization")
+ 39 |         scheme, credentials = get_authorization_scheme_param(authorization)
+ 40 |         if not (authorization and scheme and credentials):
+ 41 |             if self.auto_error:
+ 42 |                 raise HTTPException(
+ 43 |                     status_code=HTTP_403_FORBIDDEN, detail="Not authenticated"
+ 44 |                 )
+ 45 |             else:
+ 46 |                 return None
+ 47 |         return HTTPAuthorizationCredentials(scheme=scheme, credentials=credentials)
+ 48 | 
+ 49 | 
+ 50 | class HTTPBasic(HTTPBase):
+ 51 |     def __init__(
+ 52 |         self, *, scheme_name: str = None, realm: str = None, auto_error: bool = True
+ 53 |     ):
+ 54 |         self.model = HTTPBaseModel(scheme="basic")
+ 55 |         self.scheme_name = scheme_name or self.__class__.__name__
+ 56 |         self.realm = realm
+ 57 |         self.auto_error = auto_error
+ 58 | 
+ 59 |     async def __call__(self, request: Request) -> Optional[HTTPBasicCredentials]:
+ 60 |         authorization: str = request.headers.get("Authorization")
+ 61 |         scheme, param = get_authorization_scheme_param(authorization)
+ 62 |         if self.realm:
+ 63 |             unauthorized_headers = {"WWW-Authenticate": f'Basic realm="{self.realm}"'}
+ 64 |         else:
+ 65 |             unauthorized_headers = {"WWW-Authenticate": "Basic"}
+ 66 |         invalid_user_credentials_exc = HTTPException(
+ 67 |             status_code=HTTP_401_UNAUTHORIZED,
+ 68 |             detail="Invalid authentication credentials",
+ 69 |             headers=unauthorized_headers,
+ 70 |         )
+ 71 |         if not authorization or scheme.lower() != "basic":
+ 72 |             if self.auto_error:
+ 73 |                 raise HTTPException(
+ 74 |                     status_code=HTTP_401_UNAUTHORIZED,
+ 75 |                     detail="Not authenticated",
+ 76 |                     headers=unauthorized_headers,
+ 77 |                 )
+ 78 |             else:
+ 79 |                 return None
+ 80 |         try:
+ 81 |             data = b64decode(param).decode("ascii")
+ 82 |         except (ValueError, UnicodeDecodeError, binascii.Error):
+ 83 |             raise invalid_user_credentials_exc
+ 84 |         username, separator, password = data.partition(":")
+ 85 |         if not (separator):
+ 86 |             raise invalid_user_credentials_exc
+ 87 |         return HTTPBasicCredentials(username=username, password=password)
+ 88 | 
+ 89 | 
+ 90 | class HTTPBearer(HTTPBase):
+ 91 |     def __init__(
+ 92 |         self,
+ 93 |         *,
+ 94 |         bearerFormat: str = None,
+ 95 |         scheme_name: str = None,
+ 96 |         auto_error: bool = True,
+ 97 |     ):
+ 98 |         self.model = HTTPBearerModel(bearerFormat=bearerFormat)
+ 99 |         self.scheme_name = scheme_name or self.__class__.__name__
+100 |         self.auto_error = auto_error
+101 | 
+102 |     async def __call__(
+103 |         self, request: Request
+104 |     ) -> Optional[HTTPAuthorizationCredentials]:
+105 |         authorization: str = request.headers.get("Authorization")
+106 |         scheme, credentials = get_authorization_scheme_param(authorization)
+107 |         if not (authorization and scheme and credentials):
+108 |             if self.auto_error:
+109 |                 raise HTTPException(
+110 |                     status_code=HTTP_403_FORBIDDEN, detail="Not authenticated"
+111 |                 )
+112 |             else:
+113 |                 return None
+114 |         if scheme.lower() != "bearer":
+115 |             raise HTTPException(
+116 |                 status_code=HTTP_403_FORBIDDEN,
+117 |                 detail="Invalid authentication credentials",
+118 |             )
+119 |         return HTTPAuthorizationCredentials(scheme=scheme, credentials=credentials)
+120 | 
+121 | 
+122 | class HTTPDigest(HTTPBase):
+123 |     def __init__(self, *, scheme_name: str = None, auto_error: bool = True):
+124 |         self.model = HTTPBaseModel(scheme="digest")
+125 |         self.scheme_name = scheme_name or self.__class__.__name__
+126 |         self.auto_error = auto_error
+127 | 
+128 |     async def __call__(
+129 |         self, request: Request
+130 |     ) -> Optional[HTTPAuthorizationCredentials]:
+131 |         authorization: str = request.headers.get("Authorization")
+132 |         scheme, credentials = get_authorization_scheme_param(authorization)
+133 |         if not (authorization and scheme and credentials):
+134 |             if self.auto_error:
+135 |                 raise HTTPException(
+136 |                     status_code=HTTP_403_FORBIDDEN, detail="Not authenticated"
+137 |                 )
+138 |             else:
+139 |                 return None
+140 |         if scheme.lower() != "digest":
+141 |             raise HTTPException(
+142 |                 status_code=HTTP_403_FORBIDDEN,
+143 |                 detail="Invalid authentication credentials",
+144 |             )
+145 |         return HTTPAuthorizationCredentials(scheme=scheme, credentials=credentials)
+```
+
+
+FAILING TEST FILES:
+
+[test_file_1] BugsInPy/workspace/fastapi/tests/test_security_http_bearer_optional.py
+```python
+ 1 | from typing import Optional
+ 2 | 
+ 3 | from fastapi import FastAPI, Security
+ 4 | from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+ 5 | from starlette.testclient import TestClient
+ 6 | 
+ 7 | app = FastAPI()
+ 8 | 
+ 9 | security = HTTPBearer(auto_error=False)
+10 | 
+11 | 
+12 | @app.get("/users/me")
+13 | def read_current_user(
+14 |     credentials: Optional[HTTPAuthorizationCredentials] = Security(security)
+15 | ):
+16 |     if credentials is None:
+17 |         return {"msg": "Create an account first"}
+18 |     return {"scheme": credentials.scheme, "credentials": credentials.credentials}
+19 | 
+20 | 
+21 | client = TestClient(app)
+22 | 
+23 | openapi_schema = {
+24 |     "openapi": "3.0.2",
+25 |     "info": {"title": "Fast API", "version": "0.1.0"},
+26 |     "paths": {
+27 |         "/users/me": {
+28 |             "get": {
+29 |                 "responses": {
+30 |                     "200": {
+31 |                         "description": "Successful Response",
+32 |                         "content": {"application/json": {"schema": {}}},
+33 |                     }
+34 |                 },
+35 |                 "summary": "Read Current User",
+36 |                 "operationId": "read_current_user_users_me_get",
+37 |                 "security": [{"HTTPBearer": []}],
+38 |             }
+39 |         }
+40 |     },
+41 |     "components": {
+42 |         "securitySchemes": {"HTTPBearer": {"type": "http", "scheme": "bearer"}}
+43 |     },
+44 | }
+45 | 
+46 | 
+47 | def test_openapi_schema():
+48 |     response = client.get("/openapi.json")
+49 |     assert response.status_code == 200
+50 |     assert response.json() == openapi_schema
+51 | 
+52 | 
+53 | def test_security_http_bearer():
+54 |     response = client.get("/users/me", headers={"Authorization": "Bearer foobar"})
+55 |     assert response.status_code == 200
+56 |     assert response.json() == {"scheme": "Bearer", "credentials": "foobar"}
+57 | 
+58 | 
+59 | def test_security_http_bearer_no_credentials():
+60 |     response = client.get("/users/me")
+61 |     assert response.status_code == 200
+62 |     assert response.json() == {"msg": "Create an account first"}
+63 | 
+64 | 
+65 | def test_security_http_bearer_incorrect_scheme_credentials():
+66 |     response = client.get("/users/me", headers={"Authorization": "Basic notreally"})
+67 |     assert response.status_code == 200
+68 |     assert response.json() == {"msg": "Create an account first"}
+```

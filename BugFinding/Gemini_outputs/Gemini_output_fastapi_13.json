@@ -1,0 +1,12 @@
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "fastapi/routing.py",
+      "line_start": 290,
+      "line_end": 292,
+      "confidence": "high",
+      "reason": "The 'responses' variable from the function argument is overwritten within the loop over 'router.routes'. This causes subsequent routes to improperly inherit the additional responses defined by the preceding routes."
+    }
+  ]
+}

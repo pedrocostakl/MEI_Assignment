@@ -1,0 +1,10 @@
+{
+  "case_name": "sanic_4",
+  "output_file": "ChatGPT_outputs\\ChatGPT_output_sanic_4.json",
+  "benchmark_file": "benchmarks\\sanic_bug_4.json",
+  "num_real_bugs": 1,
+  "num_reported_bugs": 2,
+  "true_positives": 0,
+  "false_positives": 2,
+  "false_negatives": 1
+}

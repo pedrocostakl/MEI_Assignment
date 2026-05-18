@@ -1,0 +1,304 @@
+{
+  "bug_locations": [
+    {
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/applications.py",
+      "line_start": 171,
+      "line_end": 176
+    },
+    {
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/applications.py",
+      "line_start": 197,
+      "line_end": 202
+    },
+    {
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/applications.py",
+      "line_start": 222,
+      "line_end": 227
+    },
+    {
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/applications.py",
+      "line_start": 250,
+      "line_end": 255
+    },
+    {
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/applications.py",
+      "line_start": 309,
+      "line_end": 314
+    },
+    {
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/applications.py",
+      "line_start": 334,
+      "line_end": 339
+    },
+    {
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/applications.py",
+      "line_start": 359,
+      "line_end": 364
+    },
+    {
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/applications.py",
+      "line_start": 384,
+      "line_end": 389
+    },
+    {
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/applications.py",
+      "line_start": 409,
+      "line_end": 414
+    },
+    {
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/applications.py",
+      "line_start": 434,
+      "line_end": 439
+    },
+    {
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/applications.py",
+      "line_start": 459,
+      "line_end": 464
+    },
+    {
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/applications.py",
+      "line_start": 484,
+      "line_end": 489
+    },
+    {
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/applications.py",
+      "line_start": 509,
+      "line_end": 514
+    },
+    {
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/applications.py",
+      "line_start": 534,
+      "line_end": 539
+    },
+    {
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/applications.py",
+      "line_start": 559,
+      "line_end": 564
+    },
+    {
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/applications.py",
+      "line_start": 584,
+      "line_end": 589
+    },
+    {
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/applications.py",
+      "line_start": 609,
+      "line_end": 614
+    },
+    {
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/applications.py",
+      "line_start": 634,
+      "line_end": 639
+    },
+    {
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/applications.py",
+      "line_start": 659,
+      "line_end": 664
+    },
+    {
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/applications.py",
+      "line_start": 684,
+      "line_end": 689
+    },
+    {
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/encoders.py",
+      "line_start": 34,
+      "line_end": 40
+    },
+    {
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/encoders.py",
+      "line_start": 58,
+      "line_end": 65
+    },
+    {
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/encoders.py",
+      "line_start": 68,
+      "line_end": 74
+    },
+    {
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/encoders.py",
+      "line_start": 87,
+      "line_end": 100
+    },
+    {
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/encoders.py",
+      "line_start": 102,
+      "line_end": 108
+    },
+    {
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/encoders.py",
+      "line_start": 118,
+      "line_end": 124
+    },
+    {
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/encoders.py",
+      "line_start": 153,
+      "line_end": 159
+    },
+    {
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/openapi/utils.py",
+      "line_start": 81,
+      "line_end": 87
+    },
+    {
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/openapi/utils.py",
+      "line_start": 310,
+      "line_end": 313
+    },
+    {
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/routing.py",
+      "line_start": 49,
+      "line_end": 70
+    },
+    {
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/routing.py",
+      "line_start": 78,
+      "line_end": 89
+    },
+    {
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/routing.py",
+      "line_start": 103,
+      "line_end": 108
+    },
+    {
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/routing.py",
+      "line_start": 131,
+      "line_end": 136
+    },
+    {
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/routing.py",
+      "line_start": 177,
+      "line_end": 182
+    },
+    {
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/routing.py",
+      "line_start": 255,
+      "line_end": 260
+    },
+    {
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/routing.py",
+      "line_start": 326,
+      "line_end": 331
+    },
+    {
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/routing.py",
+      "line_start": 352,
+      "line_end": 357
+    },
+    {
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/routing.py",
+      "line_start": 400,
+      "line_end": 405
+    },
+    {
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/routing.py",
+      "line_start": 429,
+      "line_end": 434
+    },
+    {
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/routing.py",
+      "line_start": 457,
+      "line_end": 462
+    },
+    {
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/routing.py",
+      "line_start": 486,
+      "line_end": 491
+    },
+    {
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/routing.py",
+      "line_start": 560,
+      "line_end": 565
+    },
+    {
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/routing.py",
+      "line_start": 606,
+      "line_end": 611
+    },
+    {
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/routing.py",
+      "line_start": 632,
+      "line_end": 637
+    },
+    {
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/routing.py",
+      "line_start": 657,
+      "line_end": 662
+    },
+    {
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/routing.py",
+      "line_start": 683,
+      "line_end": 688
+    },
+    {
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/routing.py",
+      "line_start": 708,
+      "line_end": 713
+    },
+    {
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/routing.py",
+      "line_start": 734,
+      "line_end": 739
+    },
+    {
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/routing.py",
+      "line_start": 759,
+      "line_end": 764
+    },
+    {
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/routing.py",
+      "line_start": 785,
+      "line_end": 790
+    },
+    {
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/routing.py",
+      "line_start": 810,
+      "line_end": 815
+    },
+    {
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/routing.py",
+      "line_start": 836,
+      "line_end": 841
+    },
+    {
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/routing.py",
+      "line_start": 861,
+      "line_end": 866
+    },
+    {
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/routing.py",
+      "line_start": 887,
+      "line_end": 892
+    },
+    {
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/routing.py",
+      "line_start": 912,
+      "line_end": 917
+    },
+    {
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/routing.py",
+      "line_start": 938,
+      "line_end": 943
+    },
+    {
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/routing.py",
+      "line_start": 963,
+      "line_end": 968
+    },
+    {
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/routing.py",
+      "line_start": 989,
+      "line_end": 994
+    },
+    {
+      "file_path": "BugsInPy/workspace/fastapi/tests/test_skip_defaults.py",
+      "line_start": 18,
+      "line_end": 28
+    },
+    {
+      "file_path": "BugsInPy/workspace/fastapi/tests/test_skip_defaults.py",
+      "line_start": 31,
+      "line_end": 33
+    }
+  ]
+}

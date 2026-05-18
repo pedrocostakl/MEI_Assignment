@@ -1,0 +1,9 @@
+{
+  "bug_locations": [
+    {
+      "file_path": "BugsInPy/workspace/scrapy/scrapy/utils/datatypes.py",
+      "line_start": 315,
+      "line_end": 322
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "bug_locations": [
+    {
+      "file_path": "BugsInPy/workspace/httpie/httpie/client.py",
+      "line_start": 40,
+      "line_end": 45
+    },
+    {
+      "file_path": "BugsInPy/workspace/httpie/httpie/core.py",
+      "line_start": 192,
+      "line_end": 198
+    }
+  ]
+}

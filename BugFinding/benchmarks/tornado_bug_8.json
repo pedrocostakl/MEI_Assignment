@@ -1,0 +1,9 @@
+{
+  "bug_locations": [
+    {
+      "file_path": "BugsInPy/workspace/tornado/tornado/websocket.py",
+      "line_start": 616,
+      "line_end": 621
+    }
+  ]
+}

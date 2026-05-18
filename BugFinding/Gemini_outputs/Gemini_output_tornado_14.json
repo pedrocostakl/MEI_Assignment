@@ -1,0 +1,12 @@
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "tornado/ioloop.py",
+      "line_start": 1030,
+      "line_end": 1032,
+      "confidence": "high",
+      "reason": "The calculation of '_next_timeout' using division and 'math.floor' is vulnerable to floating-point precision errors. This causes the periodic callback to drift or incorrectly calculate the next timeout schedule, leading to the failure in 'test_overrun'."
+    }
+  ]
+}

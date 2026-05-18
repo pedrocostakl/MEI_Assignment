@@ -1,0 +1,444 @@
+You are given buggy source files and failing test files.
+
+Your task is BUG LOCALIZATION ONLY.
+
+Return only valid JSON using this exact format:
+
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "relative/path.py",
+      "line_start": 1,
+      "line_end": 1,
+      "confidence": "low|medium|high",
+      "reason": "Max 2 sentences."
+    }
+  ]
+}
+
+Rules:
+- Do not propose fixes.
+- Do not rewrite code.
+- Do not explain outside JSON.
+- Line numbers must refer to the numbered buggy source file.
+- Include at most the number of suspected locations you think there are.
+- Prefer the smallest line range that identifies the origin of the bug.
+
+
+SOURCE FILES:
+
+[file_1] BugsInPy/workspace/fastapi/fastapi/openapi/utils.py
+```python
+  1 | import http.client
+  2 | from typing import Any, Dict, List, Optional, Sequence, Tuple, Type, cast
+  3 | 
+  4 | from fastapi import routing
+  5 | from fastapi.dependencies.models import Dependant
+  6 | from fastapi.dependencies.utils import get_flat_dependant
+  7 | from fastapi.encoders import jsonable_encoder
+  8 | from fastapi.openapi.constants import (
+  9 |     METHODS_WITH_BODY,
+ 10 |     REF_PREFIX,
+ 11 |     STATUS_CODES_WITH_NO_BODY,
+ 12 | )
+ 13 | from fastapi.openapi.models import OpenAPI
+ 14 | from fastapi.params import Body, Param
+ 15 | from fastapi.utils import (
+ 16 |     generate_operation_id_for_path,
+ 17 |     get_field_info,
+ 18 |     get_flat_models_from_routes,
+ 19 |     get_model_definitions,
+ 20 | )
+ 21 | from pydantic import BaseModel
+ 22 | from pydantic.schema import field_schema, get_model_name_map
+ 23 | from pydantic.utils import lenient_issubclass
+ 24 | from starlette.responses import JSONResponse
+ 25 | from starlette.routing import BaseRoute
+ 26 | from starlette.status import HTTP_422_UNPROCESSABLE_ENTITY
+ 27 | 
+ 28 | try:
+ 29 |     from pydantic.fields import ModelField
+ 30 | except ImportError:  # pragma: nocover
+ 31 |     # TODO: remove when removing support for Pydantic < 1.0.0
+ 32 |     from pydantic.fields import Field as ModelField  # type: ignore
+ 33 | 
+ 34 | validation_error_definition = {
+ 35 |     "title": "ValidationError",
+ 36 |     "type": "object",
+ 37 |     "properties": {
+ 38 |         "loc": {"title": "Location", "type": "array", "items": {"type": "string"}},
+ 39 |         "msg": {"title": "Message", "type": "string"},
+ 40 |         "type": {"title": "Error Type", "type": "string"},
+ 41 |     },
+ 42 |     "required": ["loc", "msg", "type"],
+ 43 | }
+ 44 | 
+ 45 | validation_error_response_definition = {
+ 46 |     "title": "HTTPValidationError",
+ 47 |     "type": "object",
+ 48 |     "properties": {
+ 49 |         "detail": {
+ 50 |             "title": "Detail",
+ 51 |             "type": "array",
+ 52 |             "items": {"$ref": REF_PREFIX + "ValidationError"},
+ 53 |         }
+ 54 |     },
+ 55 | }
+ 56 | 
+ 57 | status_code_ranges: Dict[str, str] = {
+ 58 |     "1XX": "Information",
+ 59 |     "2XX": "Success",
+ 60 |     "3XX": "Redirection",
+ 61 |     "4XX": "Client Error",
+ 62 |     "5XX": "Server Error",
+ 63 |     "DEFAULT": "Default Response",
+ 64 | }
+ 65 | 
+ 66 | 
+ 67 | def get_openapi_params(dependant: Dependant) -> List[ModelField]:
+ 68 |     flat_dependant = get_flat_dependant(dependant, skip_repeats=True)
+ 69 |     return (
+ 70 |         flat_dependant.path_params
+ 71 |         + flat_dependant.query_params
+ 72 |         + flat_dependant.header_params
+ 73 |         + flat_dependant.cookie_params
+ 74 |     )
+ 75 | 
+ 76 | 
+ 77 | def get_openapi_security_definitions(flat_dependant: Dependant) -> Tuple[Dict, List]:
+ 78 |     security_definitions = {}
+ 79 |     operation_security = []
+ 80 |     for security_requirement in flat_dependant.security_requirements:
+ 81 |         security_definition = jsonable_encoder(
+ 82 |             security_requirement.security_scheme.model,
+ 83 |             by_alias=True,
+ 84 |             include_none=False,
+ 85 |         )
+ 86 |         security_name = security_requirement.security_scheme.scheme_name
+ 87 |         security_definitions[security_name] = security_definition
+ 88 |         operation_security.append({security_name: security_requirement.scopes})
+ 89 |     return security_definitions, operation_security
+ 90 | 
+ 91 | 
+ 92 | def get_openapi_operation_parameters(
+ 93 |     all_route_params: Sequence[ModelField],
+ 94 | ) -> List[Dict[str, Any]]:
+ 95 |     parameters = []
+ 96 |     for param in all_route_params:
+ 97 |         field_info = get_field_info(param)
+ 98 |         field_info = cast(Param, field_info)
+ 99 |         parameter = {
+100 |             "name": param.alias,
+101 |             "in": field_info.in_.value,
+102 |             "required": param.required,
+103 |             "schema": field_schema(param, model_name_map={})[0],
+104 |         }
+105 |         if field_info.description:
+106 |             parameter["description"] = field_info.description
+107 |         if field_info.deprecated:
+108 |             parameter["deprecated"] = field_info.deprecated
+109 |         parameters.append(parameter)
+110 |     return parameters
+111 | 
+112 | 
+113 | def get_openapi_operation_request_body(
+114 |     *, body_field: Optional[ModelField], model_name_map: Dict[Type[BaseModel], str]
+115 | ) -> Optional[Dict]:
+116 |     if not body_field:
+117 |         return None
+118 |     assert isinstance(body_field, ModelField)
+119 |     body_schema, _, _ = field_schema(
+120 |         body_field, model_name_map=model_name_map, ref_prefix=REF_PREFIX
+121 |     )
+122 |     field_info = cast(Body, get_field_info(body_field))
+123 |     request_media_type = field_info.media_type
+124 |     required = body_field.required
+125 |     request_body_oai: Dict[str, Any] = {}
+126 |     if required:
+127 |         request_body_oai["required"] = required
+128 |     request_body_oai["content"] = {request_media_type: {"schema": body_schema}}
+129 |     return request_body_oai
+130 | 
+131 | 
+132 | def generate_operation_id(*, route: routing.APIRoute, method: str) -> str:
+133 |     if route.operation_id:
+134 |         return route.operation_id
+135 |     path: str = route.path_format
+136 |     return generate_operation_id_for_path(name=route.name, path=path, method=method)
+137 | 
+138 | 
+139 | def generate_operation_summary(*, route: routing.APIRoute, method: str) -> str:
+140 |     if route.summary:
+141 |         return route.summary
+142 |     return route.name.replace("_", " ").title()
+143 | 
+144 | 
+145 | def get_openapi_operation_metadata(*, route: routing.APIRoute, method: str) -> Dict:
+146 |     operation: Dict[str, Any] = {}
+147 |     if route.tags:
+148 |         operation["tags"] = route.tags
+149 |     operation["summary"] = generate_operation_summary(route=route, method=method)
+150 |     if route.description:
+151 |         operation["description"] = route.description
+152 |     operation["operationId"] = generate_operation_id(route=route, method=method)
+153 |     if route.deprecated:
+154 |         operation["deprecated"] = route.deprecated
+155 |     return operation
+156 | 
+157 | 
+158 | def get_openapi_path(
+159 |     *, route: routing.APIRoute, model_name_map: Dict[Type, str]
+160 | ) -> Tuple[Dict, Dict, Dict]:
+161 |     path = {}
+162 |     security_schemes: Dict[str, Any] = {}
+163 |     definitions: Dict[str, Any] = {}
+164 |     assert route.methods is not None, "Methods must be a list"
+165 |     assert route.response_class, "A response class is needed to generate OpenAPI"
+166 |     route_response_media_type: Optional[str] = route.response_class.media_type
+167 |     if route.include_in_schema:
+168 |         for method in route.methods:
+169 |             operation = get_openapi_operation_metadata(route=route, method=method)
+170 |             parameters: List[Dict] = []
+171 |             flat_dependant = get_flat_dependant(route.dependant, skip_repeats=True)
+172 |             security_definitions, operation_security = get_openapi_security_definitions(
+173 |                 flat_dependant=flat_dependant
+174 |             )
+175 |             if operation_security:
+176 |                 operation.setdefault("security", []).extend(operation_security)
+177 |             if security_definitions:
+178 |                 security_schemes.update(security_definitions)
+179 |             all_route_params = get_openapi_params(route.dependant)
+180 |             operation_parameters = get_openapi_operation_parameters(all_route_params)
+181 |             parameters.extend(operation_parameters)
+182 |             if parameters:
+183 |                 operation["parameters"] = parameters
+184 |             if method in METHODS_WITH_BODY:
+185 |                 request_body_oai = get_openapi_operation_request_body(
+186 |                     body_field=route.body_field, model_name_map=model_name_map
+187 |                 )
+188 |                 if request_body_oai:
+189 |                     operation["requestBody"] = request_body_oai
+190 |             if route.callbacks:
+191 |                 callbacks = {}
+192 |                 for callback in route.callbacks:
+193 |                     cb_path, cb_security_schemes, cb_definitions, = get_openapi_path(
+194 |                         route=callback, model_name_map=model_name_map
+195 |                     )
+196 |                     callbacks[callback.name] = {callback.path: cb_path}
+197 |                 operation["callbacks"] = callbacks
+198 |             if route.responses:
+199 |                 for (additional_status_code, response) in route.responses.items():
+200 |                     assert isinstance(
+201 |                         response, dict
+202 |                     ), "An additional response must be a dict"
+203 |                     field = route.response_fields.get(additional_status_code)
+204 |                     if field:
+205 |                         response_schema, _, _ = field_schema(
+206 |                             field, model_name_map=model_name_map, ref_prefix=REF_PREFIX
+207 |                         )
+208 |                         response.setdefault("content", {}).setdefault(
+209 |                             route_response_media_type or "application/json", {}
+210 |                         )["schema"] = response_schema
+211 |                     status_text: Optional[str] = status_code_ranges.get(
+212 |                         str(additional_status_code).upper()
+213 |                     ) or http.client.responses.get(int(additional_status_code))
+214 |                     response.setdefault(
+215 |                         "description", status_text or "Additional Response"
+216 |                     )
+217 |                     status_code_key = str(additional_status_code).upper()
+218 |                     if status_code_key == "DEFAULT":
+219 |                         status_code_key = "default"
+220 |                     operation.setdefault("responses", {})[status_code_key] = response
+221 |             status_code = str(route.status_code)
+222 |             operation.setdefault("responses", {}).setdefault(status_code, {})[
+223 |                 "description"
+224 |             ] = route.response_description
+225 |             if (
+226 |                 route_response_media_type
+227 |                 and route.status_code not in STATUS_CODES_WITH_NO_BODY
+228 |             ):
+229 |                 response_schema = {"type": "string"}
+230 |                 if lenient_issubclass(route.response_class, JSONResponse):
+231 |                     if route.response_field:
+232 |                         response_schema, _, _ = field_schema(
+233 |                             route.response_field,
+234 |                             model_name_map=model_name_map,
+235 |                             ref_prefix=REF_PREFIX,
+236 |                         )
+237 |                     else:
+238 |                         response_schema = {}
+239 |                 operation.setdefault("responses", {}).setdefault(
+240 |                     status_code, {}
+241 |                 ).setdefault("content", {}).setdefault(route_response_media_type, {})[
+242 |                     "schema"
+243 |                 ] = response_schema
+244 | 
+245 |             http422 = str(HTTP_422_UNPROCESSABLE_ENTITY)
+246 |             if (all_route_params or route.body_field) and not any(
+247 |                 [
+248 |                     status in operation["responses"]
+249 |                     for status in [http422, "4XX", "default"]
+250 |                 ]
+251 |             ):
+252 |                 operation["responses"][http422] = {
+253 |                     "description": "Validation Error",
+254 |                     "content": {
+255 |                         "application/json": {
+256 |                             "schema": {"$ref": REF_PREFIX + "HTTPValidationError"}
+257 |                         }
+258 |                     },
+259 |                 }
+260 |                 if "ValidationError" not in definitions:
+261 |                     definitions.update(
+262 |                         {
+263 |                             "ValidationError": validation_error_definition,
+264 |                             "HTTPValidationError": validation_error_response_definition,
+265 |                         }
+266 |                     )
+267 |             path[method.lower()] = operation
+268 |     return path, security_schemes, definitions
+269 | 
+270 | 
+271 | def get_openapi(
+272 |     *,
+273 |     title: str,
+274 |     version: str,
+275 |     openapi_version: str = "3.0.2",
+276 |     description: str = None,
+277 |     routes: Sequence[BaseRoute],
+278 |     openapi_prefix: str = ""
+279 | ) -> Dict:
+280 |     info = {"title": title, "version": version}
+281 |     if description:
+282 |         info["description"] = description
+283 |     output = {"openapi": openapi_version, "info": info}
+284 |     components: Dict[str, Dict] = {}
+285 |     paths: Dict[str, Dict] = {}
+286 |     flat_models = get_flat_models_from_routes(routes)
+287 |     model_name_map = get_model_name_map(flat_models)
+288 |     definitions = get_model_definitions(
+289 |         flat_models=flat_models, model_name_map=model_name_map
+290 |     )
+291 |     for route in routes:
+292 |         if isinstance(route, routing.APIRoute):
+293 |             result = get_openapi_path(route=route, model_name_map=model_name_map)
+294 |             if result:
+295 |                 path, security_schemes, path_definitions = result
+296 |                 if path:
+297 |                     paths.setdefault(openapi_prefix + route.path_format, {}).update(
+298 |                         path
+299 |                     )
+300 |                 if security_schemes:
+301 |                     components.setdefault("securitySchemes", {}).update(
+302 |                         security_schemes
+303 |                     )
+304 |                 if path_definitions:
+305 |                     definitions.update(path_definitions)
+306 |     if definitions:
+307 |         components["schemas"] = {k: definitions[k] for k in sorted(definitions)}
+308 |     if components:
+309 |         output["components"] = components
+310 |     output["paths"] = paths
+311 |     return jsonable_encoder(OpenAPI(**output), by_alias=True, include_none=False)
+```
+
+
+FAILING TEST FILES:
+
+[test_file_1] BugsInPy/workspace/fastapi/tests/test_param_in_path_and_dependency.py
+```python
+ 1 | from fastapi import Depends, FastAPI
+ 2 | from starlette.testclient import TestClient
+ 3 | 
+ 4 | app = FastAPI()
+ 5 | 
+ 6 | 
+ 7 | async def user_exists(user_id: int):
+ 8 |     return True
+ 9 | 
+10 | 
+11 | @app.get("/users/{user_id}", dependencies=[Depends(user_exists)])
+12 | async def read_users(user_id: int):
+13 |     pass
+14 | 
+15 | 
+16 | client = TestClient(app)
+17 | 
+18 | openapi_schema = {
+19 |     "openapi": "3.0.2",
+20 |     "info": {"title": "FastAPI", "version": "0.1.0"},
+21 |     "paths": {
+22 |         "/users/{user_id}": {
+23 |             "get": {
+24 |                 "summary": "Read Users",
+25 |                 "operationId": "read_users_users__user_id__get",
+26 |                 "parameters": [
+27 |                     {
+28 |                         "required": True,
+29 |                         "schema": {"title": "User Id", "type": "integer"},
+30 |                         "name": "user_id",
+31 |                         "in": "path",
+32 |                     },
+33 |                 ],
+34 |                 "responses": {
+35 |                     "200": {
+36 |                         "description": "Successful Response",
+37 |                         "content": {"application/json": {"schema": {}}},
+38 |                     },
+39 |                     "422": {
+40 |                         "description": "Validation Error",
+41 |                         "content": {
+42 |                             "application/json": {
+43 |                                 "schema": {
+44 |                                     "$ref": "#/components/schemas/HTTPValidationError"
+45 |                                 }
+46 |                             }
+47 |                         },
+48 |                     },
+49 |                 },
+50 |             }
+51 |         }
+52 |     },
+53 |     "components": {
+54 |         "schemas": {
+55 |             "HTTPValidationError": {
+56 |                 "title": "HTTPValidationError",
+57 |                 "type": "object",
+58 |                 "properties": {
+59 |                     "detail": {
+60 |                         "title": "Detail",
+61 |                         "type": "array",
+62 |                         "items": {"$ref": "#/components/schemas/ValidationError"},
+63 |                     }
+64 |                 },
+65 |             },
+66 |             "ValidationError": {
+67 |                 "title": "ValidationError",
+68 |                 "required": ["loc", "msg", "type"],
+69 |                 "type": "object",
+70 |                 "properties": {
+71 |                     "loc": {
+72 |                         "title": "Location",
+73 |                         "type": "array",
+74 |                         "items": {"type": "string"},
+75 |                     },
+76 |                     "msg": {"title": "Message", "type": "string"},
+77 |                     "type": {"title": "Error Type", "type": "string"},
+78 |                 },
+79 |             },
+80 |         }
+81 |     },
+82 | }
+83 | 
+84 | 
+85 | def test_reused_param():
+86 |     response = client.get("/openapi.json")
+87 |     data = response.json()
+88 |     assert data == openapi_schema
+89 | 
+90 | 
+91 | def test_read_users():
+92 |     response = client.get("/users/42")
+93 |     assert response.status_code == 200
+```

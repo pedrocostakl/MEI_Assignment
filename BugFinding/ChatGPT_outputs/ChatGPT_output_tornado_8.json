@@ -1,0 +1,20 @@
+{
+   "bug_locations":[
+      {
+         "file_id":"file_1",
+         "file_path":"BugsInPy/workspace/tornado/tornado/websocket.py",
+         "line_start":1117,
+         "line_end":1121,
+         "confidence":"high",
+         "reason":"The websocket protocol starts receiving frames before the HTTP connection is detached and assigned to self.stream. Early ping/pong activity can race with stream initialization and break websocket handling."
+      },
+      {
+         "file_id":"file_1",
+         "file_path":"BugsInPy/workspace/tornado/tornado/websocket.py",
+         "line_start":1005,
+         "line_end":1011,
+         "confidence":"medium",
+         "reason":"Periodic pinging is started immediately during connection setup, which may interact incorrectly with an uninitialized or not-yet-detached stream on client connections."
+      }
+   ]
+}

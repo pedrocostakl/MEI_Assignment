@@ -1,0 +1,113 @@
+{
+  "bootstrap_settings": {
+    "n_bootstrap": 10000,
+    "seed": 42,
+    "paired_unit": "case_name",
+    "statistic_type": "micro_averaged_over_resampled_cases"
+  },
+  "matched_cases": {
+    "num_common_cases": 50,
+    "case_names": [
+      "fastapi_1",
+      "fastapi_10",
+      "fastapi_11",
+      "fastapi_12",
+      "fastapi_13",
+      "fastapi_14",
+      "fastapi_15",
+      "fastapi_16",
+      "fastapi_2",
+      "fastapi_3",
+      "fastapi_4",
+      "fastapi_5",
+      "fastapi_6",
+      "fastapi_7",
+      "fastapi_8",
+      "fastapi_9",
+      "httpie_1",
+      "httpie_2",
+      "httpie_3",
+      "httpie_4",
+      "httpie_5",
+      "sanic_1",
+      "sanic_2",
+      "sanic_3",
+      "sanic_4",
+      "sanic_5",
+      "scrapy_1",
+      "scrapy_2",
+      "scrapy_3",
+      "scrapy_4",
+      "scrapy_5",
+      "scrapy_6",
+      "scrapy_7",
+      "scrapy_8",
+      "tornado_1",
+      "tornado_10",
+      "tornado_11",
+      "tornado_12",
+      "tornado_13",
+      "tornado_14",
+      "tornado_15",
+      "tornado_16",
+      "tornado_2",
+      "tornado_3",
+      "tornado_4",
+      "tornado_5",
+      "tornado_6",
+      "tornado_7",
+      "tornado_8",
+      "tornado_9"
+    ],
+    "missing_from_model_a": [],
+    "missing_from_model_b": []
+  },
+  "observed": {
+    "model_a": {
+      "num_cases": 50,
+      "num_real_bugs": 135,
+      "num_reported_bugs": 88,
+      "true_positives": 35,
+      "false_positives": 53,
+      "false_negatives": 100,
+      "precision": 0.3977272727272727,
+      "recall": 0.25925925925925924,
+      "f1": 0.31390134529147984
+    },
+    "model_b": {
+      "num_cases": 50,
+      "num_real_bugs": 135,
+      "num_reported_bugs": 76,
+      "true_positives": 5,
+      "false_positives": 71,
+      "false_negatives": 130,
+      "precision": 0.06578947368421052,
+      "recall": 0.037037037037037035,
+      "f1": 0.04739336492890995
+    },
+    "difference_model_a_minus_model_b": {
+      "recall_diff": 0.2222222222222222,
+      "f1_diff": 0.2665079803625699
+    }
+  },
+  "bootstrap": {
+    "recall": {
+      "model_a_mean": 0.30386743923148374,
+      "model_b_mean": 0.0444582929321153,
+      "diff_mean": 0.25940914629936845,
+      "diff_ci_95": {
+        "lower": 0.11184157978812846,
+        "upper": 0.48051948051948046
+      }
+    },
+    "f1": {
+      "model_a_mean": 0.3316799000311126,
+      "model_b_mean": 0.051345892222121686,
+      "diff_mean": 0.2803340078089909,
+      "diff_ci_95": {
+        "lower": 0.15855592369683408,
+        "upper": 0.4417226057947584
+      }
+    }
+  }
+}

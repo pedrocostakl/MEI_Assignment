@@ -1,0 +1,424 @@
+You are given buggy source files and failing test files.
+
+Your task is BUG LOCALIZATION ONLY.
+
+Return only valid JSON using this exact format:
+
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "relative/path.py",
+      "line_start": 1,
+      "line_end": 1,
+      "confidence": "low|medium|high",
+      "reason": "Max 2 sentences."
+    }
+  ]
+}
+
+Rules:
+- Do not propose fixes.
+- Do not rewrite code.
+- Do not explain outside JSON.
+- Line numbers must refer to the numbered buggy source file.
+- Include at most the number of suspected locations you think there are.
+- Prefer the smallest line range that identifies the origin of the bug.
+
+
+SOURCE FILES:
+
+[file_1] BugsInPy/workspace/httpie/httpie/client.py
+```python
+  1 | import json
+  2 | import sys
+  3 | from pprint import pformat
+  4 | 
+  5 | import requests
+  6 | from requests.packages import urllib3
+  7 | 
+  8 | from httpie import sessions
+  9 | from httpie import __version__
+ 10 | from httpie.compat import str
+ 11 | from httpie.plugins import plugin_manager
+ 12 | 
+ 13 | 
+ 14 | try:
+ 15 |     # https://urllib3.readthedocs.org/en/latest/security.html
+ 16 |     urllib3.disable_warnings()
+ 17 | except AttributeError:
+ 18 |     # In some rare cases, the user may have an old version of the requests
+ 19 |     # or urllib3, and there is no method called "disable_warnings." In these
+ 20 |     # cases, we don't need to call the method.
+ 21 |     # They may get some noisy output but execution shouldn't die. Move on.
+ 22 |     pass
+ 23 | 
+ 24 | 
+ 25 | FORM = 'application/x-www-form-urlencoded; charset=utf-8'
+ 26 | JSON = 'application/json'
+ 27 | DEFAULT_UA = 'HTTPie/%s' % __version__
+ 28 | 
+ 29 | 
+ 30 | def get_requests_session():
+ 31 |     requests_session = requests.Session()
+ 32 |     for cls in plugin_manager.get_transport_plugins():
+ 33 |         transport_plugin = cls()
+ 34 |         requests_session.mount(prefix=transport_plugin.prefix,
+ 35 |                                adapter=transport_plugin.get_adapter())
+ 36 |     return requests_session
+ 37 | 
+ 38 | 
+ 39 | def get_response(args, config_dir):
+ 40 |     """Send the request and return a `request.Response`."""
+ 41 | 
+ 42 |     requests_session = get_requests_session()
+ 43 | 
+ 44 |     if not args.session and not args.session_read_only:
+ 45 |         kwargs = get_requests_kwargs(args)
+ 46 |         if args.debug:
+ 47 |             dump_request(kwargs)
+ 48 |         response = requests_session.request(**kwargs)
+ 49 |     else:
+ 50 |         response = sessions.get_response(
+ 51 |             requests_session=requests_session,
+ 52 |             args=args,
+ 53 |             config_dir=config_dir,
+ 54 |             session_name=args.session or args.session_read_only,
+ 55 |             read_only=bool(args.session_read_only),
+ 56 |         )
+ 57 | 
+ 58 |     return response
+ 59 | 
+ 60 | 
+ 61 | def dump_request(kwargs):
+ 62 |     sys.stderr.write('\n>>> requests.request(**%s)\n\n'
+ 63 |                      % pformat(kwargs))
+ 64 | 
+ 65 | 
+ 66 | def encode_headers(headers):
+ 67 |     # This allows for unicode headers which is non-standard but practical.
+ 68 |     # See: https://github.com/jkbrzt/httpie/issues/212
+ 69 |     return dict(
+ 70 |         (name, value.encode('utf8') if isinstance(value, str) else value)
+ 71 |         for name, value in headers.items()
+ 72 |     )
+ 73 | 
+ 74 | 
+ 75 | def get_default_headers(args):
+ 76 |     default_headers = {
+ 77 |         'User-Agent': DEFAULT_UA
+ 78 |     }
+ 79 | 
+ 80 |     auto_json = args.data and not args.form
+ 81 |     # FIXME: Accept is set to JSON with `http url @./file.txt`.
+ 82 |     if args.json or auto_json:
+ 83 |         default_headers['Accept'] = 'application/json'
+ 84 |         if args.json or (auto_json and args.data):
+ 85 |             default_headers['Content-Type'] = JSON
+ 86 | 
+ 87 |     elif args.form and not args.files:
+ 88 |         # If sending files, `requests` will set
+ 89 |         # the `Content-Type` for us.
+ 90 |         default_headers['Content-Type'] = FORM
+ 91 |     return default_headers
+ 92 | 
+ 93 | 
+ 94 | def get_requests_kwargs(args, base_headers=None):
+ 95 |     """
+ 96 |     Translate our `args` into `requests.request` keyword arguments.
+ 97 | 
+ 98 |     """
+ 99 |     # Serialize JSON data, if needed.
+100 |     data = args.data
+101 |     auto_json = data and not args.form
+102 |     if (args.json or auto_json) and isinstance(data, dict):
+103 |         if data:
+104 |             data = json.dumps(data)
+105 |         else:
+106 |             # We need to set data to an empty string to prevent requests
+107 |             # from assigning an empty list to `response.request.data`.
+108 |             data = ''
+109 | 
+110 |     # Finalize headers.
+111 |     headers = get_default_headers(args)
+112 |     if base_headers:
+113 |         headers.update(base_headers)
+114 |     headers.update(args.headers)
+115 |     headers = encode_headers(headers)
+116 | 
+117 |     credentials = None
+118 |     if args.auth:
+119 |         auth_plugin = plugin_manager.get_auth_plugin(args.auth_type)()
+120 |         credentials = auth_plugin.get_auth(args.auth.key, args.auth.value)
+121 | 
+122 |     cert = None
+123 |     if args.cert:
+124 |         cert = args.cert
+125 |         if args.cert_key:
+126 |             cert = cert, args.cert_key
+127 | 
+128 |     kwargs = {
+129 |         'stream': True,
+130 |         'method': args.method.lower(),
+131 |         'url': args.url,
+132 |         'headers': headers,
+133 |         'data': data,
+134 |         'verify': {
+135 |             'yes': True,
+136 |             'no': False
+137 |         }.get(args.verify, args.verify),
+138 |         'cert': cert,
+139 |         'timeout': args.timeout,
+140 |         'auth': credentials,
+141 |         'proxies': dict((p.key, p.value) for p in args.proxy),
+142 |         'files': args.files,
+143 |         'allow_redirects': args.follow,
+144 |         'params': args.params,
+145 |     }
+146 | 
+147 |     return kwargs
+```
+
+[file_2] BugsInPy/workspace/httpie/httpie/core.py
+```python
+  1 | """This module provides the main functionality of HTTPie.
+  2 | 
+  3 | Invocation flow:
+  4 | 
+  5 |   1. Read, validate and process the input (args, `stdin`).
+  6 |   2. Create and send a request.
+  7 |   3. Stream, and possibly process and format, the parts
+  8 |      of the request-response exchange selected by output options.
+  9 |   4. Simultaneously write to `stdout`
+ 10 |   5. Exit.
+ 11 | 
+ 12 | """
+ 13 | import sys
+ 14 | import errno
+ 15 | 
+ 16 | import requests
+ 17 | from requests import __version__ as requests_version
+ 18 | from pygments import __version__ as pygments_version
+ 19 | 
+ 20 | from httpie import __version__ as httpie_version, ExitStatus
+ 21 | from httpie.compat import str, bytes, is_py3
+ 22 | from httpie.client import get_response
+ 23 | from httpie.downloads import Download
+ 24 | from httpie.context import Environment
+ 25 | from httpie.plugins import plugin_manager
+ 26 | from httpie.output.streams import (
+ 27 |     build_output_stream,
+ 28 |     write, write_with_colors_win_py3
+ 29 | )
+ 30 | 
+ 31 | 
+ 32 | def get_exit_status(http_status, follow=False):
+ 33 |     """Translate HTTP status code to exit status code."""
+ 34 |     if 300 <= http_status <= 399 and not follow:
+ 35 |         # Redirect
+ 36 |         return ExitStatus.ERROR_HTTP_3XX
+ 37 |     elif 400 <= http_status <= 499:
+ 38 |         # Client Error
+ 39 |         return ExitStatus.ERROR_HTTP_4XX
+ 40 |     elif 500 <= http_status <= 599:
+ 41 |         # Server Error
+ 42 |         return ExitStatus.ERROR_HTTP_5XX
+ 43 |     else:
+ 44 |         return ExitStatus.OK
+ 45 | 
+ 46 | 
+ 47 | def print_debug_info(env):
+ 48 |     env.stderr.writelines([
+ 49 |         'HTTPie %s\n' % httpie_version,
+ 50 |         'HTTPie data: %s\n' % env.config.directory,
+ 51 |         'Requests %s\n' % requests_version,
+ 52 |         'Pygments %s\n' % pygments_version,
+ 53 |         'Python %s %s\n' % (sys.version, sys.platform)
+ 54 |     ])
+ 55 | 
+ 56 | 
+ 57 | def decode_args(args, stdin_encoding):
+ 58 |     """
+ 59 |     Convert all bytes ags to str
+ 60 |     by decoding them using stdin encoding.
+ 61 | 
+ 62 |     """
+ 63 |     return [
+ 64 |         arg.decode(stdin_encoding)
+ 65 |         if type(arg) == bytes else arg
+ 66 |         for arg in args
+ 67 |     ]
+ 68 | 
+ 69 | 
+ 70 | def main(args=sys.argv[1:], env=Environment(), error=None):
+ 71 |     """Run the main program and write the output to ``env.stdout``.
+ 72 | 
+ 73 |     Return exit status code.
+ 74 | 
+ 75 |     """
+ 76 |     args = decode_args(args, env.stdin_encoding)
+ 77 |     plugin_manager.load_installed_plugins()
+ 78 | 
+ 79 |     from httpie.cli import parser
+ 80 | 
+ 81 |     if env.config.default_options:
+ 82 |         args = env.config.default_options + args
+ 83 | 
+ 84 |     def _error(msg, *args, **kwargs):
+ 85 |         msg = msg % args
+ 86 |         level = kwargs.get('level', 'error')
+ 87 |         env.stderr.write('\nhttp: %s: %s\n' % (level, msg))
+ 88 | 
+ 89 |     if error is None:
+ 90 |         error = _error
+ 91 | 
+ 92 |     debug = '--debug' in args
+ 93 |     traceback = debug or '--traceback' in args
+ 94 |     exit_status = ExitStatus.OK
+ 95 | 
+ 96 |     if debug:
+ 97 |         print_debug_info(env)
+ 98 |         if args == ['--debug']:
+ 99 |             return exit_status
+100 | 
+101 |     download = None
+102 |     try:
+103 |         args = parser.parse_args(args=args, env=env)
+104 | 
+105 |         if args.download:
+106 |             args.follow = True  # --download implies --follow.
+107 |             download = Download(
+108 |                 output_file=args.output_file,
+109 |                 progress_file=env.stderr,
+110 |                 resume=args.download_resume
+111 |             )
+112 |             download.pre_request(args.headers)
+113 | 
+114 |         last_response = get_response(args, config_dir=env.config.directory)
+115 | 
+116 |         if args.show_redirects:
+117 |             responses = last_response.history + [last_response]
+118 |         else:
+119 |             responses = [last_response]
+120 | 
+121 |         for response in responses:
+122 | 
+123 |             if exit_status != ExitStatus.OK:
+124 |                 break
+125 | 
+126 |             if args.check_status or download:
+127 | 
+128 |                 exit_status = get_exit_status(
+129 |                     http_status=response.status_code,
+130 |                     follow=args.follow
+131 |                 )
+132 | 
+133 |                 if not env.stdout_isatty and exit_status != ExitStatus.OK:
+134 |                     error('HTTP %s %s',
+135 |                           response.raw.status,
+136 |                           response.raw.reason,
+137 |                           level='warning')
+138 | 
+139 |             write_kwargs = {
+140 |                 'stream': build_output_stream(args, env,
+141 |                                               response.request,
+142 |                                               response),
+143 |                 # This will in fact be `stderr` with `--download`
+144 |                 'outfile': env.stdout,
+145 |                 'flush': env.stdout_isatty or args.stream
+146 |             }
+147 | 
+148 |             try:
+149 |                 if env.is_windows and is_py3 and 'colors' in args.prettify:
+150 |                     write_with_colors_win_py3(**write_kwargs)
+151 |                 else:
+152 |                     write(**write_kwargs)
+153 |             except IOError as e:
+154 |                 if not traceback and e.errno == errno.EPIPE:
+155 |                     # Ignore broken pipes unless --traceback.
+156 |                     env.stderr.write('\n')
+157 |                 else:
+158 |                     raise
+159 | 
+160 |         if download and exit_status == ExitStatus.OK:
+161 |             # Last response body download.
+162 |             download_stream, download_to = download.start(last_response)
+163 |             write(
+164 |                 stream=download_stream,
+165 |                 outfile=download_to,
+166 |                 flush=False,
+167 |             )
+168 |             download.finish()
+169 |             if download.interrupted:
+170 |                 exit_status = ExitStatus.ERROR
+171 |                 error('Incomplete download: size=%d; downloaded=%d' % (
+172 |                     download.status.total_size,
+173 |                     download.status.downloaded
+174 |                 ))
+175 | 
+176 |     except KeyboardInterrupt:
+177 |         if traceback:
+178 |             raise
+179 |         env.stderr.write('\n')
+180 |         exit_status = ExitStatus.ERROR
+181 |     except SystemExit as e:
+182 |         if e.code != ExitStatus.OK:
+183 |             if traceback:
+184 |                 raise
+185 |             env.stderr.write('\n')
+186 |             exit_status = ExitStatus.ERROR
+187 |     except requests.Timeout:
+188 |         exit_status = ExitStatus.ERROR_TIMEOUT
+189 |         error('Request timed out (%ss).', args.timeout)
+190 |     except requests.TooManyRedirects:
+191 |         exit_status = ExitStatus.ERROR_TOO_MANY_REDIRECTS
+192 |         error('Too many redirects (--max-redirects=%s).', args.max_redirects)
+193 |     except Exception as e:
+194 |         # TODO: Better distinction between expected and unexpected errors.
+195 |         #       Network errors vs. bugs, etc.
+196 |         if traceback:
+197 |             raise
+198 |         msg = str(e)
+199 |         if hasattr(e, 'request'):
+200 |             request = e.request
+201 |             if hasattr(request, 'url'):
+202 |                 msg += ' while doing %s request to URL: %s' % (
+203 |                     request.method, request.url)
+204 |         error('%s: %s', type(e).__name__, msg)
+205 |         exit_status = ExitStatus.ERROR
+206 | 
+207 |     finally:
+208 |         if download and not download.finished:
+209 |             download.failed()
+210 | 
+211 |     return exit_status
+```
+
+
+FAILING TEST FILES:
+
+[test_file_1] BugsInPy/workspace/httpie/tests/test_redirects.py
+```python
+ 1 | """High-level tests."""
+ 2 | from httpie import ExitStatus
+ 3 | from utils import http, HTTP_OK
+ 4 | 
+ 5 | 
+ 6 | class TestRedirects:
+ 7 | 
+ 8 |     def test_follow_no_show_redirects(self, httpbin):
+ 9 |         r = http('--follow', httpbin.url + '/redirect/2')
+10 |         assert r.count('HTTP/1.1') == 1
+11 |         assert HTTP_OK in r
+12 | 
+13 |     def test_follow_show_redirects(self, httpbin):
+14 |         r = http('--follow', '--show-redirects', httpbin.url + '/redirect/2')
+15 |         assert r.count('HTTP/1.1') == 3
+16 |         assert r.count('HTTP/1.1 302 FOUND', 2)
+17 |         assert HTTP_OK in r
+18 | 
+19 |     def test_max_redirects(self, httpbin):
+20 |         r = http('--max-redirects=1', '--follow', httpbin.url + '/redirect/3',
+21 |                  error_exit_ok=True)
+22 |         assert r.exit_status == ExitStatus.ERROR_TOO_MANY_REDIRECTS
+```

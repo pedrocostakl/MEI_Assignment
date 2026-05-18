@@ -1,0 +1,1901 @@
+You are given buggy source files and failing test files.
+
+Your task is BUG LOCALIZATION ONLY.
+
+Return only valid JSON using this exact format:
+
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "relative/path.py",
+      "line_start": 1,
+      "line_end": 1,
+      "confidence": "low|medium|high",
+      "reason": "Max 2 sentences."
+    }
+  ]
+}
+
+Rules:
+- Do not propose fixes.
+- Do not rewrite code.
+- Do not explain outside JSON.
+- Line numbers must refer to the numbered buggy source file.
+- Include at most the number of suspected locations you think there are.
+- Prefer the smallest line range that identifies the origin of the bug.
+
+
+SOURCE FILES:
+
+[file_1] BugsInPy/workspace/tornado/tornado/http1connection.py
+```python
+  1 | #!/usr/bin/env python
+  2 | #
+  3 | # Copyright 2014 Facebook
+  4 | #
+  5 | # Licensed under the Apache License, Version 2.0 (the "License"); you may
+  6 | # not use this file except in compliance with the License. You may obtain
+  7 | # a copy of the License at
+  8 | #
+  9 | #     http://www.apache.org/licenses/LICENSE-2.0
+ 10 | #
+ 11 | # Unless required by applicable law or agreed to in writing, software
+ 12 | # distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+ 13 | # WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+ 14 | # License for the specific language governing permissions and limitations
+ 15 | # under the License.
+ 16 | 
+ 17 | """Client and server implementations of HTTP/1.x.
+ 18 | 
+ 19 | .. versionadded:: 4.0
+ 20 | """
+ 21 | 
+ 22 | from __future__ import absolute_import, division, print_function, with_statement
+ 23 | 
+ 24 | import re
+ 25 | 
+ 26 | from tornado.concurrent import Future
+ 27 | from tornado.escape import native_str, utf8
+ 28 | from tornado import gen
+ 29 | from tornado import httputil
+ 30 | from tornado import iostream
+ 31 | from tornado.log import gen_log, app_log
+ 32 | from tornado import stack_context
+ 33 | from tornado.util import GzipDecompressor, PY3
+ 34 | 
+ 35 | 
+ 36 | class _QuietException(Exception):
+ 37 |     def __init__(self):
+ 38 |         pass
+ 39 | 
+ 40 | 
+ 41 | class _ExceptionLoggingContext(object):
+ 42 |     """Used with the ``with`` statement when calling delegate methods to
+ 43 |     log any exceptions with the given logger.  Any exceptions caught are
+ 44 |     converted to _QuietException
+ 45 |     """
+ 46 |     def __init__(self, logger):
+ 47 |         self.logger = logger
+ 48 | 
+ 49 |     def __enter__(self):
+ 50 |         pass
+ 51 | 
+ 52 |     def __exit__(self, typ, value, tb):
+ 53 |         if value is not None:
+ 54 |             self.logger.error("Uncaught exception", exc_info=(typ, value, tb))
+ 55 |             raise _QuietException
+ 56 | 
+ 57 | 
+ 58 | class HTTP1ConnectionParameters(object):
+ 59 |     """Parameters for `.HTTP1Connection` and `.HTTP1ServerConnection`.
+ 60 |     """
+ 61 |     def __init__(self, no_keep_alive=False, chunk_size=None,
+ 62 |                  max_header_size=None, header_timeout=None, max_body_size=None,
+ 63 |                  body_timeout=None, decompress=False):
+ 64 |         """
+ 65 |         :arg bool no_keep_alive: If true, always close the connection after
+ 66 |             one request.
+ 67 |         :arg int chunk_size: how much data to read into memory at once
+ 68 |         :arg int max_header_size:  maximum amount of data for HTTP headers
+ 69 |         :arg float header_timeout: how long to wait for all headers (seconds)
+ 70 |         :arg int max_body_size: maximum amount of data for body
+ 71 |         :arg float body_timeout: how long to wait while reading body (seconds)
+ 72 |         :arg bool decompress: if true, decode incoming
+ 73 |             ``Content-Encoding: gzip``
+ 74 |         """
+ 75 |         self.no_keep_alive = no_keep_alive
+ 76 |         self.chunk_size = chunk_size or 65536
+ 77 |         self.max_header_size = max_header_size or 65536
+ 78 |         self.header_timeout = header_timeout
+ 79 |         self.max_body_size = max_body_size
+ 80 |         self.body_timeout = body_timeout
+ 81 |         self.decompress = decompress
+ 82 | 
+ 83 | 
+ 84 | class HTTP1Connection(httputil.HTTPConnection):
+ 85 |     """Implements the HTTP/1.x protocol.
+ 86 | 
+ 87 |     This class can be on its own for clients, or via `HTTP1ServerConnection`
+ 88 |     for servers.
+ 89 |     """
+ 90 |     def __init__(self, stream, is_client, params=None, context=None):
+ 91 |         """
+ 92 |         :arg stream: an `.IOStream`
+ 93 |         :arg bool is_client: client or server
+ 94 |         :arg params: a `.HTTP1ConnectionParameters` instance or ``None``
+ 95 |         :arg context: an opaque application-defined object that can be accessed
+ 96 |             as ``connection.context``.
+ 97 |         """
+ 98 |         self.is_client = is_client
+ 99 |         self.stream = stream
+100 |         if params is None:
+101 |             params = HTTP1ConnectionParameters()
+102 |         self.params = params
+103 |         self.context = context
+104 |         self.no_keep_alive = params.no_keep_alive
+105 |         # The body limits can be altered by the delegate, so save them
+106 |         # here instead of just referencing self.params later.
+107 |         self._max_body_size = (self.params.max_body_size or
+108 |                                self.stream.max_buffer_size)
+109 |         self._body_timeout = self.params.body_timeout
+110 |         # _write_finished is set to True when finish() has been called,
+111 |         # i.e. there will be no more data sent.  Data may still be in the
+112 |         # stream's write buffer.
+113 |         self._write_finished = False
+114 |         # True when we have read the entire incoming body.
+115 |         self._read_finished = False
+116 |         # _finish_future resolves when all data has been written and flushed
+117 |         # to the IOStream.
+118 |         self._finish_future = Future()
+119 |         # If true, the connection should be closed after this request
+120 |         # (after the response has been written in the server side,
+121 |         # and after it has been read in the client)
+122 |         self._disconnect_on_finish = False
+123 |         self._clear_callbacks()
+124 |         # Save the start lines after we read or write them; they
+125 |         # affect later processing (e.g. 304 responses and HEAD methods
+126 |         # have content-length but no bodies)
+127 |         self._request_start_line = None
+128 |         self._response_start_line = None
+129 |         self._request_headers = None
+130 |         # True if we are writing output with chunked encoding.
+131 |         self._chunking_output = None
+132 |         # While reading a body with a content-length, this is the
+133 |         # amount left to read.
+134 |         self._expected_content_remaining = None
+135 |         # A Future for our outgoing writes, returned by IOStream.write.
+136 |         self._pending_write = None
+137 | 
+138 |     def read_response(self, delegate):
+139 |         """Read a single HTTP response.
+140 | 
+141 |         Typical client-mode usage is to write a request using `write_headers`,
+142 |         `write`, and `finish`, and then call ``read_response``.
+143 | 
+144 |         :arg delegate: a `.HTTPMessageDelegate`
+145 | 
+146 |         Returns a `.Future` that resolves to None after the full response has
+147 |         been read.
+148 |         """
+149 |         if self.params.decompress:
+150 |             delegate = _GzipMessageDelegate(delegate, self.params.chunk_size)
+151 |         return self._read_message(delegate)
+152 | 
+153 |     @gen.coroutine
+154 |     def _read_message(self, delegate):
+155 |         need_delegate_close = False
+156 |         try:
+157 |             header_future = self.stream.read_until_regex(
+158 |                 b"\r?\n\r?\n",
+159 |                 max_bytes=self.params.max_header_size)
+160 |             if self.params.header_timeout is None:
+161 |                 header_data = yield header_future
+162 |             else:
+163 |                 try:
+164 |                     header_data = yield gen.with_timeout(
+165 |                         self.stream.io_loop.time() + self.params.header_timeout,
+166 |                         header_future,
+167 |                         io_loop=self.stream.io_loop,
+168 |                         quiet_exceptions=iostream.StreamClosedError)
+169 |                 except gen.TimeoutError:
+170 |                     self.close()
+171 |                     raise gen.Return(False)
+172 |             start_line, headers = self._parse_headers(header_data)
+173 |             if self.is_client:
+174 |                 start_line = httputil.parse_response_start_line(start_line)
+175 |                 self._response_start_line = start_line
+176 |             else:
+177 |                 start_line = httputil.parse_request_start_line(start_line)
+178 |                 self._request_start_line = start_line
+179 |                 self._request_headers = headers
+180 | 
+181 |             self._disconnect_on_finish = not self._can_keep_alive(
+182 |                 start_line, headers)
+183 |             need_delegate_close = True
+184 |             with _ExceptionLoggingContext(app_log):
+185 |                 header_future = delegate.headers_received(start_line, headers)
+186 |                 if header_future is not None:
+187 |                     yield header_future
+188 |             if self.stream is None:
+189 |                 # We've been detached.
+190 |                 need_delegate_close = False
+191 |                 raise gen.Return(False)
+192 |             skip_body = False
+193 |             if self.is_client:
+194 |                 if (self._request_start_line is not None and
+195 |                         self._request_start_line.method == 'HEAD'):
+196 |                     skip_body = True
+197 |                 code = start_line.code
+198 |                 if code == 304:
+199 |                     # 304 responses may include the content-length header
+200 |                     # but do not actually have a body.
+201 |                     # http://tools.ietf.org/html/rfc7230#section-3.3
+202 |                     skip_body = True
+203 |                 if code >= 100 and code < 200:
+204 |                     # 1xx responses should never indicate the presence of
+205 |                     # a body.
+206 |                     if ('Content-Length' in headers or
+207 |                             'Transfer-Encoding' in headers):
+208 |                         raise httputil.HTTPInputError(
+209 |                             "Response code %d cannot have body" % code)
+210 |                     # TODO: client delegates will get headers_received twice
+211 |                     # in the case of a 100-continue.  Document or change?
+212 |                     yield self._read_message(delegate)
+213 |             else:
+214 |                 if (headers.get("Expect") == "100-continue" and
+215 |                         not self._write_finished):
+216 |                     self.stream.write(b"HTTP/1.1 100 (Continue)\r\n\r\n")
+217 |             if not skip_body:
+218 |                 body_future = self._read_body(
+219 |                     start_line.code if self.is_client else 0, headers, delegate)
+220 |                 if body_future is not None:
+221 |                     if self._body_timeout is None:
+222 |                         yield body_future
+223 |                     else:
+224 |                         try:
+225 |                             yield gen.with_timeout(
+226 |                                 self.stream.io_loop.time() + self._body_timeout,
+227 |                                 body_future, self.stream.io_loop,
+228 |                                 quiet_exceptions=iostream.StreamClosedError)
+229 |                         except gen.TimeoutError:
+230 |                             gen_log.info("Timeout reading body from %s",
+231 |                                          self.context)
+232 |                             self.stream.close()
+233 |                             raise gen.Return(False)
+234 |             self._read_finished = True
+235 |             if not self._write_finished or self.is_client:
+236 |                 need_delegate_close = False
+237 |                 with _ExceptionLoggingContext(app_log):
+238 |                     delegate.finish()
+239 |             # If we're waiting for the application to produce an asynchronous
+240 |             # response, and we're not detached, register a close callback
+241 |             # on the stream (we didn't need one while we were reading)
+242 |             if (not self._finish_future.done() and
+243 |                     self.stream is not None and
+244 |                     not self.stream.closed()):
+245 |                 self.stream.set_close_callback(self._on_connection_close)
+246 |                 yield self._finish_future
+247 |             if self.is_client and self._disconnect_on_finish:
+248 |                 self.close()
+249 |             if self.stream is None:
+250 |                 raise gen.Return(False)
+251 |         except httputil.HTTPInputError as e:
+252 |             gen_log.info("Malformed HTTP message from %s: %s",
+253 |                          self.context, e)
+254 |             self.close()
+255 |             raise gen.Return(False)
+256 |         finally:
+257 |             if need_delegate_close:
+258 |                 with _ExceptionLoggingContext(app_log):
+259 |                     delegate.on_connection_close()
+260 |             self._clear_callbacks()
+261 |         raise gen.Return(True)
+262 | 
+263 |     def _clear_callbacks(self):
+264 |         """Clears the callback attributes.
+265 | 
+266 |         This allows the request handler to be garbage collected more
+267 |         quickly in CPython by breaking up reference cycles.
+268 |         """
+269 |         self._write_callback = None
+270 |         self._write_future = None
+271 |         self._close_callback = None
+272 |         if self.stream is not None:
+273 |             self.stream.set_close_callback(None)
+274 | 
+275 |     def set_close_callback(self, callback):
+276 |         """Sets a callback that will be run when the connection is closed.
+277 | 
+278 |         .. deprecated:: 4.0
+279 |             Use `.HTTPMessageDelegate.on_connection_close` instead.
+280 |         """
+281 |         self._close_callback = stack_context.wrap(callback)
+282 | 
+283 |     def _on_connection_close(self):
+284 |         # Note that this callback is only registered on the IOStream
+285 |         # when we have finished reading the request and are waiting for
+286 |         # the application to produce its response.
+287 |         if self._close_callback is not None:
+288 |             callback = self._close_callback
+289 |             self._close_callback = None
+290 |             callback()
+291 |         if not self._finish_future.done():
+292 |             self._finish_future.set_result(None)
+293 |         self._clear_callbacks()
+294 | 
+295 |     def close(self):
+296 |         if self.stream is not None:
+297 |             self.stream.close()
+298 |         self._clear_callbacks()
+299 |         if not self._finish_future.done():
+300 |             self._finish_future.set_result(None)
+301 | 
+302 |     def detach(self):
+303 |         """Take control of the underlying stream.
+304 | 
+305 |         Returns the underlying `.IOStream` object and stops all further
+306 |         HTTP processing.  May only be called during
+307 |         `.HTTPMessageDelegate.headers_received`.  Intended for implementing
+308 |         protocols like websockets that tunnel over an HTTP handshake.
+309 |         """
+310 |         self._clear_callbacks()
+311 |         stream = self.stream
+312 |         self.stream = None
+313 |         if not self._finish_future.done():
+314 |             self._finish_future.set_result(None)
+315 |         return stream
+316 | 
+317 |     def set_body_timeout(self, timeout):
+318 |         """Sets the body timeout for a single request.
+319 | 
+320 |         Overrides the value from `.HTTP1ConnectionParameters`.
+321 |         """
+322 |         self._body_timeout = timeout
+323 | 
+324 |     def set_max_body_size(self, max_body_size):
+325 |         """Sets the body size limit for a single request.
+326 | 
+327 |         Overrides the value from `.HTTP1ConnectionParameters`.
+328 |         """
+329 |         self._max_body_size = max_body_size
+330 | 
+331 |     def write_headers(self, start_line, headers, chunk=None, callback=None):
+332 |         """Implements `.HTTPConnection.write_headers`."""
+333 |         lines = []
+334 |         if self.is_client:
+335 |             self._request_start_line = start_line
+336 |             lines.append(utf8('%s %s HTTP/1.1' % (start_line[0], start_line[1])))
+337 |             # Client requests with a non-empty body must have either a
+338 |             # Content-Length or a Transfer-Encoding.
+339 |             self._chunking_output = (
+340 |                 start_line.method in ('POST', 'PUT', 'PATCH') and
+341 |                 'Content-Length' not in headers and
+342 |                 'Transfer-Encoding' not in headers)
+343 |         else:
+344 |             self._response_start_line = start_line
+345 |             lines.append(utf8('HTTP/1.1 %d %s' % (start_line[1], start_line[2])))
+346 |             self._chunking_output = (
+347 |                 # TODO: should this use
+348 |                 # self._request_start_line.version or
+349 |                 # start_line.version?
+350 |                 self._request_start_line.version == 'HTTP/1.1' and
+351 |                 # 304 responses have no body (not even a zero-length body), and so
+352 |                 # should not have either Content-Length or Transfer-Encoding.
+353 |                 # headers.
+354 |                 start_line.code not in (204, 304) and
+355 |                 # No need to chunk the output if a Content-Length is specified.
+356 |                 'Content-Length' not in headers and
+357 |                 # Applications are discouraged from touching Transfer-Encoding,
+358 |                 # but if they do, leave it alone.
+359 |                 'Transfer-Encoding' not in headers)
+360 |             # If a 1.0 client asked for keep-alive, add the header.
+361 |             if (self._request_start_line.version == 'HTTP/1.0' and
+362 |                 (self._request_headers.get('Connection', '').lower() ==
+363 |                  'keep-alive')):
+364 |                 headers['Connection'] = 'Keep-Alive'
+365 |         if self._chunking_output:
+366 |             headers['Transfer-Encoding'] = 'chunked'
+367 |         if (not self.is_client and
+368 |             (self._request_start_line.method == 'HEAD' or
+369 |              start_line.code == 304)):
+370 |             self._expected_content_remaining = 0
+371 |         elif 'Content-Length' in headers:
+372 |             self._expected_content_remaining = int(headers['Content-Length'])
+373 |         else:
+374 |             self._expected_content_remaining = None
+375 |         # TODO: headers are supposed to be of type str, but we still have some
+376 |         # cases that let bytes slip through. Remove these native_str calls when those
+377 |         # are fixed.
+378 |         header_lines = (native_str(n) + ": " + native_str(v) for n, v in headers.get_all())
+379 |         if PY3:
+380 |             lines.extend(l.encode('latin1') for l in header_lines)
+381 |         else:
+382 |             lines.extend(header_lines)
+383 |         for line in lines:
+384 |             if b'\n' in line:
+385 |                 raise ValueError('Newline in header: ' + repr(line))
+386 |         future = None
+387 |         if self.stream.closed():
+388 |             future = self._write_future = Future()
+389 |             future.set_exception(iostream.StreamClosedError())
+390 |             future.exception()
+391 |         else:
+392 |             if callback is not None:
+393 |                 self._write_callback = stack_context.wrap(callback)
+394 |             else:
+395 |                 future = self._write_future = Future()
+396 |             data = b"\r\n".join(lines) + b"\r\n\r\n"
+397 |             if chunk:
+398 |                 data += self._format_chunk(chunk)
+399 |             self._pending_write = self.stream.write(data)
+400 |             self._pending_write.add_done_callback(self._on_write_complete)
+401 |         return future
+402 | 
+403 |     def _format_chunk(self, chunk):
+404 |         if self._expected_content_remaining is not None:
+405 |             self._expected_content_remaining -= len(chunk)
+406 |             if self._expected_content_remaining < 0:
+407 |                 # Close the stream now to stop further framing errors.
+408 |                 self.stream.close()
+409 |                 raise httputil.HTTPOutputError(
+410 |                     "Tried to write more data than Content-Length")
+411 |         if self._chunking_output and chunk:
+412 |             # Don't write out empty chunks because that means END-OF-STREAM
+413 |             # with chunked encoding
+414 |             return utf8("%x" % len(chunk)) + b"\r\n" + chunk + b"\r\n"
+415 |         else:
+416 |             return chunk
+417 | 
+418 |     def write(self, chunk, callback=None):
+419 |         """Implements `.HTTPConnection.write`.
+420 | 
+421 |         For backwards compatibility is is allowed but deprecated to
+422 |         skip `write_headers` and instead call `write()` with a
+423 |         pre-encoded header block.
+424 |         """
+425 |         future = None
+426 |         if self.stream.closed():
+427 |             future = self._write_future = Future()
+428 |             self._write_future.set_exception(iostream.StreamClosedError())
+429 |             self._write_future.exception()
+430 |         else:
+431 |             if callback is not None:
+432 |                 self._write_callback = stack_context.wrap(callback)
+433 |             else:
+434 |                 future = self._write_future = Future()
+435 |             self._pending_write = self.stream.write(self._format_chunk(chunk))
+436 |             self._pending_write.add_done_callback(self._on_write_complete)
+437 |         return future
+438 | 
+439 |     def finish(self):
+440 |         """Implements `.HTTPConnection.finish`."""
+441 |         if (self._expected_content_remaining is not None and
+442 |                 self._expected_content_remaining != 0 and
+443 |                 not self.stream.closed()):
+444 |             self.stream.close()
+445 |             raise httputil.HTTPOutputError(
+446 |                 "Tried to write %d bytes less than Content-Length" %
+447 |                 self._expected_content_remaining)
+448 |         if self._chunking_output:
+449 |             if not self.stream.closed():
+450 |                 self._pending_write = self.stream.write(b"0\r\n\r\n")
+451 |                 self._pending_write.add_done_callback(self._on_write_complete)
+452 |         self._write_finished = True
+453 |         # If the app finished the request while we're still reading,
+454 |         # divert any remaining data away from the delegate and
+455 |         # close the connection when we're done sending our response.
+456 |         # Closing the connection is the only way to avoid reading the
+457 |         # whole input body.
+458 |         if not self._read_finished:
+459 |             self._disconnect_on_finish = True
+460 |         # No more data is coming, so instruct TCP to send any remaining
+461 |         # data immediately instead of waiting for a full packet or ack.
+462 |         self.stream.set_nodelay(True)
+463 |         if self._pending_write is None:
+464 |             self._finish_request(None)
+465 |         else:
+466 |             self._pending_write.add_done_callback(self._finish_request)
+467 | 
+468 |     def _on_write_complete(self, future):
+469 |         exc = future.exception()
+470 |         if exc is not None and not isinstance(exc, iostream.StreamClosedError):
+471 |             future.result()
+472 |         if self._write_callback is not None:
+473 |             callback = self._write_callback
+474 |             self._write_callback = None
+475 |             self.stream.io_loop.add_callback(callback)
+476 |         if self._write_future is not None:
+477 |             future = self._write_future
+478 |             self._write_future = None
+479 |             future.set_result(None)
+480 | 
+481 |     def _can_keep_alive(self, start_line, headers):
+482 |         if self.params.no_keep_alive:
+483 |             return False
+484 |         connection_header = headers.get("Connection")
+485 |         if connection_header is not None:
+486 |             connection_header = connection_header.lower()
+487 |         if start_line.version == "HTTP/1.1":
+488 |             return connection_header != "close"
+489 |         elif ("Content-Length" in headers or
+490 |               headers.get("Transfer-Encoding", "").lower() == "chunked" or
+491 |               getattr(start_line, 'method', None) in ("HEAD", "GET")):
+492 |             # start_line may be a request or reponse start line; only
+493 |             # the former has a method attribute.
+494 |             return connection_header == "keep-alive"
+495 |         return False
+496 | 
+497 |     def _finish_request(self, future):
+498 |         self._clear_callbacks()
+499 |         if not self.is_client and self._disconnect_on_finish:
+500 |             self.close()
+501 |             return
+502 |         # Turn Nagle's algorithm back on, leaving the stream in its
+503 |         # default state for the next request.
+504 |         self.stream.set_nodelay(False)
+505 |         if not self._finish_future.done():
+506 |             self._finish_future.set_result(None)
+507 | 
+508 |     def _parse_headers(self, data):
+509 |         # The lstrip removes newlines that some implementations sometimes
+510 |         # insert between messages of a reused connection.  Per RFC 7230,
+511 |         # we SHOULD ignore at least one empty line before the request.
+512 |         # http://tools.ietf.org/html/rfc7230#section-3.5
+513 |         data = native_str(data.decode('latin1')).lstrip("\r\n")
+514 |         # RFC 7230 section allows for both CRLF and bare LF.
+515 |         eol = data.find("\n")
+516 |         start_line = data[:eol].rstrip("\r")
+517 |         try:
+518 |             headers = httputil.HTTPHeaders.parse(data[eol:])
+519 |         except ValueError:
+520 |             # probably form split() if there was no ':' in the line
+521 |             raise httputil.HTTPInputError("Malformed HTTP headers: %r" %
+522 |                                           data[eol:100])
+523 |         return start_line, headers
+524 | 
+525 |     def _read_body(self, code, headers, delegate):
+526 |         if "Content-Length" in headers:
+527 |             if "Transfer-Encoding" in headers:
+528 |                 # Response cannot contain both Content-Length and
+529 |                 # Transfer-Encoding headers.
+530 |                 # http://tools.ietf.org/html/rfc7230#section-3.3.3
+531 |                 raise httputil.HTTPInputError(
+532 |                     "Response with both Transfer-Encoding and Content-Length")
+533 |             if "," in headers["Content-Length"]:
+534 |                 # Proxies sometimes cause Content-Length headers to get
+535 |                 # duplicated.  If all the values are identical then we can
+536 |                 # use them but if they differ it's an error.
+537 |                 pieces = re.split(r',\s*', headers["Content-Length"])
+538 |                 if any(i != pieces[0] for i in pieces):
+539 |                     raise httputil.HTTPInputError(
+540 |                         "Multiple unequal Content-Lengths: %r" %
+541 |                         headers["Content-Length"])
+542 |                 headers["Content-Length"] = pieces[0]
+543 | 
+544 |             try:
+545 |                 content_length = int(headers["Content-Length"])
+546 |             except ValueError:
+547 |                 # Handles non-integer Content-Length value.
+548 |                 raise httputil.HTTPInputError(
+549 |                     "Only integer Content-Length is allowed: %s" % headers["Content-Length"])
+550 | 
+551 |             if content_length > self._max_body_size:
+552 |                 raise httputil.HTTPInputError("Content-Length too long")
+553 |         else:
+554 |             content_length = None
+555 | 
+556 |         if code == 204:
+557 |             # This response code is not allowed to have a non-empty body,
+558 |             # and has an implicit length of zero instead of read-until-close.
+559 |             # http://www.w3.org/Protocols/rfc2616/rfc2616-sec4.html#sec4.3
+560 |             if ("Transfer-Encoding" in headers or
+561 |                     content_length not in (None, 0)):
+562 |                 raise httputil.HTTPInputError(
+563 |                     "Response with code %d should not have body" % code)
+564 |             content_length = 0
+565 | 
+566 |         if content_length is not None:
+567 |             return self._read_fixed_body(content_length, delegate)
+568 |         if headers.get("Transfer-Encoding") == "chunked":
+569 |             return self._read_chunked_body(delegate)
+570 |         if self.is_client:
+571 |             return self._read_body_until_close(delegate)
+572 |         return None
+573 | 
+574 |     @gen.coroutine
+575 |     def _read_fixed_body(self, content_length, delegate):
+576 |         while content_length > 0:
+577 |             body = yield self.stream.read_bytes(
+578 |                 min(self.params.chunk_size, content_length), partial=True)
+579 |             content_length -= len(body)
+580 |             if not self._write_finished or self.is_client:
+581 |                 with _ExceptionLoggingContext(app_log):
+582 |                     ret = delegate.data_received(body)
+583 |                     if ret is not None:
+584 |                         yield ret
+585 | 
+586 |     @gen.coroutine
+587 |     def _read_chunked_body(self, delegate):
+588 |         # TODO: "chunk extensions" http://tools.ietf.org/html/rfc2616#section-3.6.1
+589 |         total_size = 0
+590 |         while True:
+591 |             chunk_len = yield self.stream.read_until(b"\r\n", max_bytes=64)
+592 |             chunk_len = int(chunk_len.strip(), 16)
+593 |             if chunk_len == 0:
+594 |                 return
+595 |             total_size += chunk_len
+596 |             if total_size > self._max_body_size:
+597 |                 raise httputil.HTTPInputError("chunked body too large")
+598 |             bytes_to_read = chunk_len
+599 |             while bytes_to_read:
+600 |                 chunk = yield self.stream.read_bytes(
+601 |                     min(bytes_to_read, self.params.chunk_size), partial=True)
+602 |                 bytes_to_read -= len(chunk)
+603 |                 if not self._write_finished or self.is_client:
+604 |                     with _ExceptionLoggingContext(app_log):
+605 |                         ret = delegate.data_received(chunk)
+606 |                         if ret is not None:
+607 |                             yield ret
+608 |             # chunk ends with \r\n
+609 |             crlf = yield self.stream.read_bytes(2)
+610 |             assert crlf == b"\r\n"
+611 | 
+612 |     @gen.coroutine
+613 |     def _read_body_until_close(self, delegate):
+614 |         body = yield self.stream.read_until_close()
+615 |         if not self._write_finished or self.is_client:
+616 |             with _ExceptionLoggingContext(app_log):
+617 |                 delegate.data_received(body)
+618 | 
+619 | 
+620 | class _GzipMessageDelegate(httputil.HTTPMessageDelegate):
+621 |     """Wraps an `HTTPMessageDelegate` to decode ``Content-Encoding: gzip``.
+622 |     """
+623 |     def __init__(self, delegate, chunk_size):
+624 |         self._delegate = delegate
+625 |         self._chunk_size = chunk_size
+626 |         self._decompressor = None
+627 | 
+628 |     def headers_received(self, start_line, headers):
+629 |         if headers.get("Content-Encoding") == "gzip":
+630 |             self._decompressor = GzipDecompressor()
+631 |             # Downstream delegates will only see uncompressed data,
+632 |             # so rename the content-encoding header.
+633 |             # (but note that curl_httpclient doesn't do this).
+634 |             headers.add("X-Consumed-Content-Encoding",
+635 |                         headers["Content-Encoding"])
+636 |             del headers["Content-Encoding"]
+637 |         return self._delegate.headers_received(start_line, headers)
+638 | 
+639 |     @gen.coroutine
+640 |     def data_received(self, chunk):
+641 |         if self._decompressor:
+642 |             compressed_data = chunk
+643 |             while compressed_data:
+644 |                 decompressed = self._decompressor.decompress(
+645 |                     compressed_data, self._chunk_size)
+646 |                 if decompressed:
+647 |                     ret = self._delegate.data_received(decompressed)
+648 |                     if ret is not None:
+649 |                         yield ret
+650 |                 compressed_data = self._decompressor.unconsumed_tail
+651 |         else:
+652 |             ret = self._delegate.data_received(chunk)
+653 |             if ret is not None:
+654 |                 yield ret
+655 | 
+656 |     def finish(self):
+657 |         if self._decompressor is not None:
+658 |             tail = self._decompressor.flush()
+659 |             if tail:
+660 |                 # I believe the tail will always be empty (i.e.
+661 |                 # decompress will return all it can).  The purpose
+662 |                 # of the flush call is to detect errors such
+663 |                 # as truncated input.  But in case it ever returns
+664 |                 # anything, treat it as an extra chunk
+665 |                 self._delegate.data_received(tail)
+666 |         return self._delegate.finish()
+667 | 
+668 |     def on_connection_close(self):
+669 |         return self._delegate.on_connection_close()
+670 | 
+671 | 
+672 | class HTTP1ServerConnection(object):
+673 |     """An HTTP/1.x server."""
+674 |     def __init__(self, stream, params=None, context=None):
+675 |         """
+676 |         :arg stream: an `.IOStream`
+677 |         :arg params: a `.HTTP1ConnectionParameters` or None
+678 |         :arg context: an opaque application-defined object that is accessible
+679 |             as ``connection.context``
+680 |         """
+681 |         self.stream = stream
+682 |         if params is None:
+683 |             params = HTTP1ConnectionParameters()
+684 |         self.params = params
+685 |         self.context = context
+686 |         self._serving_future = None
+687 | 
+688 |     @gen.coroutine
+689 |     def close(self):
+690 |         """Closes the connection.
+691 | 
+692 |         Returns a `.Future` that resolves after the serving loop has exited.
+693 |         """
+694 |         self.stream.close()
+695 |         # Block until the serving loop is done, but ignore any exceptions
+696 |         # (start_serving is already responsible for logging them).
+697 |         try:
+698 |             yield self._serving_future
+699 |         except Exception:
+700 |             pass
+701 | 
+702 |     def start_serving(self, delegate):
+703 |         """Starts serving requests on this connection.
+704 | 
+705 |         :arg delegate: a `.HTTPServerConnectionDelegate`
+706 |         """
+707 |         assert isinstance(delegate, httputil.HTTPServerConnectionDelegate)
+708 |         self._serving_future = self._server_request_loop(delegate)
+709 |         # Register the future on the IOLoop so its errors get logged.
+710 |         self.stream.io_loop.add_future(self._serving_future,
+711 |                                        lambda f: f.result())
+712 | 
+713 |     @gen.coroutine
+714 |     def _server_request_loop(self, delegate):
+715 |         try:
+716 |             while True:
+717 |                 conn = HTTP1Connection(self.stream, False,
+718 |                                        self.params, self.context)
+719 |                 request_delegate = delegate.start_request(self, conn)
+720 |                 try:
+721 |                     ret = yield conn.read_response(request_delegate)
+722 |                 except (iostream.StreamClosedError,
+723 |                         iostream.UnsatisfiableReadError):
+724 |                     return
+725 |                 except _QuietException:
+726 |                     # This exception was already logged.
+727 |                     conn.close()
+728 |                     return
+729 |                 except Exception:
+730 |                     gen_log.error("Uncaught exception", exc_info=True)
+731 |                     conn.close()
+732 |                     return
+733 |                 if not ret:
+734 |                     return
+735 |                 yield gen.moment
+736 |         finally:
+737 |             delegate.on_close(self)
+```
+
+
+FAILING TEST FILES:
+
+[test_file_1] BugsInPy/workspace/tornado/tornado/test/httpserver_test.py
+```python
+   1 | #!/usr/bin/env python
+   2 | 
+   3 | 
+   4 | from __future__ import absolute_import, division, print_function, with_statement
+   5 | from tornado import netutil
+   6 | from tornado.escape import json_decode, json_encode, utf8, _unicode, recursive_unicode, native_str
+   7 | from tornado import gen
+   8 | from tornado.http1connection import HTTP1Connection
+   9 | from tornado.httpserver import HTTPServer
+  10 | from tornado.httputil import HTTPHeaders, HTTPMessageDelegate, HTTPServerConnectionDelegate, ResponseStartLine
+  11 | from tornado.iostream import IOStream
+  12 | from tornado.log import gen_log
+  13 | from tornado.netutil import ssl_options_to_context
+  14 | from tornado.simple_httpclient import SimpleAsyncHTTPClient
+  15 | from tornado.testing import AsyncHTTPTestCase, AsyncHTTPSTestCase, AsyncTestCase, ExpectLog, gen_test
+  16 | from tornado.test.util import unittest, skipOnTravis
+  17 | from tornado.web import Application, RequestHandler, asynchronous, stream_request_body
+  18 | from contextlib import closing
+  19 | import datetime
+  20 | import gzip
+  21 | import os
+  22 | import shutil
+  23 | import socket
+  24 | import ssl
+  25 | import sys
+  26 | import tempfile
+  27 | from io import BytesIO
+  28 | 
+  29 | 
+  30 | def read_stream_body(stream, callback):
+  31 |     """Reads an HTTP response from `stream` and runs callback with its
+  32 |     headers and body."""
+  33 |     chunks = []
+  34 | 
+  35 |     class Delegate(HTTPMessageDelegate):
+  36 |         def headers_received(self, start_line, headers):
+  37 |             self.headers = headers
+  38 | 
+  39 |         def data_received(self, chunk):
+  40 |             chunks.append(chunk)
+  41 | 
+  42 |         def finish(self):
+  43 |             callback((self.headers, b''.join(chunks)))
+  44 |     conn = HTTP1Connection(stream, True)
+  45 |     conn.read_response(Delegate())
+  46 | 
+  47 | 
+  48 | class HandlerBaseTestCase(AsyncHTTPTestCase):
+  49 |     def get_app(self):
+  50 |         return Application([('/', self.__class__.Handler)])
+  51 | 
+  52 |     def fetch_json(self, *args, **kwargs):
+  53 |         response = self.fetch(*args, **kwargs)
+  54 |         response.rethrow()
+  55 |         return json_decode(response.body)
+  56 | 
+  57 | 
+  58 | class HelloWorldRequestHandler(RequestHandler):
+  59 |     def initialize(self, protocol="http"):
+  60 |         self.expected_protocol = protocol
+  61 | 
+  62 |     def get(self):
+  63 |         if self.request.protocol != self.expected_protocol:
+  64 |             raise Exception("unexpected protocol")
+  65 |         self.finish("Hello world")
+  66 | 
+  67 |     def post(self):
+  68 |         self.finish("Got %d bytes in POST" % len(self.request.body))
+  69 | 
+  70 | 
+  71 | # In pre-1.0 versions of openssl, SSLv23 clients always send SSLv2
+  72 | # ClientHello messages, which are rejected by SSLv3 and TLSv1
+  73 | # servers.  Note that while the OPENSSL_VERSION_INFO was formally
+  74 | # introduced in python3.2, it was present but undocumented in
+  75 | # python 2.7
+  76 | skipIfOldSSL = unittest.skipIf(
+  77 |     getattr(ssl, 'OPENSSL_VERSION_INFO', (0, 0)) < (1, 0),
+  78 |     "old version of ssl module and/or openssl")
+  79 | 
+  80 | 
+  81 | class BaseSSLTest(AsyncHTTPSTestCase):
+  82 |     def get_app(self):
+  83 |         return Application([('/', HelloWorldRequestHandler,
+  84 |                              dict(protocol="https"))])
+  85 | 
+  86 | 
+  87 | class SSLTestMixin(object):
+  88 |     def get_ssl_options(self):
+  89 |         return dict(ssl_version=self.get_ssl_version(),  # type: ignore
+  90 |                     **AsyncHTTPSTestCase.get_ssl_options())
+  91 | 
+  92 |     def get_ssl_version(self):
+  93 |         raise NotImplementedError()
+  94 | 
+  95 |     def test_ssl(self):
+  96 |         response = self.fetch('/')
+  97 |         self.assertEqual(response.body, b"Hello world")
+  98 | 
+  99 |     def test_large_post(self):
+ 100 |         response = self.fetch('/',
+ 101 |                               method='POST',
+ 102 |                               body='A' * 5000)
+ 103 |         self.assertEqual(response.body, b"Got 5000 bytes in POST")
+ 104 | 
+ 105 |     def test_non_ssl_request(self):
+ 106 |         # Make sure the server closes the connection when it gets a non-ssl
+ 107 |         # connection, rather than waiting for a timeout or otherwise
+ 108 |         # misbehaving.
+ 109 |         with ExpectLog(gen_log, '(SSL Error|uncaught exception)'):
+ 110 |             with ExpectLog(gen_log, 'Uncaught exception', required=False):
+ 111 |                 self.http_client.fetch(
+ 112 |                     self.get_url("/").replace('https:', 'http:'),
+ 113 |                     self.stop,
+ 114 |                     request_timeout=3600,
+ 115 |                     connect_timeout=3600)
+ 116 |                 response = self.wait()
+ 117 |         self.assertEqual(response.code, 599)
+ 118 | 
+ 119 |     def test_error_logging(self):
+ 120 |         # No stack traces are logged for SSL errors.
+ 121 |         with ExpectLog(gen_log, 'SSL Error') as expect_log:
+ 122 |             self.http_client.fetch(
+ 123 |                 self.get_url("/").replace("https:", "http:"),
+ 124 |                 self.stop)
+ 125 |             response = self.wait()
+ 126 |             self.assertEqual(response.code, 599)
+ 127 |         self.assertFalse(expect_log.logged_stack)
+ 128 | 
+ 129 | # Python's SSL implementation differs significantly between versions.
+ 130 | # For example, SSLv3 and TLSv1 throw an exception if you try to read
+ 131 | # from the socket before the handshake is complete, but the default
+ 132 | # of SSLv23 allows it.
+ 133 | 
+ 134 | 
+ 135 | class SSLv23Test(BaseSSLTest, SSLTestMixin):
+ 136 |     def get_ssl_version(self):
+ 137 |         return ssl.PROTOCOL_SSLv23
+ 138 | 
+ 139 | 
+ 140 | @skipIfOldSSL
+ 141 | class SSLv3Test(BaseSSLTest, SSLTestMixin):
+ 142 |     def get_ssl_version(self):
+ 143 |         return ssl.PROTOCOL_SSLv3
+ 144 | 
+ 145 | 
+ 146 | @skipIfOldSSL
+ 147 | class TLSv1Test(BaseSSLTest, SSLTestMixin):
+ 148 |     def get_ssl_version(self):
+ 149 |         return ssl.PROTOCOL_TLSv1
+ 150 | 
+ 151 | 
+ 152 | @unittest.skipIf(not hasattr(ssl, 'SSLContext'), 'ssl.SSLContext not present')
+ 153 | class SSLContextTest(BaseSSLTest, SSLTestMixin):
+ 154 |     def get_ssl_options(self):
+ 155 |         context = ssl_options_to_context(
+ 156 |             AsyncHTTPSTestCase.get_ssl_options(self))
+ 157 |         assert isinstance(context, ssl.SSLContext)
+ 158 |         return context
+ 159 | 
+ 160 | 
+ 161 | class BadSSLOptionsTest(unittest.TestCase):
+ 162 |     def test_missing_arguments(self):
+ 163 |         application = Application()
+ 164 |         self.assertRaises(KeyError, HTTPServer, application, ssl_options={
+ 165 |             "keyfile": "/__missing__.crt",
+ 166 |         })
+ 167 | 
+ 168 |     def test_missing_key(self):
+ 169 |         """A missing SSL key should cause an immediate exception."""
+ 170 | 
+ 171 |         application = Application()
+ 172 |         module_dir = os.path.dirname(__file__)
+ 173 |         existing_certificate = os.path.join(module_dir, 'test.crt')
+ 174 |         existing_key = os.path.join(module_dir, 'test.key')
+ 175 | 
+ 176 |         self.assertRaises((ValueError, IOError),
+ 177 |                           HTTPServer, application, ssl_options={
+ 178 |                               "certfile": "/__mising__.crt",
+ 179 |         })
+ 180 |         self.assertRaises((ValueError, IOError),
+ 181 |                           HTTPServer, application, ssl_options={
+ 182 |                               "certfile": existing_certificate,
+ 183 |                               "keyfile": "/__missing__.key"
+ 184 |         })
+ 185 | 
+ 186 |         # This actually works because both files exist
+ 187 |         HTTPServer(application, ssl_options={
+ 188 |                    "certfile": existing_certificate,
+ 189 |                    "keyfile": existing_key,
+ 190 |                    })
+ 191 | 
+ 192 | 
+ 193 | class MultipartTestHandler(RequestHandler):
+ 194 |     def post(self):
+ 195 |         self.finish({"header": self.request.headers["X-Header-Encoding-Test"],
+ 196 |                      "argument": self.get_argument("argument"),
+ 197 |                      "filename": self.request.files["files"][0].filename,
+ 198 |                      "filebody": _unicode(self.request.files["files"][0]["body"]),
+ 199 |                      })
+ 200 | 
+ 201 | 
+ 202 | # This test is also called from wsgi_test
+ 203 | class HTTPConnectionTest(AsyncHTTPTestCase):
+ 204 |     def get_handlers(self):
+ 205 |         return [("/multipart", MultipartTestHandler),
+ 206 |                 ("/hello", HelloWorldRequestHandler)]
+ 207 | 
+ 208 |     def get_app(self):
+ 209 |         return Application(self.get_handlers())
+ 210 | 
+ 211 |     def raw_fetch(self, headers, body, newline=b"\r\n"):
+ 212 |         with closing(IOStream(socket.socket())) as stream:
+ 213 |             stream.connect(('127.0.0.1', self.get_http_port()), self.stop)
+ 214 |             self.wait()
+ 215 |             stream.write(
+ 216 |                 newline.join(headers +
+ 217 |                              [utf8("Content-Length: %d" % len(body))]) +
+ 218 |                 newline + newline + body)
+ 219 |             read_stream_body(stream, self.stop)
+ 220 |             headers, body = self.wait()
+ 221 |             return body
+ 222 | 
+ 223 |     def test_multipart_form(self):
+ 224 |         # Encodings here are tricky:  Headers are latin1, bodies can be
+ 225 |         # anything (we use utf8 by default).
+ 226 |         response = self.raw_fetch([
+ 227 |             b"POST /multipart HTTP/1.0",
+ 228 |             b"Content-Type: multipart/form-data; boundary=1234567890",
+ 229 |             b"X-Header-encoding-test: \xe9",
+ 230 |         ],
+ 231 |             b"\r\n".join([
+ 232 |                 b"Content-Disposition: form-data; name=argument",
+ 233 |                 b"",
+ 234 |                 u"\u00e1".encode("utf-8"),
+ 235 |                 b"--1234567890",
+ 236 |                 u'Content-Disposition: form-data; name="files"; filename="\u00f3"'.encode("utf8"),
+ 237 |                 b"",
+ 238 |                 u"\u00fa".encode("utf-8"),
+ 239 |                 b"--1234567890--",
+ 240 |                 b"",
+ 241 |             ]))
+ 242 |         data = json_decode(response)
+ 243 |         self.assertEqual(u"\u00e9", data["header"])
+ 244 |         self.assertEqual(u"\u00e1", data["argument"])
+ 245 |         self.assertEqual(u"\u00f3", data["filename"])
+ 246 |         self.assertEqual(u"\u00fa", data["filebody"])
+ 247 | 
+ 248 |     def test_newlines(self):
+ 249 |         # We support both CRLF and bare LF as line separators.
+ 250 |         for newline in (b"\r\n", b"\n"):
+ 251 |             response = self.raw_fetch([b"GET /hello HTTP/1.0"], b"",
+ 252 |                                       newline=newline)
+ 253 |             self.assertEqual(response, b'Hello world')
+ 254 | 
+ 255 |     def test_100_continue(self):
+ 256 |         # Run through a 100-continue interaction by hand:
+ 257 |         # When given Expect: 100-continue, we get a 100 response after the
+ 258 |         # headers, and then the real response after the body.
+ 259 |         stream = IOStream(socket.socket(), io_loop=self.io_loop)
+ 260 |         stream.connect(("127.0.0.1", self.get_http_port()), callback=self.stop)
+ 261 |         self.wait()
+ 262 |         stream.write(b"\r\n".join([b"POST /hello HTTP/1.1",
+ 263 |                                    b"Content-Length: 1024",
+ 264 |                                    b"Expect: 100-continue",
+ 265 |                                    b"Connection: close",
+ 266 |                                    b"\r\n"]), callback=self.stop)
+ 267 |         self.wait()
+ 268 |         stream.read_until(b"\r\n\r\n", self.stop)
+ 269 |         data = self.wait()
+ 270 |         self.assertTrue(data.startswith(b"HTTP/1.1 100 "), data)
+ 271 |         stream.write(b"a" * 1024)
+ 272 |         stream.read_until(b"\r\n", self.stop)
+ 273 |         first_line = self.wait()
+ 274 |         self.assertTrue(first_line.startswith(b"HTTP/1.1 200"), first_line)
+ 275 |         stream.read_until(b"\r\n\r\n", self.stop)
+ 276 |         header_data = self.wait()
+ 277 |         headers = HTTPHeaders.parse(native_str(header_data.decode('latin1')))
+ 278 |         stream.read_bytes(int(headers["Content-Length"]), self.stop)
+ 279 |         body = self.wait()
+ 280 |         self.assertEqual(body, b"Got 1024 bytes in POST")
+ 281 |         stream.close()
+ 282 | 
+ 283 | 
+ 284 | class EchoHandler(RequestHandler):
+ 285 |     def get(self):
+ 286 |         self.write(recursive_unicode(self.request.arguments))
+ 287 | 
+ 288 |     def post(self):
+ 289 |         self.write(recursive_unicode(self.request.arguments))
+ 290 | 
+ 291 | 
+ 292 | class TypeCheckHandler(RequestHandler):
+ 293 |     def prepare(self):
+ 294 |         self.errors = {}
+ 295 |         fields = [
+ 296 |             ('method', str),
+ 297 |             ('uri', str),
+ 298 |             ('version', str),
+ 299 |             ('remote_ip', str),
+ 300 |             ('protocol', str),
+ 301 |             ('host', str),
+ 302 |             ('path', str),
+ 303 |             ('query', str),
+ 304 |         ]
+ 305 |         for field, expected_type in fields:
+ 306 |             self.check_type(field, getattr(self.request, field), expected_type)
+ 307 | 
+ 308 |         self.check_type('header_key', list(self.request.headers.keys())[0], str)
+ 309 |         self.check_type('header_value', list(self.request.headers.values())[0], str)
+ 310 | 
+ 311 |         self.check_type('cookie_key', list(self.request.cookies.keys())[0], str)
+ 312 |         self.check_type('cookie_value', list(self.request.cookies.values())[0].value, str)
+ 313 |         # secure cookies
+ 314 | 
+ 315 |         self.check_type('arg_key', list(self.request.arguments.keys())[0], str)
+ 316 |         self.check_type('arg_value', list(self.request.arguments.values())[0][0], bytes)
+ 317 | 
+ 318 |     def post(self):
+ 319 |         self.check_type('body', self.request.body, bytes)
+ 320 |         self.write(self.errors)
+ 321 | 
+ 322 |     def get(self):
+ 323 |         self.write(self.errors)
+ 324 | 
+ 325 |     def check_type(self, name, obj, expected_type):
+ 326 |         actual_type = type(obj)
+ 327 |         if expected_type != actual_type:
+ 328 |             self.errors[name] = "expected %s, got %s" % (expected_type,
+ 329 |                                                          actual_type)
+ 330 | 
+ 331 | 
+ 332 | class HTTPServerTest(AsyncHTTPTestCase):
+ 333 |     def get_app(self):
+ 334 |         return Application([("/echo", EchoHandler),
+ 335 |                             ("/typecheck", TypeCheckHandler),
+ 336 |                             ("//doubleslash", EchoHandler),
+ 337 |                             ])
+ 338 | 
+ 339 |     def test_query_string_encoding(self):
+ 340 |         response = self.fetch("/echo?foo=%C3%A9")
+ 341 |         data = json_decode(response.body)
+ 342 |         self.assertEqual(data, {u"foo": [u"\u00e9"]})
+ 343 | 
+ 344 |     def test_empty_query_string(self):
+ 345 |         response = self.fetch("/echo?foo=&foo=")
+ 346 |         data = json_decode(response.body)
+ 347 |         self.assertEqual(data, {u"foo": [u"", u""]})
+ 348 | 
+ 349 |     def test_empty_post_parameters(self):
+ 350 |         response = self.fetch("/echo", method="POST", body="foo=&bar=")
+ 351 |         data = json_decode(response.body)
+ 352 |         self.assertEqual(data, {u"foo": [u""], u"bar": [u""]})
+ 353 | 
+ 354 |     def test_types(self):
+ 355 |         headers = {"Cookie": "foo=bar"}
+ 356 |         response = self.fetch("/typecheck?foo=bar", headers=headers)
+ 357 |         data = json_decode(response.body)
+ 358 |         self.assertEqual(data, {})
+ 359 | 
+ 360 |         response = self.fetch("/typecheck", method="POST", body="foo=bar", headers=headers)
+ 361 |         data = json_decode(response.body)
+ 362 |         self.assertEqual(data, {})
+ 363 | 
+ 364 |     def test_double_slash(self):
+ 365 |         # urlparse.urlsplit (which tornado.httpserver used to use
+ 366 |         # incorrectly) would parse paths beginning with "//" as
+ 367 |         # protocol-relative urls.
+ 368 |         response = self.fetch("//doubleslash")
+ 369 |         self.assertEqual(200, response.code)
+ 370 |         self.assertEqual(json_decode(response.body), {})
+ 371 | 
+ 372 |     def test_malformed_body(self):
+ 373 |         # parse_qs is pretty forgiving, but it will fail on python 3
+ 374 |         # if the data is not utf8.  On python 2 parse_qs will work,
+ 375 |         # but then the recursive_unicode call in EchoHandler will
+ 376 |         # fail.
+ 377 |         if str is bytes:
+ 378 |             return
+ 379 |         with ExpectLog(gen_log, 'Invalid x-www-form-urlencoded body'):
+ 380 |             response = self.fetch(
+ 381 |                 '/echo', method="POST",
+ 382 |                 headers={'Content-Type': 'application/x-www-form-urlencoded'},
+ 383 |                 body=b'\xe9')
+ 384 |         self.assertEqual(200, response.code)
+ 385 |         self.assertEqual(b'{}', response.body)
+ 386 | 
+ 387 | 
+ 388 | class HTTPServerRawTest(AsyncHTTPTestCase):
+ 389 |     def get_app(self):
+ 390 |         return Application([
+ 391 |             ('/echo', EchoHandler),
+ 392 |         ])
+ 393 | 
+ 394 |     def setUp(self):
+ 395 |         super(HTTPServerRawTest, self).setUp()
+ 396 |         self.stream = IOStream(socket.socket())
+ 397 |         self.stream.connect(('127.0.0.1', self.get_http_port()), self.stop)
+ 398 |         self.wait()
+ 399 | 
+ 400 |     def tearDown(self):
+ 401 |         self.stream.close()
+ 402 |         super(HTTPServerRawTest, self).tearDown()
+ 403 | 
+ 404 |     def test_empty_request(self):
+ 405 |         self.stream.close()
+ 406 |         self.io_loop.add_timeout(datetime.timedelta(seconds=0.001), self.stop)
+ 407 |         self.wait()
+ 408 | 
+ 409 |     def test_malformed_first_line(self):
+ 410 |         with ExpectLog(gen_log, '.*Malformed HTTP request line'):
+ 411 |             self.stream.write(b'asdf\r\n\r\n')
+ 412 |             # TODO: need an async version of ExpectLog so we don't need
+ 413 |             # hard-coded timeouts here.
+ 414 |             self.io_loop.add_timeout(datetime.timedelta(seconds=0.01),
+ 415 |                                      self.stop)
+ 416 |             self.wait()
+ 417 | 
+ 418 |     def test_malformed_headers(self):
+ 419 |         with ExpectLog(gen_log, '.*Malformed HTTP headers'):
+ 420 |             self.stream.write(b'GET / HTTP/1.0\r\nasdf\r\n\r\n')
+ 421 |             self.io_loop.add_timeout(datetime.timedelta(seconds=0.01),
+ 422 |                                      self.stop)
+ 423 |             self.wait()
+ 424 | 
+ 425 |     def test_chunked_request_body(self):
+ 426 |         # Chunked requests are not widely supported and we don't have a way
+ 427 |         # to generate them in AsyncHTTPClient, but HTTPServer will read them.
+ 428 |         self.stream.write(b"""\
+ 429 | POST /echo HTTP/1.1
+ 430 | Transfer-Encoding: chunked
+ 431 | Content-Type: application/x-www-form-urlencoded
+ 432 | 
+ 433 | 4
+ 434 | foo=
+ 435 | 3
+ 436 | bar
+ 437 | 0
+ 438 | 
+ 439 | """.replace(b"\n", b"\r\n"))
+ 440 |         read_stream_body(self.stream, self.stop)
+ 441 |         headers, response = self.wait()
+ 442 |         self.assertEqual(json_decode(response), {u'foo': [u'bar']})
+ 443 | 
+ 444 |     def test_chunked_request_uppercase(self):
+ 445 |         # As per RFC 2616 section 3.6, "Transfer-Encoding" header's value is
+ 446 |         # case-insensitive.
+ 447 |         self.stream.write(b"""\
+ 448 | POST /echo HTTP/1.1
+ 449 | Transfer-Encoding: Chunked
+ 450 | Content-Type: application/x-www-form-urlencoded
+ 451 | 
+ 452 | 4
+ 453 | foo=
+ 454 | 3
+ 455 | bar
+ 456 | 0
+ 457 | 
+ 458 | """.replace(b"\n", b"\r\n"))
+ 459 |         read_stream_body(self.stream, self.stop)
+ 460 |         headers, response = self.wait()
+ 461 |         self.assertEqual(json_decode(response), {u'foo': [u'bar']})
+ 462 | 
+ 463 |     def test_invalid_content_length(self):
+ 464 |         with ExpectLog(gen_log, '.*Only integer Content-Length is allowed'):
+ 465 |             self.stream.write(b"""\
+ 466 | POST /echo HTTP/1.1
+ 467 | Content-Length: foo
+ 468 | 
+ 469 | bar
+ 470 | 
+ 471 | """.replace(b"\n", b"\r\n"))
+ 472 |             self.stream.read_until_close(self.stop)
+ 473 |             self.wait()
+ 474 | 
+ 475 | 
+ 476 | class XHeaderTest(HandlerBaseTestCase):
+ 477 |     class Handler(RequestHandler):
+ 478 |         def get(self):
+ 479 |             self.write(dict(remote_ip=self.request.remote_ip,
+ 480 |                             remote_protocol=self.request.protocol))
+ 481 | 
+ 482 |     def get_httpserver_options(self):
+ 483 |         return dict(xheaders=True)
+ 484 | 
+ 485 |     def test_ip_headers(self):
+ 486 |         self.assertEqual(self.fetch_json("/")["remote_ip"], "127.0.0.1")
+ 487 | 
+ 488 |         valid_ipv4 = {"X-Real-IP": "4.4.4.4"}
+ 489 |         self.assertEqual(
+ 490 |             self.fetch_json("/", headers=valid_ipv4)["remote_ip"],
+ 491 |             "4.4.4.4")
+ 492 | 
+ 493 |         valid_ipv4_list = {"X-Forwarded-For": "127.0.0.1, 4.4.4.4"}
+ 494 |         self.assertEqual(
+ 495 |             self.fetch_json("/", headers=valid_ipv4_list)["remote_ip"],
+ 496 |             "4.4.4.4")
+ 497 | 
+ 498 |         valid_ipv6 = {"X-Real-IP": "2620:0:1cfe:face:b00c::3"}
+ 499 |         self.assertEqual(
+ 500 |             self.fetch_json("/", headers=valid_ipv6)["remote_ip"],
+ 501 |             "2620:0:1cfe:face:b00c::3")
+ 502 | 
+ 503 |         valid_ipv6_list = {"X-Forwarded-For": "::1, 2620:0:1cfe:face:b00c::3"}
+ 504 |         self.assertEqual(
+ 505 |             self.fetch_json("/", headers=valid_ipv6_list)["remote_ip"],
+ 506 |             "2620:0:1cfe:face:b00c::3")
+ 507 | 
+ 508 |         invalid_chars = {"X-Real-IP": "4.4.4.4<script>"}
+ 509 |         self.assertEqual(
+ 510 |             self.fetch_json("/", headers=invalid_chars)["remote_ip"],
+ 511 |             "127.0.0.1")
+ 512 | 
+ 513 |         invalid_chars_list = {"X-Forwarded-For": "4.4.4.4, 5.5.5.5<script>"}
+ 514 |         self.assertEqual(
+ 515 |             self.fetch_json("/", headers=invalid_chars_list)["remote_ip"],
+ 516 |             "127.0.0.1")
+ 517 | 
+ 518 |         invalid_host = {"X-Real-IP": "www.google.com"}
+ 519 |         self.assertEqual(
+ 520 |             self.fetch_json("/", headers=invalid_host)["remote_ip"],
+ 521 |             "127.0.0.1")
+ 522 | 
+ 523 |     def test_scheme_headers(self):
+ 524 |         self.assertEqual(self.fetch_json("/")["remote_protocol"], "http")
+ 525 | 
+ 526 |         https_scheme = {"X-Scheme": "https"}
+ 527 |         self.assertEqual(
+ 528 |             self.fetch_json("/", headers=https_scheme)["remote_protocol"],
+ 529 |             "https")
+ 530 | 
+ 531 |         https_forwarded = {"X-Forwarded-Proto": "https"}
+ 532 |         self.assertEqual(
+ 533 |             self.fetch_json("/", headers=https_forwarded)["remote_protocol"],
+ 534 |             "https")
+ 535 | 
+ 536 |         bad_forwarded = {"X-Forwarded-Proto": "unknown"}
+ 537 |         self.assertEqual(
+ 538 |             self.fetch_json("/", headers=bad_forwarded)["remote_protocol"],
+ 539 |             "http")
+ 540 | 
+ 541 | 
+ 542 | class SSLXHeaderTest(AsyncHTTPSTestCase, HandlerBaseTestCase):
+ 543 |     def get_app(self):
+ 544 |         return Application([('/', XHeaderTest.Handler)])
+ 545 | 
+ 546 |     def get_httpserver_options(self):
+ 547 |         output = super(SSLXHeaderTest, self).get_httpserver_options()
+ 548 |         output['xheaders'] = True
+ 549 |         return output
+ 550 | 
+ 551 |     def test_request_without_xprotocol(self):
+ 552 |         self.assertEqual(self.fetch_json("/")["remote_protocol"], "https")
+ 553 | 
+ 554 |         http_scheme = {"X-Scheme": "http"}
+ 555 |         self.assertEqual(
+ 556 |             self.fetch_json("/", headers=http_scheme)["remote_protocol"], "http")
+ 557 | 
+ 558 |         bad_scheme = {"X-Scheme": "unknown"}
+ 559 |         self.assertEqual(
+ 560 |             self.fetch_json("/", headers=bad_scheme)["remote_protocol"], "https")
+ 561 | 
+ 562 | 
+ 563 | class ManualProtocolTest(HandlerBaseTestCase):
+ 564 |     class Handler(RequestHandler):
+ 565 |         def get(self):
+ 566 |             self.write(dict(protocol=self.request.protocol))
+ 567 | 
+ 568 |     def get_httpserver_options(self):
+ 569 |         return dict(protocol='https')
+ 570 | 
+ 571 |     def test_manual_protocol(self):
+ 572 |         self.assertEqual(self.fetch_json('/')['protocol'], 'https')
+ 573 | 
+ 574 | 
+ 575 | @unittest.skipIf(not hasattr(socket, 'AF_UNIX') or sys.platform == 'cygwin',
+ 576 |                  "unix sockets not supported on this platform")
+ 577 | class UnixSocketTest(AsyncTestCase):
+ 578 |     """HTTPServers can listen on Unix sockets too.
+ 579 | 
+ 580 |     Why would you want to do this?  Nginx can proxy to backends listening
+ 581 |     on unix sockets, for one thing (and managing a namespace for unix
+ 582 |     sockets can be easier than managing a bunch of TCP port numbers).
+ 583 | 
+ 584 |     Unfortunately, there's no way to specify a unix socket in a url for
+ 585 |     an HTTP client, so we have to test this by hand.
+ 586 |     """
+ 587 |     def setUp(self):
+ 588 |         super(UnixSocketTest, self).setUp()
+ 589 |         self.tmpdir = tempfile.mkdtemp()
+ 590 |         self.sockfile = os.path.join(self.tmpdir, "test.sock")
+ 591 |         sock = netutil.bind_unix_socket(self.sockfile)
+ 592 |         app = Application([("/hello", HelloWorldRequestHandler)])
+ 593 |         self.server = HTTPServer(app, io_loop=self.io_loop)
+ 594 |         self.server.add_socket(sock)
+ 595 |         self.stream = IOStream(socket.socket(socket.AF_UNIX), io_loop=self.io_loop)
+ 596 |         self.stream.connect(self.sockfile, self.stop)
+ 597 |         self.wait()
+ 598 | 
+ 599 |     def tearDown(self):
+ 600 |         self.stream.close()
+ 601 |         self.server.stop()
+ 602 |         shutil.rmtree(self.tmpdir)
+ 603 |         super(UnixSocketTest, self).tearDown()
+ 604 | 
+ 605 |     def test_unix_socket(self):
+ 606 |         self.stream.write(b"GET /hello HTTP/1.0\r\n\r\n")
+ 607 |         self.stream.read_until(b"\r\n", self.stop)
+ 608 |         response = self.wait()
+ 609 |         self.assertEqual(response, b"HTTP/1.1 200 OK\r\n")
+ 610 |         self.stream.read_until(b"\r\n\r\n", self.stop)
+ 611 |         headers = HTTPHeaders.parse(self.wait().decode('latin1'))
+ 612 |         self.stream.read_bytes(int(headers["Content-Length"]), self.stop)
+ 613 |         body = self.wait()
+ 614 |         self.assertEqual(body, b"Hello world")
+ 615 | 
+ 616 |     def test_unix_socket_bad_request(self):
+ 617 |         # Unix sockets don't have remote addresses so they just return an
+ 618 |         # empty string.
+ 619 |         with ExpectLog(gen_log, "Malformed HTTP message from"):
+ 620 |             self.stream.write(b"garbage\r\n\r\n")
+ 621 |             self.stream.read_until_close(self.stop)
+ 622 |             response = self.wait()
+ 623 |         self.assertEqual(response, b"")
+ 624 | 
+ 625 | 
+ 626 | class KeepAliveTest(AsyncHTTPTestCase):
+ 627 |     """Tests various scenarios for HTTP 1.1 keep-alive support.
+ 628 | 
+ 629 |     These tests don't use AsyncHTTPClient because we want to control
+ 630 |     connection reuse and closing.
+ 631 |     """
+ 632 |     def get_app(self):
+ 633 |         class HelloHandler(RequestHandler):
+ 634 |             def get(self):
+ 635 |                 self.finish('Hello world')
+ 636 | 
+ 637 |             def post(self):
+ 638 |                 self.finish('Hello world')
+ 639 | 
+ 640 |         class LargeHandler(RequestHandler):
+ 641 |             def get(self):
+ 642 |                 # 512KB should be bigger than the socket buffers so it will
+ 643 |                 # be written out in chunks.
+ 644 |                 self.write(''.join(chr(i % 256) * 1024 for i in range(512)))
+ 645 | 
+ 646 |         class FinishOnCloseHandler(RequestHandler):
+ 647 |             @asynchronous
+ 648 |             def get(self):
+ 649 |                 self.flush()
+ 650 | 
+ 651 |             def on_connection_close(self):
+ 652 |                 # This is not very realistic, but finishing the request
+ 653 |                 # from the close callback has the right timing to mimic
+ 654 |                 # some errors seen in the wild.
+ 655 |                 self.finish('closed')
+ 656 | 
+ 657 |         return Application([('/', HelloHandler),
+ 658 |                             ('/large', LargeHandler),
+ 659 |                             ('/finish_on_close', FinishOnCloseHandler)])
+ 660 | 
+ 661 |     def setUp(self):
+ 662 |         super(KeepAliveTest, self).setUp()
+ 663 |         self.http_version = b'HTTP/1.1'
+ 664 | 
+ 665 |     def tearDown(self):
+ 666 |         # We just closed the client side of the socket; let the IOLoop run
+ 667 |         # once to make sure the server side got the message.
+ 668 |         self.io_loop.add_timeout(datetime.timedelta(seconds=0.001), self.stop)
+ 669 |         self.wait()
+ 670 | 
+ 671 |         if hasattr(self, 'stream'):
+ 672 |             self.stream.close()
+ 673 |         super(KeepAliveTest, self).tearDown()
+ 674 | 
+ 675 |     # The next few methods are a crude manual http client
+ 676 |     def connect(self):
+ 677 |         self.stream = IOStream(socket.socket(), io_loop=self.io_loop)
+ 678 |         self.stream.connect(('127.0.0.1', self.get_http_port()), self.stop)
+ 679 |         self.wait()
+ 680 | 
+ 681 |     def read_headers(self):
+ 682 |         self.stream.read_until(b'\r\n', self.stop)
+ 683 |         first_line = self.wait()
+ 684 |         self.assertTrue(first_line.startswith(b'HTTP/1.1 200'), first_line)
+ 685 |         self.stream.read_until(b'\r\n\r\n', self.stop)
+ 686 |         header_bytes = self.wait()
+ 687 |         headers = HTTPHeaders.parse(header_bytes.decode('latin1'))
+ 688 |         return headers
+ 689 | 
+ 690 |     def read_response(self):
+ 691 |         self.headers = self.read_headers()
+ 692 |         self.stream.read_bytes(int(self.headers['Content-Length']), self.stop)
+ 693 |         body = self.wait()
+ 694 |         self.assertEqual(b'Hello world', body)
+ 695 | 
+ 696 |     def close(self):
+ 697 |         self.stream.close()
+ 698 |         del self.stream
+ 699 | 
+ 700 |     def test_two_requests(self):
+ 701 |         self.connect()
+ 702 |         self.stream.write(b'GET / HTTP/1.1\r\n\r\n')
+ 703 |         self.read_response()
+ 704 |         self.stream.write(b'GET / HTTP/1.1\r\n\r\n')
+ 705 |         self.read_response()
+ 706 |         self.close()
+ 707 | 
+ 708 |     def test_request_close(self):
+ 709 |         self.connect()
+ 710 |         self.stream.write(b'GET / HTTP/1.1\r\nConnection: close\r\n\r\n')
+ 711 |         self.read_response()
+ 712 |         self.stream.read_until_close(callback=self.stop)
+ 713 |         data = self.wait()
+ 714 |         self.assertTrue(not data)
+ 715 |         self.close()
+ 716 | 
+ 717 |     # keepalive is supported for http 1.0 too, but it's opt-in
+ 718 |     def test_http10(self):
+ 719 |         self.http_version = b'HTTP/1.0'
+ 720 |         self.connect()
+ 721 |         self.stream.write(b'GET / HTTP/1.0\r\n\r\n')
+ 722 |         self.read_response()
+ 723 |         self.stream.read_until_close(callback=self.stop)
+ 724 |         data = self.wait()
+ 725 |         self.assertTrue(not data)
+ 726 |         self.assertTrue('Connection' not in self.headers)
+ 727 |         self.close()
+ 728 | 
+ 729 |     def test_http10_keepalive(self):
+ 730 |         self.http_version = b'HTTP/1.0'
+ 731 |         self.connect()
+ 732 |         self.stream.write(b'GET / HTTP/1.0\r\nConnection: keep-alive\r\n\r\n')
+ 733 |         self.read_response()
+ 734 |         self.assertEqual(self.headers['Connection'], 'Keep-Alive')
+ 735 |         self.stream.write(b'GET / HTTP/1.0\r\nConnection: keep-alive\r\n\r\n')
+ 736 |         self.read_response()
+ 737 |         self.assertEqual(self.headers['Connection'], 'Keep-Alive')
+ 738 |         self.close()
+ 739 | 
+ 740 |     def test_http10_keepalive_extra_crlf(self):
+ 741 |         self.http_version = b'HTTP/1.0'
+ 742 |         self.connect()
+ 743 |         self.stream.write(b'GET / HTTP/1.0\r\nConnection: keep-alive\r\n\r\n\r\n')
+ 744 |         self.read_response()
+ 745 |         self.assertEqual(self.headers['Connection'], 'Keep-Alive')
+ 746 |         self.stream.write(b'GET / HTTP/1.0\r\nConnection: keep-alive\r\n\r\n')
+ 747 |         self.read_response()
+ 748 |         self.assertEqual(self.headers['Connection'], 'Keep-Alive')
+ 749 |         self.close()
+ 750 | 
+ 751 |     def test_pipelined_requests(self):
+ 752 |         self.connect()
+ 753 |         self.stream.write(b'GET / HTTP/1.1\r\n\r\nGET / HTTP/1.1\r\n\r\n')
+ 754 |         self.read_response()
+ 755 |         self.read_response()
+ 756 |         self.close()
+ 757 | 
+ 758 |     def test_pipelined_cancel(self):
+ 759 |         self.connect()
+ 760 |         self.stream.write(b'GET / HTTP/1.1\r\n\r\nGET / HTTP/1.1\r\n\r\n')
+ 761 |         # only read once
+ 762 |         self.read_response()
+ 763 |         self.close()
+ 764 | 
+ 765 |     def test_cancel_during_download(self):
+ 766 |         self.connect()
+ 767 |         self.stream.write(b'GET /large HTTP/1.1\r\n\r\n')
+ 768 |         self.read_headers()
+ 769 |         self.stream.read_bytes(1024, self.stop)
+ 770 |         self.wait()
+ 771 |         self.close()
+ 772 | 
+ 773 |     def test_finish_while_closed(self):
+ 774 |         self.connect()
+ 775 |         self.stream.write(b'GET /finish_on_close HTTP/1.1\r\n\r\n')
+ 776 |         self.read_headers()
+ 777 |         self.close()
+ 778 | 
+ 779 |     def test_keepalive_chunked(self):
+ 780 |         self.http_version = b'HTTP/1.0'
+ 781 |         self.connect()
+ 782 |         self.stream.write(b'POST / HTTP/1.0\r\nConnection: keep-alive\r\n'
+ 783 |                           b'Transfer-Encoding: chunked\r\n'
+ 784 |                           b'\r\n0\r\n')
+ 785 |         self.read_response()
+ 786 |         self.assertEqual(self.headers['Connection'], 'Keep-Alive')
+ 787 |         self.stream.write(b'GET / HTTP/1.0\r\nConnection: keep-alive\r\n\r\n')
+ 788 |         self.read_response()
+ 789 |         self.assertEqual(self.headers['Connection'], 'Keep-Alive')
+ 790 |         self.close()
+ 791 | 
+ 792 | 
+ 793 | class GzipBaseTest(object):
+ 794 |     def get_app(self):
+ 795 |         return Application([('/', EchoHandler)])
+ 796 | 
+ 797 |     def post_gzip(self, body):
+ 798 |         bytesio = BytesIO()
+ 799 |         gzip_file = gzip.GzipFile(mode='w', fileobj=bytesio)
+ 800 |         gzip_file.write(utf8(body))
+ 801 |         gzip_file.close()
+ 802 |         compressed_body = bytesio.getvalue()
+ 803 |         return self.fetch('/', method='POST', body=compressed_body,
+ 804 |                           headers={'Content-Encoding': 'gzip'})
+ 805 | 
+ 806 |     def test_uncompressed(self):
+ 807 |         response = self.fetch('/', method='POST', body='foo=bar')
+ 808 |         self.assertEquals(json_decode(response.body), {u'foo': [u'bar']})
+ 809 | 
+ 810 | 
+ 811 | class GzipTest(GzipBaseTest, AsyncHTTPTestCase):
+ 812 |     def get_httpserver_options(self):
+ 813 |         return dict(decompress_request=True)
+ 814 | 
+ 815 |     def test_gzip(self):
+ 816 |         response = self.post_gzip('foo=bar')
+ 817 |         self.assertEquals(json_decode(response.body), {u'foo': [u'bar']})
+ 818 | 
+ 819 | 
+ 820 | class GzipUnsupportedTest(GzipBaseTest, AsyncHTTPTestCase):
+ 821 |     def test_gzip_unsupported(self):
+ 822 |         # Gzip support is opt-in; without it the server fails to parse
+ 823 |         # the body (but parsing form bodies is currently just a log message,
+ 824 |         # not a fatal error).
+ 825 |         with ExpectLog(gen_log, "Unsupported Content-Encoding"):
+ 826 |             response = self.post_gzip('foo=bar')
+ 827 |         self.assertEquals(json_decode(response.body), {})
+ 828 | 
+ 829 | 
+ 830 | class StreamingChunkSizeTest(AsyncHTTPTestCase):
+ 831 |     # 50 characters long, and repetitive so it can be compressed.
+ 832 |     BODY = b'01234567890123456789012345678901234567890123456789'
+ 833 |     CHUNK_SIZE = 16
+ 834 | 
+ 835 |     def get_http_client(self):
+ 836 |         # body_producer doesn't work on curl_httpclient, so override the
+ 837 |         # configured AsyncHTTPClient implementation.
+ 838 |         return SimpleAsyncHTTPClient(io_loop=self.io_loop)
+ 839 | 
+ 840 |     def get_httpserver_options(self):
+ 841 |         return dict(chunk_size=self.CHUNK_SIZE, decompress_request=True)
+ 842 | 
+ 843 |     class MessageDelegate(HTTPMessageDelegate):
+ 844 |         def __init__(self, connection):
+ 845 |             self.connection = connection
+ 846 | 
+ 847 |         def headers_received(self, start_line, headers):
+ 848 |             self.chunk_lengths = []
+ 849 | 
+ 850 |         def data_received(self, chunk):
+ 851 |             self.chunk_lengths.append(len(chunk))
+ 852 | 
+ 853 |         def finish(self):
+ 854 |             response_body = utf8(json_encode(self.chunk_lengths))
+ 855 |             self.connection.write_headers(
+ 856 |                 ResponseStartLine('HTTP/1.1', 200, 'OK'),
+ 857 |                 HTTPHeaders({'Content-Length': str(len(response_body))}))
+ 858 |             self.connection.write(response_body)
+ 859 |             self.connection.finish()
+ 860 | 
+ 861 |     def get_app(self):
+ 862 |         class App(HTTPServerConnectionDelegate):
+ 863 |             def start_request(self, server_conn, request_conn):
+ 864 |                 return StreamingChunkSizeTest.MessageDelegate(request_conn)
+ 865 |         return App()
+ 866 | 
+ 867 |     def fetch_chunk_sizes(self, **kwargs):
+ 868 |         response = self.fetch('/', method='POST', **kwargs)
+ 869 |         response.rethrow()
+ 870 |         chunks = json_decode(response.body)
+ 871 |         self.assertEqual(len(self.BODY), sum(chunks))
+ 872 |         for chunk_size in chunks:
+ 873 |             self.assertLessEqual(chunk_size, self.CHUNK_SIZE,
+ 874 |                                  'oversized chunk: ' + str(chunks))
+ 875 |             self.assertGreater(chunk_size, 0,
+ 876 |                                'empty chunk: ' + str(chunks))
+ 877 |         return chunks
+ 878 | 
+ 879 |     def compress(self, body):
+ 880 |         bytesio = BytesIO()
+ 881 |         gzfile = gzip.GzipFile(mode='w', fileobj=bytesio)
+ 882 |         gzfile.write(body)
+ 883 |         gzfile.close()
+ 884 |         compressed = bytesio.getvalue()
+ 885 |         if len(compressed) >= len(body):
+ 886 |             raise Exception("body did not shrink when compressed")
+ 887 |         return compressed
+ 888 | 
+ 889 |     def test_regular_body(self):
+ 890 |         chunks = self.fetch_chunk_sizes(body=self.BODY)
+ 891 |         # Without compression we know exactly what to expect.
+ 892 |         self.assertEqual([16, 16, 16, 2], chunks)
+ 893 | 
+ 894 |     def test_compressed_body(self):
+ 895 |         self.fetch_chunk_sizes(body=self.compress(self.BODY),
+ 896 |                                headers={'Content-Encoding': 'gzip'})
+ 897 |         # Compression creates irregular boundaries so the assertions
+ 898 |         # in fetch_chunk_sizes are as specific as we can get.
+ 899 | 
+ 900 |     def test_chunked_body(self):
+ 901 |         def body_producer(write):
+ 902 |             write(self.BODY[:20])
+ 903 |             write(self.BODY[20:])
+ 904 |         chunks = self.fetch_chunk_sizes(body_producer=body_producer)
+ 905 |         # HTTP chunk boundaries translate to application-visible breaks
+ 906 |         self.assertEqual([16, 4, 16, 14], chunks)
+ 907 | 
+ 908 |     def test_chunked_compressed(self):
+ 909 |         compressed = self.compress(self.BODY)
+ 910 |         self.assertGreater(len(compressed), 20)
+ 911 | 
+ 912 |         def body_producer(write):
+ 913 |             write(compressed[:20])
+ 914 |             write(compressed[20:])
+ 915 |         self.fetch_chunk_sizes(body_producer=body_producer,
+ 916 |                                headers={'Content-Encoding': 'gzip'})
+ 917 | 
+ 918 | 
+ 919 | class MaxHeaderSizeTest(AsyncHTTPTestCase):
+ 920 |     def get_app(self):
+ 921 |         return Application([('/', HelloWorldRequestHandler)])
+ 922 | 
+ 923 |     def get_httpserver_options(self):
+ 924 |         return dict(max_header_size=1024)
+ 925 | 
+ 926 |     def test_small_headers(self):
+ 927 |         response = self.fetch("/", headers={'X-Filler': 'a' * 100})
+ 928 |         response.rethrow()
+ 929 |         self.assertEqual(response.body, b"Hello world")
+ 930 | 
+ 931 |     def test_large_headers(self):
+ 932 |         with ExpectLog(gen_log, "Unsatisfiable read", required=False):
+ 933 |             response = self.fetch("/", headers={'X-Filler': 'a' * 1000})
+ 934 |         # 431 is "Request Header Fields Too Large", defined in RFC
+ 935 |         # 6585. However, many implementations just close the
+ 936 |         # connection in this case, resulting in a 599.
+ 937 |         self.assertIn(response.code, (431, 599))
+ 938 | 
+ 939 | 
+ 940 | @skipOnTravis
+ 941 | class IdleTimeoutTest(AsyncHTTPTestCase):
+ 942 |     def get_app(self):
+ 943 |         return Application([('/', HelloWorldRequestHandler)])
+ 944 | 
+ 945 |     def get_httpserver_options(self):
+ 946 |         return dict(idle_connection_timeout=0.1)
+ 947 | 
+ 948 |     def setUp(self):
+ 949 |         super(IdleTimeoutTest, self).setUp()
+ 950 |         self.streams = []
+ 951 | 
+ 952 |     def tearDown(self):
+ 953 |         super(IdleTimeoutTest, self).tearDown()
+ 954 |         for stream in self.streams:
+ 955 |             stream.close()
+ 956 | 
+ 957 |     def connect(self):
+ 958 |         stream = IOStream(socket.socket())
+ 959 |         stream.connect(('127.0.0.1', self.get_http_port()), self.stop)
+ 960 |         self.wait()
+ 961 |         self.streams.append(stream)
+ 962 |         return stream
+ 963 | 
+ 964 |     def test_unused_connection(self):
+ 965 |         stream = self.connect()
+ 966 |         stream.set_close_callback(self.stop)
+ 967 |         self.wait()
+ 968 | 
+ 969 |     def test_idle_after_use(self):
+ 970 |         stream = self.connect()
+ 971 |         stream.set_close_callback(lambda: self.stop("closed"))
+ 972 | 
+ 973 |         # Use the connection twice to make sure keep-alives are working
+ 974 |         for i in range(2):
+ 975 |             stream.write(b"GET / HTTP/1.1\r\n\r\n")
+ 976 |             stream.read_until(b"\r\n\r\n", self.stop)
+ 977 |             self.wait()
+ 978 |             stream.read_bytes(11, self.stop)
+ 979 |             data = self.wait()
+ 980 |             self.assertEqual(data, b"Hello world")
+ 981 | 
+ 982 |         # Now let the timeout trigger and close the connection.
+ 983 |         data = self.wait()
+ 984 |         self.assertEqual(data, "closed")
+ 985 | 
+ 986 | 
+ 987 | class BodyLimitsTest(AsyncHTTPTestCase):
+ 988 |     def get_app(self):
+ 989 |         class BufferedHandler(RequestHandler):
+ 990 |             def put(self):
+ 991 |                 self.write(str(len(self.request.body)))
+ 992 | 
+ 993 |         @stream_request_body
+ 994 |         class StreamingHandler(RequestHandler):
+ 995 |             def initialize(self):
+ 996 |                 self.bytes_read = 0
+ 997 | 
+ 998 |             def prepare(self):
+ 999 |                 if 'expected_size' in self.request.arguments:
+1000 |                     self.request.connection.set_max_body_size(
+1001 |                         int(self.get_argument('expected_size')))
+1002 |                 if 'body_timeout' in self.request.arguments:
+1003 |                     self.request.connection.set_body_timeout(
+1004 |                         float(self.get_argument('body_timeout')))
+1005 | 
+1006 |             def data_received(self, data):
+1007 |                 self.bytes_read += len(data)
+1008 | 
+1009 |             def put(self):
+1010 |                 self.write(str(self.bytes_read))
+1011 | 
+1012 |         return Application([('/buffered', BufferedHandler),
+1013 |                             ('/streaming', StreamingHandler)])
+1014 | 
+1015 |     def get_httpserver_options(self):
+1016 |         return dict(body_timeout=3600, max_body_size=4096)
+1017 | 
+1018 |     def get_http_client(self):
+1019 |         # body_producer doesn't work on curl_httpclient, so override the
+1020 |         # configured AsyncHTTPClient implementation.
+1021 |         return SimpleAsyncHTTPClient(io_loop=self.io_loop)
+1022 | 
+1023 |     def test_small_body(self):
+1024 |         response = self.fetch('/buffered', method='PUT', body=b'a' * 4096)
+1025 |         self.assertEqual(response.body, b'4096')
+1026 |         response = self.fetch('/streaming', method='PUT', body=b'a' * 4096)
+1027 |         self.assertEqual(response.body, b'4096')
+1028 | 
+1029 |     def test_large_body_buffered(self):
+1030 |         with ExpectLog(gen_log, '.*Content-Length too long'):
+1031 |             response = self.fetch('/buffered', method='PUT', body=b'a' * 10240)
+1032 |         self.assertEqual(response.code, 599)
+1033 | 
+1034 |     def test_large_body_buffered_chunked(self):
+1035 |         with ExpectLog(gen_log, '.*chunked body too large'):
+1036 |             response = self.fetch('/buffered', method='PUT',
+1037 |                                   body_producer=lambda write: write(b'a' * 10240))
+1038 |         self.assertEqual(response.code, 599)
+1039 | 
+1040 |     def test_large_body_streaming(self):
+1041 |         with ExpectLog(gen_log, '.*Content-Length too long'):
+1042 |             response = self.fetch('/streaming', method='PUT', body=b'a' * 10240)
+1043 |         self.assertEqual(response.code, 599)
+1044 | 
+1045 |     def test_large_body_streaming_chunked(self):
+1046 |         with ExpectLog(gen_log, '.*chunked body too large'):
+1047 |             response = self.fetch('/streaming', method='PUT',
+1048 |                                   body_producer=lambda write: write(b'a' * 10240))
+1049 |         self.assertEqual(response.code, 599)
+1050 | 
+1051 |     def test_large_body_streaming_override(self):
+1052 |         response = self.fetch('/streaming?expected_size=10240', method='PUT',
+1053 |                               body=b'a' * 10240)
+1054 |         self.assertEqual(response.body, b'10240')
+1055 | 
+1056 |     def test_large_body_streaming_chunked_override(self):
+1057 |         response = self.fetch('/streaming?expected_size=10240', method='PUT',
+1058 |                               body_producer=lambda write: write(b'a' * 10240))
+1059 |         self.assertEqual(response.body, b'10240')
+1060 | 
+1061 |     @gen_test
+1062 |     def test_timeout(self):
+1063 |         stream = IOStream(socket.socket())
+1064 |         try:
+1065 |             yield stream.connect(('127.0.0.1', self.get_http_port()))
+1066 |             # Use a raw stream because AsyncHTTPClient won't let us read a
+1067 |             # response without finishing a body.
+1068 |             stream.write(b'PUT /streaming?body_timeout=0.1 HTTP/1.0\r\n'
+1069 |                          b'Content-Length: 42\r\n\r\n')
+1070 |             with ExpectLog(gen_log, 'Timeout reading body'):
+1071 |                 response = yield stream.read_until_close()
+1072 |             self.assertEqual(response, b'')
+1073 |         finally:
+1074 |             stream.close()
+1075 | 
+1076 |     @gen_test
+1077 |     def test_body_size_override_reset(self):
+1078 |         # The max_body_size override is reset between requests.
+1079 |         stream = IOStream(socket.socket())
+1080 |         try:
+1081 |             yield stream.connect(('127.0.0.1', self.get_http_port()))
+1082 |             # Use a raw stream so we can make sure it's all on one connection.
+1083 |             stream.write(b'PUT /streaming?expected_size=10240 HTTP/1.1\r\n'
+1084 |                          b'Content-Length: 10240\r\n\r\n')
+1085 |             stream.write(b'a' * 10240)
+1086 |             headers, response = yield gen.Task(read_stream_body, stream)
+1087 |             self.assertEqual(response, b'10240')
+1088 |             # Without the ?expected_size parameter, we get the old default value
+1089 |             stream.write(b'PUT /streaming HTTP/1.1\r\n'
+1090 |                          b'Content-Length: 10240\r\n\r\n')
+1091 |             with ExpectLog(gen_log, '.*Content-Length too long'):
+1092 |                 data = yield stream.read_until_close()
+1093 |             self.assertEqual(data, b'')
+1094 |         finally:
+1095 |             stream.close()
+1096 | 
+1097 | 
+1098 | class LegacyInterfaceTest(AsyncHTTPTestCase):
+1099 |     def get_app(self):
+1100 |         # The old request_callback interface does not implement the
+1101 |         # delegate interface, and writes its response via request.write
+1102 |         # instead of request.connection.write_headers.
+1103 |         def handle_request(request):
+1104 |             self.http1 = request.version.startswith("HTTP/1.")
+1105 |             if not self.http1:
+1106 |                 # This test will be skipped if we're using HTTP/2,
+1107 |                 # so just close it out cleanly using the modern interface.
+1108 |                 request.connection.write_headers(
+1109 |                     ResponseStartLine('', 200, 'OK'),
+1110 |                     HTTPHeaders())
+1111 |                 request.connection.finish()
+1112 |                 return
+1113 |             message = b"Hello world"
+1114 |             request.write(utf8("HTTP/1.1 200 OK\r\n"
+1115 |                                "Content-Length: %d\r\n\r\n" % len(message)))
+1116 |             request.write(message)
+1117 |             request.finish()
+1118 |         return handle_request
+1119 | 
+1120 |     def test_legacy_interface(self):
+1121 |         response = self.fetch('/')
+1122 |         if not self.http1:
+1123 |             self.skipTest("requires HTTP/1.x")
+1124 |         self.assertEqual(response.body, b"Hello world")
+```

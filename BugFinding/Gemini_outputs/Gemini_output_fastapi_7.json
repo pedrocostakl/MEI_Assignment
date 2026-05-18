@@ -1,0 +1,12 @@
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "fastapi/exception_handlers.py",
+      "line_start": 21,
+      "line_end": 23,
+      "confidence": "high",
+      "reason": "The content payload `exc.errors()` is passed directly to `JSONResponse`, which uses the standard JSON encoder and fails on objects like `Decimal`. It should be processed with `jsonable_encoder` first."
+    }
+  ]
+}

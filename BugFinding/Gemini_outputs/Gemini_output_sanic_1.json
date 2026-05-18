@@ -1,0 +1,20 @@
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "sanic/app.py",
+      "line_start": 651,
+      "line_end": 656,
+      "confidence": "high",
+      "reason": "When registering named response middleware, it uses `append` instead of `appendleft`. Response middleware needs to be stored in reverse order of registration so they execute correctly, just like the global `self.response_middleware.appendleft()`."
+    },
+    {
+      "file_id": "file_1",
+      "file_path": "sanic/app.py",
+      "line_start": 1315,
+      "line_end": 1315,
+      "confidence": "medium",
+      "reason": "The execution order of combined response middleware may also be inverted; it likely should be `named_middleware + self.response_middleware` to execute blueprint response middleware before app response middleware."
+    }
+  ]
+}

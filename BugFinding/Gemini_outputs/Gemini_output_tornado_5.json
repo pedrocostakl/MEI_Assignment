@@ -1,0 +1,12 @@
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "tornado/ioloop.py",
+      "line_start": 1220,
+      "line_end": 1223,
+      "confidence": "high",
+      "reason": "The `_update_next` method fails to advance `self._next_timeout` when `current_time` is less than `self._next_timeout` (e.g., if the clock goes backward). This causes the timeout to be continuously rescheduled at the same time in the past, leading to test failures for backward clock jumps."
+    }
+  ]
+}

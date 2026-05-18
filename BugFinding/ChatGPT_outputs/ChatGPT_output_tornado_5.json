@@ -1,0 +1,20 @@
+{
+   "bug_locations":[
+      {
+         "file_id":"file_1",
+         "file_path":"BugsInPy/workspace/tornado/tornado/ioloop.py",
+         "line_start":1119,
+         "line_end":1123,
+         "confidence":"high",
+         "reason":"add_callback only wakes the loop when called from another thread. The failing wakeup-related tests indicate callbacks scheduled from the same thread while polling may not wake the loop immediately."
+      },
+      {
+         "file_id":"file_1",
+         "file_path":"BugsInPy/workspace/tornado/tornado/ioloop.py",
+         "line_start":1016,
+         "line_end":1028,
+         "confidence":"medium",
+         "reason":"The poll timeout calculation depends on pending callbacks and timeouts. A stale poll timeout here could delay execution of newly-added callbacks and cause wakeup timing failures."
+      }
+   ]
+}

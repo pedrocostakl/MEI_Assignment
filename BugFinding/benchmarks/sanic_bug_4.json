@@ -1,0 +1,9 @@
+{
+  "bug_locations": [
+    {
+      "file_path": "BugsInPy/workspace/sanic/sanic/request.py",
+      "line_start": 519,
+      "line_end": 526
+    }
+  ]
+}

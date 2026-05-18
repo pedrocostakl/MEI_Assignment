@@ -1,0 +1,9 @@
+{
+  "bug_locations": [
+    {
+      "file_path": "BugsInPy/workspace/tornado/tornado/http1connection.py",
+      "line_start": 565,
+      "line_end": 571
+    }
+  ]
+}

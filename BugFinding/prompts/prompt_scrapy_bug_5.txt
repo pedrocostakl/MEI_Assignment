@@ -1,0 +1,796 @@
+You are given buggy source files and failing test files.
+
+Your task is BUG LOCALIZATION ONLY.
+
+Return only valid JSON using this exact format:
+
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "relative/path.py",
+      "line_start": 1,
+      "line_end": 1,
+      "confidence": "low|medium|high",
+      "reason": "Max 2 sentences."
+    }
+  ]
+}
+
+Rules:
+- Do not propose fixes.
+- Do not rewrite code.
+- Do not explain outside JSON.
+- Line numbers must refer to the numbered buggy source file.
+- Include at most the number of suspected locations you think there are.
+- Prefer the smallest line range that identifies the origin of the bug.
+
+
+SOURCE FILES:
+
+[file_1] BugsInPy/workspace/scrapy/scrapy/contracts/__init__.py
+```python
+  1 | import sys
+  2 | import re
+  3 | from functools import wraps
+  4 | from unittest import TestCase
+  5 | 
+  6 | from scrapy.http import Request
+  7 | from scrapy.utils.spider import iterate_spider_output
+  8 | from scrapy.utils.python import get_spec
+  9 | 
+ 10 | 
+ 11 | class ContractsManager(object):
+ 12 |     contracts = {}
+ 13 | 
+ 14 |     def __init__(self, contracts):
+ 15 |         for contract in contracts:
+ 16 |             self.contracts[contract.name] = contract
+ 17 | 
+ 18 |     def tested_methods_from_spidercls(self, spidercls):
+ 19 |         methods = []
+ 20 |         for key, value in vars(spidercls).items():
+ 21 |             if (callable(value) and value.__doc__ and
+ 22 |                     re.search(r'^\s*@', value.__doc__, re.MULTILINE)):
+ 23 |                 methods.append(key)
+ 24 | 
+ 25 |         return methods
+ 26 | 
+ 27 |     def extract_contracts(self, method):
+ 28 |         contracts = []
+ 29 |         for line in method.__doc__.split('\n'):
+ 30 |             line = line.strip()
+ 31 | 
+ 32 |             if line.startswith('@'):
+ 33 |                 name, args = re.match(r'@(\w+)\s*(.*)', line).groups()
+ 34 |                 args = re.split(r'\s+', args)
+ 35 | 
+ 36 |                 contracts.append(self.contracts[name](method, *args))
+ 37 | 
+ 38 |         return contracts
+ 39 | 
+ 40 |     def from_spider(self, spider, results):
+ 41 |         requests = []
+ 42 |         for method in self.tested_methods_from_spidercls(type(spider)):
+ 43 |             bound_method = spider.__getattribute__(method)
+ 44 |             requests.append(self.from_method(bound_method, results))
+ 45 | 
+ 46 |         return requests
+ 47 | 
+ 48 |     def from_method(self, method, results):
+ 49 |         contracts = self.extract_contracts(method)
+ 50 |         if contracts:
+ 51 |             # calculate request args
+ 52 |             args, kwargs = get_spec(Request.__init__)
+ 53 |             kwargs['callback'] = method
+ 54 |             for contract in contracts:
+ 55 |                 kwargs = contract.adjust_request_args(kwargs)
+ 56 | 
+ 57 |             # create and prepare request
+ 58 |             args.remove('self')
+ 59 |             if set(args).issubset(set(kwargs)):
+ 60 |                 request = Request(**kwargs)
+ 61 | 
+ 62 |                 # execute pre and post hooks in order
+ 63 |                 for contract in reversed(contracts):
+ 64 |                     request = contract.add_pre_hook(request, results)
+ 65 |                 for contract in contracts:
+ 66 |                     request = contract.add_post_hook(request, results)
+ 67 | 
+ 68 |                 self._clean_req(request, method, results)
+ 69 |                 return request
+ 70 | 
+ 71 |     def _clean_req(self, request, method, results):
+ 72 |         """ stop the request from returning objects and records any errors """
+ 73 | 
+ 74 |         cb = request.callback
+ 75 | 
+ 76 |         @wraps(cb)
+ 77 |         def cb_wrapper(response):
+ 78 |             try:
+ 79 |                 output = cb(response)
+ 80 |                 output = list(iterate_spider_output(output))
+ 81 |             except:
+ 82 |                 case = _create_testcase(method, 'callback')
+ 83 |                 results.addError(case, sys.exc_info())
+ 84 | 
+ 85 |         def eb_wrapper(failure):
+ 86 |             case = _create_testcase(method, 'errback')
+ 87 |             exc_info = failure.value, failure.type, failure.getTracebackObject()
+ 88 |             results.addError(case, exc_info)
+ 89 | 
+ 90 |         request.callback = cb_wrapper
+ 91 |         request.errback = eb_wrapper
+ 92 | 
+ 93 | 
+ 94 | class Contract(object):
+ 95 |     """ Abstract class for contracts """
+ 96 | 
+ 97 |     def __init__(self, method, *args):
+ 98 |         self.testcase_pre = _create_testcase(method, '@%s pre-hook' % self.name)
+ 99 |         self.testcase_post = _create_testcase(method, '@%s post-hook' % self.name)
+100 |         self.args = args
+101 | 
+102 |     def add_pre_hook(self, request, results):
+103 |         if hasattr(self, 'pre_process'):
+104 |             cb = request.callback
+105 | 
+106 |             @wraps(cb)
+107 |             def wrapper(response):
+108 |                 try:
+109 |                     results.startTest(self.testcase_pre)
+110 |                     self.pre_process(response)
+111 |                     results.stopTest(self.testcase_pre)
+112 |                 except AssertionError:
+113 |                     results.addFailure(self.testcase_pre, sys.exc_info())
+114 |                 except Exception:
+115 |                     results.addError(self.testcase_pre, sys.exc_info())
+116 |                 else:
+117 |                     results.addSuccess(self.testcase_pre)
+118 |                 finally:
+119 |                     return list(iterate_spider_output(cb(response)))
+120 | 
+121 |             request.callback = wrapper
+122 | 
+123 |         return request
+124 | 
+125 |     def add_post_hook(self, request, results):
+126 |         if hasattr(self, 'post_process'):
+127 |             cb = request.callback
+128 | 
+129 |             @wraps(cb)
+130 |             def wrapper(response):
+131 |                 output = list(iterate_spider_output(cb(response)))
+132 |                 try:
+133 |                     results.startTest(self.testcase_post)
+134 |                     self.post_process(output)
+135 |                     results.stopTest(self.testcase_post)
+136 |                 except AssertionError:
+137 |                     results.addFailure(self.testcase_post, sys.exc_info())
+138 |                 except Exception:
+139 |                     results.addError(self.testcase_post, sys.exc_info())
+140 |                 else:
+141 |                     results.addSuccess(self.testcase_post)
+142 |                 finally:
+143 |                     return output
+144 | 
+145 |             request.callback = wrapper
+146 | 
+147 |         return request
+148 | 
+149 |     def adjust_request_args(self, args):
+150 |         return args
+151 | 
+152 | 
+153 | def _create_testcase(method, desc):
+154 |     spider = method.__self__.name
+155 | 
+156 |     class ContractTestCase(TestCase):
+157 |         def __str__(_self):
+158 |             return "[%s] %s (%s)" % (spider, method.__name__, desc)
+159 | 
+160 |     name = '%s_%s' % (spider, method.__name__)
+161 |     setattr(ContractTestCase, name, lambda x: x)
+162 |     return ContractTestCase(name)
+```
+
+
+FAILING TEST FILES:
+
+[test_file_1] BugsInPy/workspace/scrapy/tests/test_http_response.py
+```python
+  1 | # -*- coding: utf-8 -*-
+  2 | import unittest
+  3 | 
+  4 | import six
+  5 | from w3lib.encoding import resolve_encoding
+  6 | 
+  7 | from scrapy.http import (Request, Response, TextResponse, HtmlResponse,
+  8 |                          XmlResponse, Headers)
+  9 | from scrapy.selector import Selector
+ 10 | from scrapy.utils.python import to_native_str
+ 11 | from scrapy.exceptions import NotSupported
+ 12 | from scrapy.link import Link
+ 13 | from tests import get_testdata
+ 14 | 
+ 15 | 
+ 16 | class BaseResponseTest(unittest.TestCase):
+ 17 | 
+ 18 |     response_class = Response
+ 19 | 
+ 20 |     def test_init(self):
+ 21 |         # Response requires url in the consturctor
+ 22 |         self.assertRaises(Exception, self.response_class)
+ 23 |         self.assertTrue(isinstance(self.response_class('http://example.com/'), self.response_class))
+ 24 |         if not six.PY2:
+ 25 |             self.assertRaises(TypeError, self.response_class, b"http://example.com")
+ 26 |         # body can be str or None
+ 27 |         self.assertTrue(isinstance(self.response_class('http://example.com/', body=b''), self.response_class))
+ 28 |         self.assertTrue(isinstance(self.response_class('http://example.com/', body=b'body'), self.response_class))
+ 29 |         # test presence of all optional parameters
+ 30 |         self.assertTrue(isinstance(self.response_class('http://example.com/', body=b'', headers={}, status=200), self.response_class))
+ 31 | 
+ 32 |         r = self.response_class("http://www.example.com")
+ 33 |         assert isinstance(r.url, str)
+ 34 |         self.assertEqual(r.url, "http://www.example.com")
+ 35 |         self.assertEqual(r.status, 200)
+ 36 | 
+ 37 |         assert isinstance(r.headers, Headers)
+ 38 |         self.assertEqual(r.headers, {})
+ 39 | 
+ 40 |         headers = {"foo": "bar"}
+ 41 |         body = b"a body"
+ 42 |         r = self.response_class("http://www.example.com", headers=headers, body=body)
+ 43 | 
+ 44 |         assert r.headers is not headers
+ 45 |         self.assertEqual(r.headers[b"foo"], b"bar")
+ 46 | 
+ 47 |         r = self.response_class("http://www.example.com", status=301)
+ 48 |         self.assertEqual(r.status, 301)
+ 49 |         r = self.response_class("http://www.example.com", status='301')
+ 50 |         self.assertEqual(r.status, 301)
+ 51 |         self.assertRaises(ValueError, self.response_class, "http://example.com", status='lala200')
+ 52 | 
+ 53 |     def test_copy(self):
+ 54 |         """Test Response copy"""
+ 55 | 
+ 56 |         r1 = self.response_class("http://www.example.com", body=b"Some body")
+ 57 |         r1.flags.append('cached')
+ 58 |         r2 = r1.copy()
+ 59 | 
+ 60 |         self.assertEqual(r1.status, r2.status)
+ 61 |         self.assertEqual(r1.body, r2.body)
+ 62 | 
+ 63 |         # make sure flags list is shallow copied
+ 64 |         assert r1.flags is not r2.flags, "flags must be a shallow copy, not identical"
+ 65 |         self.assertEqual(r1.flags, r2.flags)
+ 66 | 
+ 67 |         # make sure headers attribute is shallow copied
+ 68 |         assert r1.headers is not r2.headers, "headers must be a shallow copy, not identical"
+ 69 |         self.assertEqual(r1.headers, r2.headers)
+ 70 | 
+ 71 |     def test_copy_meta(self):
+ 72 |         req = Request("http://www.example.com")
+ 73 |         req.meta['foo'] = 'bar'
+ 74 |         r1 = self.response_class("http://www.example.com", body=b"Some body", request=req)
+ 75 |         assert r1.meta is req.meta
+ 76 | 
+ 77 |     def test_copy_inherited_classes(self):
+ 78 |         """Test Response children copies preserve their class"""
+ 79 | 
+ 80 |         class CustomResponse(self.response_class):
+ 81 |             pass
+ 82 | 
+ 83 |         r1 = CustomResponse('http://www.example.com')
+ 84 |         r2 = r1.copy()
+ 85 | 
+ 86 |         assert type(r2) is CustomResponse
+ 87 | 
+ 88 |     def test_replace(self):
+ 89 |         """Test Response.replace() method"""
+ 90 |         hdrs = Headers({"key": "value"})
+ 91 |         r1 = self.response_class("http://www.example.com")
+ 92 |         r2 = r1.replace(status=301, body=b"New body", headers=hdrs)
+ 93 |         assert r1.body == b''
+ 94 |         self.assertEqual(r1.url, r2.url)
+ 95 |         self.assertEqual((r1.status, r2.status), (200, 301))
+ 96 |         self.assertEqual((r1.body, r2.body), (b'', b"New body"))
+ 97 |         self.assertEqual((r1.headers, r2.headers), ({}, hdrs))
+ 98 | 
+ 99 |         # Empty attributes (which may fail if not compared properly)
+100 |         r3 = self.response_class("http://www.example.com", flags=['cached'])
+101 |         r4 = r3.replace(body=b'', flags=[])
+102 |         self.assertEqual(r4.body, b'')
+103 |         self.assertEqual(r4.flags, [])
+104 | 
+105 |     def _assert_response_values(self, response, encoding, body):
+106 |         if isinstance(body, six.text_type):
+107 |             body_unicode = body
+108 |             body_bytes = body.encode(encoding)
+109 |         else:
+110 |             body_unicode = body.decode(encoding)
+111 |             body_bytes = body
+112 | 
+113 |         assert isinstance(response.body, bytes)
+114 |         assert isinstance(response.text, six.text_type)
+115 |         self._assert_response_encoding(response, encoding)
+116 |         self.assertEqual(response.body, body_bytes)
+117 |         self.assertEqual(response.body_as_unicode(), body_unicode)
+118 |         self.assertEqual(response.text, body_unicode)
+119 | 
+120 |     def _assert_response_encoding(self, response, encoding):
+121 |         self.assertEqual(response.encoding, resolve_encoding(encoding))
+122 | 
+123 |     def test_immutable_attributes(self):
+124 |         r = self.response_class("http://example.com")
+125 |         self.assertRaises(AttributeError, setattr, r, 'url', 'http://example2.com')
+126 |         self.assertRaises(AttributeError, setattr, r, 'body', 'xxx')
+127 | 
+128 |     def test_urljoin(self):
+129 |         """Test urljoin shortcut (only for existence, since behavior equals urljoin)"""
+130 |         joined = self.response_class('http://www.example.com').urljoin('/test')
+131 |         absolute = 'http://www.example.com/test'
+132 |         self.assertEqual(joined, absolute)
+133 | 
+134 |     def test_shortcut_attributes(self):
+135 |         r = self.response_class("http://example.com", body=b'hello')
+136 |         if self.response_class == Response:
+137 |             msg = "Response content isn't text"
+138 |             self.assertRaisesRegexp(AttributeError, msg, getattr, r, 'text')
+139 |             self.assertRaisesRegexp(NotSupported, msg, r.css, 'body')
+140 |             self.assertRaisesRegexp(NotSupported, msg, r.xpath, '//body')
+141 |         else:
+142 |             r.text
+143 |             r.css('body')
+144 |             r.xpath('//body')
+145 | 
+146 |     def test_follow_url_absolute(self):
+147 |         self._assert_followed_url('http://foo.example.com',
+148 |                                   'http://foo.example.com')
+149 | 
+150 |     def test_follow_url_relative(self):
+151 |         self._assert_followed_url('foo',
+152 |                                   'http://example.com/foo')
+153 | 
+154 |     def test_follow_link(self):
+155 |         self._assert_followed_url(Link('http://example.com/foo'),
+156 |                                   'http://example.com/foo')
+157 | 
+158 |     def test_follow_None_url(self):
+159 |         r = self.response_class("http://example.com")
+160 |         self.assertRaises(ValueError, r.follow, None)
+161 | 
+162 |     def test_follow_whitespace_url(self):
+163 |         self._assert_followed_url('foo ',
+164 |                                   'http://example.com/foo%20')
+165 | 
+166 |     def test_follow_whitespace_link(self):
+167 |         self._assert_followed_url(Link('http://example.com/foo '),
+168 |                                   'http://example.com/foo%20')
+169 |     def _assert_followed_url(self, follow_obj, target_url, response=None):
+170 |         if response is None:
+171 |             response = self._links_response()
+172 |         req = response.follow(follow_obj)
+173 |         self.assertEqual(req.url, target_url)
+174 |         return req
+175 | 
+176 |     def _links_response(self):
+177 |         body = get_testdata('link_extractor', 'sgml_linkextractor.html')
+178 |         resp = self.response_class('http://example.com/index', body=body)
+179 |         return resp
+180 | 
+181 | 
+182 | class TextResponseTest(BaseResponseTest):
+183 | 
+184 |     response_class = TextResponse
+185 | 
+186 |     def test_replace(self):
+187 |         super(TextResponseTest, self).test_replace()
+188 |         r1 = self.response_class("http://www.example.com", body="hello", encoding="cp852")
+189 |         r2 = r1.replace(url="http://www.example.com/other")
+190 |         r3 = r1.replace(url="http://www.example.com/other", encoding="latin1")
+191 | 
+192 |         assert isinstance(r2, self.response_class)
+193 |         self.assertEqual(r2.url, "http://www.example.com/other")
+194 |         self._assert_response_encoding(r2, "cp852")
+195 |         self.assertEqual(r3.url, "http://www.example.com/other")
+196 |         self.assertEqual(r3._declared_encoding(), "latin1")
+197 | 
+198 |     def test_unicode_url(self):
+199 |         # instantiate with unicode url without encoding (should set default encoding)
+200 |         resp = self.response_class(u"http://www.example.com/")
+201 |         self._assert_response_encoding(resp, self.response_class._DEFAULT_ENCODING)
+202 | 
+203 |         # make sure urls are converted to str
+204 |         resp = self.response_class(url=u"http://www.example.com/", encoding='utf-8')
+205 |         assert isinstance(resp.url, str)
+206 | 
+207 |         resp = self.response_class(url=u"http://www.example.com/price/\xa3", encoding='utf-8')
+208 |         self.assertEqual(resp.url, to_native_str(b'http://www.example.com/price/\xc2\xa3'))
+209 |         resp = self.response_class(url=u"http://www.example.com/price/\xa3", encoding='latin-1')
+210 |         self.assertEqual(resp.url, 'http://www.example.com/price/\xa3')
+211 |         resp = self.response_class(u"http://www.example.com/price/\xa3", headers={"Content-type": ["text/html; charset=utf-8"]})
+212 |         self.assertEqual(resp.url, to_native_str(b'http://www.example.com/price/\xc2\xa3'))
+213 |         resp = self.response_class(u"http://www.example.com/price/\xa3", headers={"Content-type": ["text/html; charset=iso-8859-1"]})
+214 |         self.assertEqual(resp.url, 'http://www.example.com/price/\xa3')
+215 | 
+216 |     def test_unicode_body(self):
+217 |         unicode_string = u'\u043a\u0438\u0440\u0438\u043b\u043b\u0438\u0447\u0435\u0441\u043a\u0438\u0439 \u0442\u0435\u043a\u0441\u0442'
+218 |         self.assertRaises(TypeError, self.response_class, 'http://www.example.com', body=u'unicode body')
+219 | 
+220 |         original_string = unicode_string.encode('cp1251')
+221 |         r1 = self.response_class('http://www.example.com', body=original_string, encoding='cp1251')
+222 | 
+223 |         # check body_as_unicode
+224 |         self.assertTrue(isinstance(r1.body_as_unicode(), six.text_type))
+225 |         self.assertEqual(r1.body_as_unicode(), unicode_string)
+226 | 
+227 |         # check response.text
+228 |         self.assertTrue(isinstance(r1.text, six.text_type))
+229 |         self.assertEqual(r1.text, unicode_string)
+230 | 
+231 |     def test_encoding(self):
+232 |         r1 = self.response_class("http://www.example.com", headers={"Content-type": ["text/html; charset=utf-8"]}, body=b"\xc2\xa3")
+233 |         r2 = self.response_class("http://www.example.com", encoding='utf-8', body=u"\xa3")
+234 |         r3 = self.response_class("http://www.example.com", headers={"Content-type": ["text/html; charset=iso-8859-1"]}, body=b"\xa3")
+235 |         r4 = self.response_class("http://www.example.com", body=b"\xa2\xa3")
+236 |         r5 = self.response_class("http://www.example.com", headers={"Content-type": ["text/html; charset=None"]}, body=b"\xc2\xa3")
+237 |         r6 = self.response_class("http://www.example.com", headers={"Content-type": ["text/html; charset=gb2312"]}, body=b"\xa8D")
+238 |         r7 = self.response_class("http://www.example.com", headers={"Content-type": ["text/html; charset=gbk"]}, body=b"\xa8D")
+239 | 
+240 |         self.assertEqual(r1._headers_encoding(), "utf-8")
+241 |         self.assertEqual(r2._headers_encoding(), None)
+242 |         self.assertEqual(r2._declared_encoding(), 'utf-8')
+243 |         self._assert_response_encoding(r2, 'utf-8')
+244 |         self.assertEqual(r3._headers_encoding(), "cp1252")
+245 |         self.assertEqual(r3._declared_encoding(), "cp1252")
+246 |         self.assertEqual(r4._headers_encoding(), None)
+247 |         self.assertEqual(r5._headers_encoding(), None)
+248 |         self._assert_response_encoding(r5, "utf-8")
+249 |         assert r4._body_inferred_encoding() is not None and r4._body_inferred_encoding() != 'ascii'
+250 |         self._assert_response_values(r1, 'utf-8', u"\xa3")
+251 |         self._assert_response_values(r2, 'utf-8', u"\xa3")
+252 |         self._assert_response_values(r3, 'iso-8859-1', u"\xa3")
+253 |         self._assert_response_values(r6, 'gb18030', u"\u2015")
+254 |         self._assert_response_values(r7, 'gb18030', u"\u2015")
+255 | 
+256 |         # TextResponse (and subclasses) must be passed a encoding when instantiating with unicode bodies
+257 |         self.assertRaises(TypeError, self.response_class, "http://www.example.com", body=u"\xa3")
+258 | 
+259 |     def test_declared_encoding_invalid(self):
+260 |         """Check that unknown declared encodings are ignored"""
+261 |         r = self.response_class("http://www.example.com",
+262 |                                 headers={"Content-type": ["text/html; charset=UKNOWN"]},
+263 |                                 body=b"\xc2\xa3")
+264 |         self.assertEqual(r._declared_encoding(), None)
+265 |         self._assert_response_values(r, 'utf-8', u"\xa3")
+266 | 
+267 |     def test_utf16(self):
+268 |         """Test utf-16 because UnicodeDammit is known to have problems with"""
+269 |         r = self.response_class("http://www.example.com",
+270 |                                 body=b'\xff\xfeh\x00i\x00',
+271 |                                 encoding='utf-16')
+272 |         self._assert_response_values(r, 'utf-16', u"hi")
+273 | 
+274 |     def test_invalid_utf8_encoded_body_with_valid_utf8_BOM(self):
+275 |         r6 = self.response_class("http://www.example.com",
+276 |                                  headers={"Content-type": ["text/html; charset=utf-8"]},
+277 |                                  body=b"\xef\xbb\xbfWORD\xe3\xab")
+278 |         self.assertEqual(r6.encoding, 'utf-8')
+279 |         self.assertIn(r6.text, {
+280 |             u'WORD\ufffd\ufffd',  # w3lib < 1.19.0
+281 |             u'WORD\ufffd',        # w3lib >= 1.19.0
+282 |         })
+283 | 
+284 |     def test_bom_is_removed_from_body(self):
+285 |         # Inferring encoding from body also cache decoded body as sideeffect,
+286 |         # this test tries to ensure that calling response.encoding and
+287 |         # response.text in indistint order doesn't affect final
+288 |         # values for encoding and decoded body.
+289 |         url = 'http://example.com'
+290 |         body = b"\xef\xbb\xbfWORD"
+291 |         headers = {"Content-type": ["text/html; charset=utf-8"]}
+292 | 
+293 |         # Test response without content-type and BOM encoding
+294 |         response = self.response_class(url, body=body)
+295 |         self.assertEqual(response.encoding, 'utf-8')
+296 |         self.assertEqual(response.text, u'WORD')
+297 |         response = self.response_class(url, body=body)
+298 |         self.assertEqual(response.text, u'WORD')
+299 |         self.assertEqual(response.encoding, 'utf-8')
+300 | 
+301 |         # Body caching sideeffect isn't triggered when encoding is declared in
+302 |         # content-type header but BOM still need to be removed from decoded
+303 |         # body
+304 |         response = self.response_class(url, headers=headers, body=body)
+305 |         self.assertEqual(response.encoding, 'utf-8')
+306 |         self.assertEqual(response.text, u'WORD')
+307 |         response = self.response_class(url, headers=headers, body=body)
+308 |         self.assertEqual(response.text, u'WORD')
+309 |         self.assertEqual(response.encoding, 'utf-8')
+310 | 
+311 |     def test_replace_wrong_encoding(self):
+312 |         """Test invalid chars are replaced properly"""
+313 |         r = self.response_class("http://www.example.com", encoding='utf-8', body=b'PREFIX\xe3\xabSUFFIX')
+314 |         # XXX: Policy for replacing invalid chars may suffer minor variations
+315 |         # but it should always contain the unicode replacement char (u'\ufffd')
+316 |         assert u'\ufffd' in r.text, repr(r.text)
+317 |         assert u'PREFIX' in r.text, repr(r.text)
+318 |         assert u'SUFFIX' in r.text, repr(r.text)
+319 | 
+320 |         # Do not destroy html tags due to encoding bugs
+321 |         r = self.response_class("http://example.com", encoding='utf-8', \
+322 |                 body=b'\xf0<span>value</span>')
+323 |         assert u'<span>value</span>' in r.text, repr(r.text)
+324 | 
+325 |         # FIXME: This test should pass once we stop using BeautifulSoup's UnicodeDammit in TextResponse
+326 |         #r = self.response_class("http://www.example.com", body=b'PREFIX\xe3\xabSUFFIX')
+327 |         #assert u'\ufffd' in r.text, repr(r.text)
+328 | 
+329 |     def test_selector(self):
+330 |         body = b"<html><head><title>Some page</title><body></body></html>"
+331 |         response = self.response_class("http://www.example.com", body=body)
+332 | 
+333 |         self.assertIsInstance(response.selector, Selector)
+334 |         self.assertEqual(response.selector.type, 'html')
+335 |         self.assertIs(response.selector, response.selector)  # property is cached
+336 |         self.assertIs(response.selector.response, response)
+337 | 
+338 |         self.assertEqual(
+339 |             response.selector.xpath("//title/text()").extract(),
+340 |             [u'Some page']
+341 |         )
+342 |         self.assertEqual(
+343 |             response.selector.css("title::text").extract(),
+344 |             [u'Some page']
+345 |         )
+346 |         self.assertEqual(
+347 |             response.selector.re("Some (.*)</title>"),
+348 |             [u'page']
+349 |         )
+350 | 
+351 |     def test_selector_shortcuts(self):
+352 |         body = b"<html><head><title>Some page</title><body></body></html>"
+353 |         response = self.response_class("http://www.example.com", body=body)
+354 | 
+355 |         self.assertEqual(
+356 |             response.xpath("//title/text()").extract(),
+357 |             response.selector.xpath("//title/text()").extract(),
+358 |         )
+359 |         self.assertEqual(
+360 |             response.css("title::text").extract(),
+361 |             response.selector.css("title::text").extract(),
+362 |         )
+363 | 
+364 |     def test_selector_shortcuts_kwargs(self):
+365 |         body = b"<html><head><title>Some page</title><body><p class=\"content\">A nice paragraph.</p></body></html>"
+366 |         response = self.response_class("http://www.example.com", body=body)
+367 | 
+368 |         self.assertEqual(
+369 |             response.xpath("normalize-space(//p[@class=$pclass])", pclass="content").extract(),
+370 |             response.xpath("normalize-space(//p[@class=\"content\"])").extract(),
+371 |         )
+372 |         self.assertEqual(
+373 |             response.xpath("//title[count(following::p[@class=$pclass])=$pcount]/text()",
+374 |                 pclass="content", pcount=1).extract(),
+375 |             response.xpath("//title[count(following::p[@class=\"content\"])=1]/text()").extract(),
+376 |         )
+377 | 
+378 |     def test_urljoin_with_base_url(self):
+379 |         """Test urljoin shortcut which also evaluates base-url through get_base_url()."""
+380 |         body = b'<html><body><base href="https://example.net"></body></html>'
+381 |         joined = self.response_class('http://www.example.com', body=body).urljoin('/test')
+382 |         absolute = 'https://example.net/test'
+383 |         self.assertEqual(joined, absolute)
+384 | 
+385 |         body = b'<html><body><base href="/elsewhere"></body></html>'
+386 |         joined = self.response_class('http://www.example.com', body=body).urljoin('test')
+387 |         absolute = 'http://www.example.com/test'
+388 |         self.assertEqual(joined, absolute)
+389 | 
+390 |         body = b'<html><body><base href="/elsewhere/"></body></html>'
+391 |         joined = self.response_class('http://www.example.com', body=body).urljoin('test')
+392 |         absolute = 'http://www.example.com/elsewhere/test'
+393 |         self.assertEqual(joined, absolute)
+394 | 
+395 |     def test_follow_selector(self):
+396 |         resp = self._links_response()
+397 |         urls = [
+398 |             'http://example.com/sample2.html',
+399 |             'http://example.com/sample3.html',
+400 |             'http://example.com/sample3.html',
+401 |             'http://example.com/sample3.html#foo',
+402 |             'http://www.google.com/something',
+403 |             'http://example.com/innertag.html'
+404 |         ]
+405 | 
+406 |         # select <a> elements
+407 |         for sellist in [resp.css('a'), resp.xpath('//a')]:
+408 |             for sel, url in zip(sellist, urls):
+409 |                 self._assert_followed_url(sel, url, response=resp)
+410 | 
+411 |         # select <link> elements
+412 |         self._assert_followed_url(
+413 |             Selector(text='<link href="foo"></link>').css('link')[0],
+414 |             'http://example.com/foo',
+415 |             response=resp
+416 |         )
+417 | 
+418 |         # href attributes should work
+419 |         for sellist in [resp.css('a::attr(href)'), resp.xpath('//a/@href')]:
+420 |             for sel, url in zip(sellist, urls):
+421 |                 self._assert_followed_url(sel, url, response=resp)
+422 | 
+423 |         # non-a elements are not supported
+424 |         self.assertRaises(ValueError, resp.follow, resp.css('div')[0])
+425 | 
+426 |     def test_follow_selector_list(self):
+427 |         resp = self._links_response()
+428 |         self.assertRaisesRegexp(ValueError, 'SelectorList',
+429 |                                 resp.follow, resp.css('a'))
+430 | 
+431 |     def test_follow_selector_invalid(self):
+432 |         resp = self._links_response()
+433 |         self.assertRaisesRegexp(ValueError, 'Unsupported',
+434 |                                 resp.follow, resp.xpath('count(//div)')[0])
+435 | 
+436 |     def test_follow_selector_attribute(self):
+437 |         resp = self._links_response()
+438 |         for src in resp.css('img::attr(src)'):
+439 |             self._assert_followed_url(src, 'http://example.com/sample2.jpg')
+440 | 
+441 |     def test_follow_selector_no_href(self):
+442 |         resp = self.response_class(
+443 |             url='http://example.com',
+444 |             body=b'<html><body><a name=123>click me</a></body></html>',
+445 |         )
+446 |         self.assertRaisesRegexp(ValueError, 'no href',
+447 |                                 resp.follow, resp.css('a')[0])
+448 | 
+449 |     def test_follow_whitespace_selector(self):
+450 |         resp = self.response_class(
+451 |             'http://example.com',
+452 |             body=b'''<html><body><a href=" foo\n">click me</a></body></html>'''
+453 |         )
+454 |         self._assert_followed_url(resp.css('a')[0],
+455 |                                  'http://example.com/foo',
+456 |                                   response=resp)
+457 |         self._assert_followed_url(resp.css('a::attr(href)')[0],
+458 |                                  'http://example.com/foo',
+459 |                                   response=resp)
+460 | 
+461 |     def test_follow_encoding(self):
+462 |         resp1 = self.response_class(
+463 |             'http://example.com',
+464 |             encoding='utf8',
+465 |             body=u'<html><body><a href="foo?привет">click me</a></body></html>'.encode('utf8')
+466 |         )
+467 |         req = self._assert_followed_url(
+468 |             resp1.css('a')[0],
+469 |             'http://example.com/foo?%D0%BF%D1%80%D0%B8%D0%B2%D0%B5%D1%82',
+470 |             response=resp1,
+471 |         )
+472 |         self.assertEqual(req.encoding, 'utf8')
+473 | 
+474 |         resp2 = self.response_class(
+475 |             'http://example.com',
+476 |             encoding='cp1251',
+477 |             body=u'<html><body><a href="foo?привет">click me</a></body></html>'.encode('cp1251')
+478 |         )
+479 |         req = self._assert_followed_url(
+480 |             resp2.css('a')[0],
+481 |             'http://example.com/foo?%EF%F0%E8%E2%E5%F2',
+482 |             response=resp2,
+483 |         )
+484 |         self.assertEqual(req.encoding, 'cp1251')
+485 | 
+486 | 
+487 | class HtmlResponseTest(TextResponseTest):
+488 | 
+489 |     response_class = HtmlResponse
+490 | 
+491 |     def test_html_encoding(self):
+492 | 
+493 |         body = b"""<html><head><title>Some page</title><meta http-equiv="Content-Type" content="text/html; charset=iso-8859-1">
+494 |         </head><body>Price: \xa3100</body></html>'
+495 |         """
+496 |         r1 = self.response_class("http://www.example.com", body=body)
+497 |         self._assert_response_values(r1, 'iso-8859-1', body)
+498 | 
+499 |         body = b"""<?xml version="1.0" encoding="iso-8859-1"?>
+500 |         <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">
+501 |         Price: \xa3100
+502 |         """
+503 |         r2 = self.response_class("http://www.example.com", body=body)
+504 |         self._assert_response_values(r2, 'iso-8859-1', body)
+505 | 
+506 |         # for conflicting declarations headers must take precedence
+507 |         body = b"""<html><head><title>Some page</title><meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+508 |         </head><body>Price: \xa3100</body></html>'
+509 |         """
+510 |         r3 = self.response_class("http://www.example.com", headers={"Content-type": ["text/html; charset=iso-8859-1"]}, body=body)
+511 |         self._assert_response_values(r3, 'iso-8859-1', body)
+512 | 
+513 |         # make sure replace() preserves the encoding of the original response
+514 |         body = b"New body \xa3"
+515 |         r4 = r3.replace(body=body)
+516 |         self._assert_response_values(r4, 'iso-8859-1', body)
+517 | 
+518 |     def test_html5_meta_charset(self):
+519 |         body = b"""<html><head><meta charset="gb2312" /><title>Some page</title><body>bla bla</body>"""
+520 |         r1 = self.response_class("http://www.example.com", body=body)
+521 |         self._assert_response_values(r1, 'gb2312', body)
+522 | 
+523 | 
+524 | class XmlResponseTest(TextResponseTest):
+525 | 
+526 |     response_class = XmlResponse
+527 | 
+528 |     def test_xml_encoding(self):
+529 |         body = b"<xml></xml>"
+530 |         r1 = self.response_class("http://www.example.com", body=body)
+531 |         self._assert_response_values(r1, self.response_class._DEFAULT_ENCODING, body)
+532 | 
+533 |         body = b"""<?xml version="1.0" encoding="iso-8859-1"?><xml></xml>"""
+534 |         r2 = self.response_class("http://www.example.com", body=body)
+535 |         self._assert_response_values(r2, 'iso-8859-1', body)
+536 | 
+537 |         # make sure replace() preserves the explicit encoding passed in the constructor
+538 |         body = b"""<?xml version="1.0" encoding="iso-8859-1"?><xml></xml>"""
+539 |         r3 = self.response_class("http://www.example.com", body=body, encoding='utf-8')
+540 |         body2 = b"New body"
+541 |         r4 = r3.replace(body=body2)
+542 |         self._assert_response_values(r4, 'utf-8', body2)
+543 | 
+544 |     def test_replace_encoding(self):
+545 |         # make sure replace() keeps the previous encoding unless overridden explicitly
+546 |         body = b"""<?xml version="1.0" encoding="iso-8859-1"?><xml></xml>"""
+547 |         body2 = b"""<?xml version="1.0" encoding="utf-8"?><xml></xml>"""
+548 |         r5 = self.response_class("http://www.example.com", body=body)
+549 |         r6 = r5.replace(body=body2)
+550 |         r7 = r5.replace(body=body2, encoding='utf-8')
+551 |         self._assert_response_values(r5, 'iso-8859-1', body)
+552 |         self._assert_response_values(r6, 'iso-8859-1', body2)
+553 |         self._assert_response_values(r7, 'utf-8', body2)
+554 | 
+555 |     def test_selector(self):
+556 |         body = b'<?xml version="1.0" encoding="utf-8"?><xml><elem>value</elem></xml>'
+557 |         response = self.response_class("http://www.example.com", body=body)
+558 | 
+559 |         self.assertIsInstance(response.selector, Selector)
+560 |         self.assertEqual(response.selector.type, 'xml')
+561 |         self.assertIs(response.selector, response.selector)  # property is cached
+562 |         self.assertIs(response.selector.response, response)
+563 | 
+564 |         self.assertEqual(
+565 |             response.selector.xpath("//elem/text()").extract(),
+566 |             [u'value']
+567 |         )
+568 | 
+569 |     def test_selector_shortcuts(self):
+570 |         body = b'<?xml version="1.0" encoding="utf-8"?><xml><elem>value</elem></xml>'
+571 |         response = self.response_class("http://www.example.com", body=body)
+572 | 
+573 |         self.assertEqual(
+574 |             response.xpath("//elem/text()").extract(),
+575 |             response.selector.xpath("//elem/text()").extract(),
+576 |         )
+577 | 
+578 |     def test_selector_shortcuts_kwargs(self):
+579 |         body = b'''<?xml version="1.0" encoding="utf-8"?>
+580 |         <xml xmlns:somens="http://scrapy.org">
+581 |         <somens:elem>value</somens:elem>
+582 |         </xml>'''
+583 |         response = self.response_class("http://www.example.com", body=body)
+584 | 
+585 |         self.assertEqual(
+586 |             response.xpath("//s:elem/text()", namespaces={'s': 'http://scrapy.org'}).extract(),
+587 |             response.selector.xpath("//s:elem/text()", namespaces={'s': 'http://scrapy.org'}).extract(),
+588 |         )
+589 | 
+590 |         response.selector.register_namespace('s2', 'http://scrapy.org')
+591 |         self.assertEqual(
+592 |             response.xpath("//s1:elem/text()", namespaces={'s1': 'http://scrapy.org'}).extract(),
+593 |             response.selector.xpath("//s2:elem/text()").extract(),
+594 |         )
+```

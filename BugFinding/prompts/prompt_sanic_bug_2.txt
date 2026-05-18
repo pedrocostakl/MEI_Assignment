@@ -1,0 +1,1263 @@
+You are given buggy source files and failing test files.
+
+Your task is BUG LOCALIZATION ONLY.
+
+Return only valid JSON using this exact format:
+
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "relative/path.py",
+      "line_start": 1,
+      "line_end": 1,
+      "confidence": "low|medium|high",
+      "reason": "Max 2 sentences."
+    }
+  ]
+}
+
+Rules:
+- Do not propose fixes.
+- Do not rewrite code.
+- Do not explain outside JSON.
+- Line numbers must refer to the numbered buggy source file.
+- Include at most the number of suspected locations you think there are.
+- Prefer the smallest line range that identifies the origin of the bug.
+
+
+SOURCE FILES:
+
+[file_1] BugsInPy/workspace/sanic/sanic/server.py
+```python
+   1 | import asyncio
+   2 | import os
+   3 | import sys
+   4 | import traceback
+   5 | 
+   6 | from collections import deque
+   7 | from functools import partial
+   8 | from inspect import isawaitable
+   9 | from multiprocessing import Process
+  10 | from signal import SIG_IGN, SIGINT, SIGTERM, Signals
+  11 | from signal import signal as signal_func
+  12 | from socket import SO_REUSEADDR, SOL_SOCKET, socket
+  13 | from time import time
+  14 | 
+  15 | from httptools import HttpRequestParser  # type: ignore
+  16 | from httptools.parser.errors import HttpParserError  # type: ignore
+  17 | 
+  18 | from sanic.compat import Header
+  19 | from sanic.exceptions import (
+  20 |     HeaderExpectationFailed,
+  21 |     InvalidUsage,
+  22 |     PayloadTooLarge,
+  23 |     RequestTimeout,
+  24 |     ServerError,
+  25 |     ServiceUnavailable,
+  26 | )
+  27 | from sanic.log import access_logger, logger
+  28 | from sanic.request import EXPECT_HEADER, Request, StreamBuffer
+  29 | from sanic.response import HTTPResponse
+  30 | 
+  31 | 
+  32 | try:
+  33 |     import uvloop  # type: ignore
+  34 | 
+  35 |     if not isinstance(asyncio.get_event_loop_policy(), uvloop.EventLoopPolicy):
+  36 |         asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+  37 | except ImportError:
+  38 |     pass
+  39 | 
+  40 | 
+  41 | class Signal:
+  42 |     stopped = False
+  43 | 
+  44 | 
+  45 | class HttpProtocol(asyncio.Protocol):
+  46 |     """
+  47 |     This class provides a basic HTTP implementation of the sanic framework.
+  48 |     """
+  49 | 
+  50 |     __slots__ = (
+  51 |         # app
+  52 |         "app",
+  53 |         # event loop, connection
+  54 |         "loop",
+  55 |         "transport",
+  56 |         "connections",
+  57 |         "signal",
+  58 |         # request params
+  59 |         "parser",
+  60 |         "request",
+  61 |         "url",
+  62 |         "headers",
+  63 |         # request config
+  64 |         "request_handler",
+  65 |         "request_timeout",
+  66 |         "response_timeout",
+  67 |         "keep_alive_timeout",
+  68 |         "request_max_size",
+  69 |         "request_buffer_queue_size",
+  70 |         "request_class",
+  71 |         "is_request_stream",
+  72 |         "router",
+  73 |         "error_handler",
+  74 |         # enable or disable access log purpose
+  75 |         "access_log",
+  76 |         # connection management
+  77 |         "_total_request_size",
+  78 |         "_request_timeout_handler",
+  79 |         "_response_timeout_handler",
+  80 |         "_keep_alive_timeout_handler",
+  81 |         "_last_request_time",
+  82 |         "_last_response_time",
+  83 |         "_is_stream_handler",
+  84 |         "_not_paused",
+  85 |         "_request_handler_task",
+  86 |         "_request_stream_task",
+  87 |         "_keep_alive",
+  88 |         "_header_fragment",
+  89 |         "state",
+  90 |         "_debug",
+  91 |         "_body_chunks",
+  92 |     )
+  93 | 
+  94 |     def __init__(
+  95 |         self,
+  96 |         *,
+  97 |         loop,
+  98 |         app,
+  99 |         request_handler,
+ 100 |         error_handler,
+ 101 |         signal=Signal(),
+ 102 |         connections=None,
+ 103 |         request_timeout=60,
+ 104 |         response_timeout=60,
+ 105 |         keep_alive_timeout=5,
+ 106 |         request_max_size=None,
+ 107 |         request_buffer_queue_size=100,
+ 108 |         request_class=None,
+ 109 |         access_log=True,
+ 110 |         keep_alive=True,
+ 111 |         is_request_stream=False,
+ 112 |         router=None,
+ 113 |         state=None,
+ 114 |         debug=False,
+ 115 |         **kwargs
+ 116 |     ):
+ 117 |         self.loop = loop
+ 118 |         self.app = app
+ 119 |         self.transport = None
+ 120 |         self.request = None
+ 121 |         self.parser = None
+ 122 |         self.url = None
+ 123 |         self.headers = None
+ 124 |         self.router = router
+ 125 |         self.signal = signal
+ 126 |         self.access_log = access_log
+ 127 |         self.connections = connections if connections is not None else set()
+ 128 |         self.request_handler = request_handler
+ 129 |         self.error_handler = error_handler
+ 130 |         self.request_timeout = request_timeout
+ 131 |         self.request_buffer_queue_size = request_buffer_queue_size
+ 132 |         self.response_timeout = response_timeout
+ 133 |         self.keep_alive_timeout = keep_alive_timeout
+ 134 |         self.request_max_size = request_max_size
+ 135 |         self.request_class = request_class or Request
+ 136 |         self.is_request_stream = is_request_stream
+ 137 |         self._is_stream_handler = False
+ 138 |         if sys.version_info.minor >= 8:
+ 139 |             self._not_paused = asyncio.Event()
+ 140 |         else:
+ 141 |             self._not_paused = asyncio.Event(loop=loop)
+ 142 |         self._total_request_size = 0
+ 143 |         self._request_timeout_handler = None
+ 144 |         self._response_timeout_handler = None
+ 145 |         self._keep_alive_timeout_handler = None
+ 146 |         self._last_request_time = None
+ 147 |         self._last_response_time = None
+ 148 |         self._request_handler_task = None
+ 149 |         self._request_stream_task = None
+ 150 |         self._keep_alive = keep_alive
+ 151 |         self._header_fragment = b""
+ 152 |         self.state = state if state else {}
+ 153 |         if "requests_count" not in self.state:
+ 154 |             self.state["requests_count"] = 0
+ 155 |         self._debug = debug
+ 156 |         self._not_paused.set()
+ 157 |         self._body_chunks = deque()
+ 158 | 
+ 159 |     @property
+ 160 |     def keep_alive(self):
+ 161 |         """
+ 162 |         Check if the connection needs to be kept alive based on the params
+ 163 |         attached to the `_keep_alive` attribute, :attr:`Signal.stopped`
+ 164 |         and :func:`HttpProtocol.parser.should_keep_alive`
+ 165 | 
+ 166 |         :return: ``True`` if connection is to be kept alive ``False`` else
+ 167 |         """
+ 168 |         return (
+ 169 |             self._keep_alive
+ 170 |             and not self.signal.stopped
+ 171 |             and self.parser.should_keep_alive()
+ 172 |         )
+ 173 | 
+ 174 |     # -------------------------------------------- #
+ 175 |     # Connection
+ 176 |     # -------------------------------------------- #
+ 177 | 
+ 178 |     def connection_made(self, transport):
+ 179 |         self.connections.add(self)
+ 180 |         self._request_timeout_handler = self.loop.call_later(
+ 181 |             self.request_timeout, self.request_timeout_callback
+ 182 |         )
+ 183 |         self.transport = transport
+ 184 |         self._last_request_time = time()
+ 185 | 
+ 186 |     def connection_lost(self, exc):
+ 187 |         self.connections.discard(self)
+ 188 |         if self._request_handler_task:
+ 189 |             self._request_handler_task.cancel()
+ 190 |         if self._request_stream_task:
+ 191 |             self._request_stream_task.cancel()
+ 192 |         if self._request_timeout_handler:
+ 193 |             self._request_timeout_handler.cancel()
+ 194 |         if self._response_timeout_handler:
+ 195 |             self._response_timeout_handler.cancel()
+ 196 |         if self._keep_alive_timeout_handler:
+ 197 |             self._keep_alive_timeout_handler.cancel()
+ 198 | 
+ 199 |     def pause_writing(self):
+ 200 |         self._not_paused.clear()
+ 201 | 
+ 202 |     def resume_writing(self):
+ 203 |         self._not_paused.set()
+ 204 | 
+ 205 |     def request_timeout_callback(self):
+ 206 |         # See the docstring in the RequestTimeout exception, to see
+ 207 |         # exactly what this timeout is checking for.
+ 208 |         # Check if elapsed time since request initiated exceeds our
+ 209 |         # configured maximum request timeout value
+ 210 |         time_elapsed = time() - self._last_request_time
+ 211 |         if time_elapsed < self.request_timeout:
+ 212 |             time_left = self.request_timeout - time_elapsed
+ 213 |             self._request_timeout_handler = self.loop.call_later(
+ 214 |                 time_left, self.request_timeout_callback
+ 215 |             )
+ 216 |         else:
+ 217 |             if self._request_stream_task:
+ 218 |                 self._request_stream_task.cancel()
+ 219 |             if self._request_handler_task:
+ 220 |                 self._request_handler_task.cancel()
+ 221 |             self.write_error(RequestTimeout("Request Timeout"))
+ 222 | 
+ 223 |     def response_timeout_callback(self):
+ 224 |         # Check if elapsed time since response was initiated exceeds our
+ 225 |         # configured maximum request timeout value
+ 226 |         time_elapsed = time() - self._last_request_time
+ 227 |         if time_elapsed < self.response_timeout:
+ 228 |             time_left = self.response_timeout - time_elapsed
+ 229 |             self._response_timeout_handler = self.loop.call_later(
+ 230 |                 time_left, self.response_timeout_callback
+ 231 |             )
+ 232 |         else:
+ 233 |             if self._request_stream_task:
+ 234 |                 self._request_stream_task.cancel()
+ 235 |             if self._request_handler_task:
+ 236 |                 self._request_handler_task.cancel()
+ 237 |             self.write_error(ServiceUnavailable("Response Timeout"))
+ 238 | 
+ 239 |     def keep_alive_timeout_callback(self):
+ 240 |         """
+ 241 |         Check if elapsed time since last response exceeds our configured
+ 242 |         maximum keep alive timeout value and if so, close the transport
+ 243 |         pipe and let the response writer handle the error.
+ 244 | 
+ 245 |         :return: None
+ 246 |         """
+ 247 |         time_elapsed = time() - self._last_response_time
+ 248 |         if time_elapsed < self.keep_alive_timeout:
+ 249 |             time_left = self.keep_alive_timeout - time_elapsed
+ 250 |             self._keep_alive_timeout_handler = self.loop.call_later(
+ 251 |                 time_left, self.keep_alive_timeout_callback
+ 252 |             )
+ 253 |         else:
+ 254 |             logger.debug("KeepAlive Timeout. Closing connection.")
+ 255 |             self.transport.close()
+ 256 |             self.transport = None
+ 257 | 
+ 258 |     # -------------------------------------------- #
+ 259 |     # Parsing
+ 260 |     # -------------------------------------------- #
+ 261 | 
+ 262 |     def data_received(self, data):
+ 263 |         # Check for the request itself getting too large and exceeding
+ 264 |         # memory limits
+ 265 |         self._total_request_size += len(data)
+ 266 |         if self._total_request_size > self.request_max_size:
+ 267 |             self.write_error(PayloadTooLarge("Payload Too Large"))
+ 268 | 
+ 269 |         # Create parser if this is the first time we're receiving data
+ 270 |         if self.parser is None:
+ 271 |             assert self.request is None
+ 272 |             self.headers = []
+ 273 |             self.parser = HttpRequestParser(self)
+ 274 | 
+ 275 |         # requests count
+ 276 |         self.state["requests_count"] = self.state["requests_count"] + 1
+ 277 | 
+ 278 |         # Parse request chunk or close connection
+ 279 |         try:
+ 280 |             self.parser.feed_data(data)
+ 281 |         except HttpParserError:
+ 282 |             message = "Bad Request"
+ 283 |             if self._debug:
+ 284 |                 message += "\n" + traceback.format_exc()
+ 285 |             self.write_error(InvalidUsage(message))
+ 286 | 
+ 287 |     def on_url(self, url):
+ 288 |         if not self.url:
+ 289 |             self.url = url
+ 290 |         else:
+ 291 |             self.url += url
+ 292 | 
+ 293 |     def on_header(self, name, value):
+ 294 |         self._header_fragment += name
+ 295 | 
+ 296 |         if value is not None:
+ 297 |             if (
+ 298 |                 self._header_fragment == b"Content-Length"
+ 299 |                 and int(value) > self.request_max_size
+ 300 |             ):
+ 301 |                 self.write_error(PayloadTooLarge("Payload Too Large"))
+ 302 |             try:
+ 303 |                 value = value.decode()
+ 304 |             except UnicodeDecodeError:
+ 305 |                 value = value.decode("latin_1")
+ 306 |             self.headers.append(
+ 307 |                 (self._header_fragment.decode().casefold(), value)
+ 308 |             )
+ 309 | 
+ 310 |             self._header_fragment = b""
+ 311 | 
+ 312 |     def on_headers_complete(self):
+ 313 |         self.request = self.request_class(
+ 314 |             url_bytes=self.url,
+ 315 |             headers=Header(self.headers),
+ 316 |             version=self.parser.get_http_version(),
+ 317 |             method=self.parser.get_method().decode(),
+ 318 |             transport=self.transport,
+ 319 |             app=self.app,
+ 320 |         )
+ 321 |         # Remove any existing KeepAlive handler here,
+ 322 |         # It will be recreated if required on the new request.
+ 323 |         if self._keep_alive_timeout_handler:
+ 324 |             self._keep_alive_timeout_handler.cancel()
+ 325 |             self._keep_alive_timeout_handler = None
+ 326 | 
+ 327 |         if self.request.headers.get(EXPECT_HEADER):
+ 328 |             self.expect_handler()
+ 329 | 
+ 330 |         if self.is_request_stream:
+ 331 |             self._is_stream_handler = self.router.is_stream_handler(
+ 332 |                 self.request
+ 333 |             )
+ 334 |             if self._is_stream_handler:
+ 335 |                 self.request.stream = StreamBuffer(
+ 336 |                     self.request_buffer_queue_size
+ 337 |                 )
+ 338 |                 self.execute_request_handler()
+ 339 | 
+ 340 |     def expect_handler(self):
+ 341 |         """
+ 342 |         Handler for Expect Header.
+ 343 |         """
+ 344 |         expect = self.request.headers.get(EXPECT_HEADER)
+ 345 |         if self.request.version == "1.1":
+ 346 |             if expect.lower() == "100-continue":
+ 347 |                 self.transport.write(b"HTTP/1.1 100 Continue\r\n\r\n")
+ 348 |             else:
+ 349 |                 self.write_error(
+ 350 |                     HeaderExpectationFailed(
+ 351 |                         "Unknown Expect: {expect}".format(expect=expect)
+ 352 |                     )
+ 353 |                 )
+ 354 | 
+ 355 |     def on_body(self, body):
+ 356 |         if self.is_request_stream and self._is_stream_handler:
+ 357 |             # body chunks can be put into asyncio.Queue out of order if
+ 358 |             # multiple tasks put concurrently and the queue is full in python
+ 359 |             # 3.7. so we should not create more than one task putting into the
+ 360 |             # queue simultaneously.
+ 361 |             self._body_chunks.append(body)
+ 362 |             if (
+ 363 |                 not self._request_stream_task
+ 364 |                 or self._request_stream_task.done()
+ 365 |             ):
+ 366 |                 self._request_stream_task = self.loop.create_task(
+ 367 |                     self.stream_append()
+ 368 |                 )
+ 369 |         else:
+ 370 |             self.request.body_push(body)
+ 371 | 
+ 372 |     async def body_append(self, body):
+ 373 |         if (
+ 374 |             self.request is None
+ 375 |             or self._request_stream_task is None
+ 376 |             or self._request_stream_task.cancelled()
+ 377 |         ):
+ 378 |             return
+ 379 | 
+ 380 |         if self.request.stream.is_full():
+ 381 |             self.transport.pause_reading()
+ 382 |             await self.request.stream.put(body)
+ 383 |             self.transport.resume_reading()
+ 384 |         else:
+ 385 |             await self.request.stream.put(body)
+ 386 | 
+ 387 |     async def stream_append(self):
+ 388 |         while self._body_chunks:
+ 389 |             body = self._body_chunks.popleft()
+ 390 |             if self.request.stream.is_full():
+ 391 |                 self.transport.pause_reading()
+ 392 |                 await self.request.stream.put(body)
+ 393 |                 self.transport.resume_reading()
+ 394 |             else:
+ 395 |                 await self.request.stream.put(body)
+ 396 | 
+ 397 |     def on_message_complete(self):
+ 398 |         # Entire request (headers and whole body) is received.
+ 399 |         # We can cancel and remove the request timeout handler now.
+ 400 |         if self._request_timeout_handler:
+ 401 |             self._request_timeout_handler.cancel()
+ 402 |             self._request_timeout_handler = None
+ 403 |         if self.is_request_stream and self._is_stream_handler:
+ 404 |             self._body_chunks.append(None)
+ 405 |             if (
+ 406 |                 not self._request_stream_task
+ 407 |                 or self._request_stream_task.done()
+ 408 |             ):
+ 409 |                 self._request_stream_task = self.loop.create_task(
+ 410 |                     self.stream_append()
+ 411 |                 )
+ 412 |             return
+ 413 |         self.request.body_finish()
+ 414 |         self.execute_request_handler()
+ 415 | 
+ 416 |     def execute_request_handler(self):
+ 417 |         """
+ 418 |         Invoke the request handler defined by the
+ 419 |         :func:`sanic.app.Sanic.handle_request` method
+ 420 | 
+ 421 |         :return: None
+ 422 |         """
+ 423 |         self._response_timeout_handler = self.loop.call_later(
+ 424 |             self.response_timeout, self.response_timeout_callback
+ 425 |         )
+ 426 |         self._last_request_time = time()
+ 427 |         self._request_handler_task = self.loop.create_task(
+ 428 |             self.request_handler(
+ 429 |                 self.request, self.write_response, self.stream_response
+ 430 |             )
+ 431 |         )
+ 432 | 
+ 433 |     # -------------------------------------------- #
+ 434 |     # Responding
+ 435 |     # -------------------------------------------- #
+ 436 |     def log_response(self, response):
+ 437 |         """
+ 438 |         Helper method provided to enable the logging of responses in case if
+ 439 |         the :attr:`HttpProtocol.access_log` is enabled.
+ 440 | 
+ 441 |         :param response: Response generated for the current request
+ 442 | 
+ 443 |         :type response: :class:`sanic.response.HTTPResponse` or
+ 444 |             :class:`sanic.response.StreamingHTTPResponse`
+ 445 | 
+ 446 |         :return: None
+ 447 |         """
+ 448 |         if self.access_log:
+ 449 |             extra = {"status": getattr(response, "status", 0)}
+ 450 | 
+ 451 |             if isinstance(response, HTTPResponse):
+ 452 |                 extra["byte"] = len(response.body)
+ 453 |             else:
+ 454 |                 extra["byte"] = -1
+ 455 | 
+ 456 |             extra["host"] = "UNKNOWN"
+ 457 |             if self.request is not None:
+ 458 |                 if self.request.ip:
+ 459 |                     extra["host"] = "{0}:{1}".format(
+ 460 |                         self.request.ip, self.request.port
+ 461 |                     )
+ 462 | 
+ 463 |                 extra["request"] = "{0} {1}".format(
+ 464 |                     self.request.method, self.request.url
+ 465 |                 )
+ 466 |             else:
+ 467 |                 extra["request"] = "nil"
+ 468 | 
+ 469 |             access_logger.info("", extra=extra)
+ 470 | 
+ 471 |     def write_response(self, response):
+ 472 |         """
+ 473 |         Writes response content synchronously to the transport.
+ 474 |         """
+ 475 |         if self._response_timeout_handler:
+ 476 |             self._response_timeout_handler.cancel()
+ 477 |             self._response_timeout_handler = None
+ 478 |         try:
+ 479 |             keep_alive = self.keep_alive
+ 480 |             self.transport.write(
+ 481 |                 response.output(
+ 482 |                     self.request.version, keep_alive, self.keep_alive_timeout
+ 483 |                 )
+ 484 |             )
+ 485 |             self.log_response(response)
+ 486 |         except AttributeError:
+ 487 |             logger.error(
+ 488 |                 "Invalid response object for url %s, "
+ 489 |                 "Expected Type: HTTPResponse, Actual Type: %s",
+ 490 |                 self.url,
+ 491 |                 type(response),
+ 492 |             )
+ 493 |             self.write_error(ServerError("Invalid response type"))
+ 494 |         except RuntimeError:
+ 495 |             if self._debug:
+ 496 |                 logger.error(
+ 497 |                     "Connection lost before response written @ %s",
+ 498 |                     self.request.ip,
+ 499 |                 )
+ 500 |             keep_alive = False
+ 501 |         except Exception as e:
+ 502 |             self.bail_out(
+ 503 |                 "Writing response failed, connection closed {}".format(repr(e))
+ 504 |             )
+ 505 |         finally:
+ 506 |             if not keep_alive:
+ 507 |                 self.transport.close()
+ 508 |                 self.transport = None
+ 509 |             else:
+ 510 |                 self._keep_alive_timeout_handler = self.loop.call_later(
+ 511 |                     self.keep_alive_timeout, self.keep_alive_timeout_callback
+ 512 |                 )
+ 513 |                 self._last_response_time = time()
+ 514 |                 self.cleanup()
+ 515 | 
+ 516 |     async def drain(self):
+ 517 |         await self._not_paused.wait()
+ 518 | 
+ 519 |     async def push_data(self, data):
+ 520 |         self.transport.write(data)
+ 521 | 
+ 522 |     async def stream_response(self, response):
+ 523 |         """
+ 524 |         Streams a response to the client asynchronously. Attaches
+ 525 |         the transport to the response so the response consumer can
+ 526 |         write to the response as needed.
+ 527 |         """
+ 528 |         if self._response_timeout_handler:
+ 529 |             self._response_timeout_handler.cancel()
+ 530 |             self._response_timeout_handler = None
+ 531 | 
+ 532 |         try:
+ 533 |             keep_alive = self.keep_alive
+ 534 |             response.protocol = self
+ 535 |             await response.stream(
+ 536 |                 self.request.version, keep_alive, self.keep_alive_timeout
+ 537 |             )
+ 538 |             self.log_response(response)
+ 539 |         except AttributeError:
+ 540 |             logger.error(
+ 541 |                 "Invalid response object for url %s, "
+ 542 |                 "Expected Type: HTTPResponse, Actual Type: %s",
+ 543 |                 self.url,
+ 544 |                 type(response),
+ 545 |             )
+ 546 |             self.write_error(ServerError("Invalid response type"))
+ 547 |         except RuntimeError:
+ 548 |             if self._debug:
+ 549 |                 logger.error(
+ 550 |                     "Connection lost before response written @ %s",
+ 551 |                     self.request.ip,
+ 552 |                 )
+ 553 |             keep_alive = False
+ 554 |         except Exception as e:
+ 555 |             self.bail_out(
+ 556 |                 "Writing response failed, connection closed {}".format(repr(e))
+ 557 |             )
+ 558 |         finally:
+ 559 |             if not keep_alive:
+ 560 |                 self.transport.close()
+ 561 |                 self.transport = None
+ 562 |             else:
+ 563 |                 self._keep_alive_timeout_handler = self.loop.call_later(
+ 564 |                     self.keep_alive_timeout, self.keep_alive_timeout_callback
+ 565 |                 )
+ 566 |                 self._last_response_time = time()
+ 567 |                 self.cleanup()
+ 568 | 
+ 569 |     def write_error(self, exception):
+ 570 |         # An error _is_ a response.
+ 571 |         # Don't throw a response timeout, when a response _is_ given.
+ 572 |         if self._response_timeout_handler:
+ 573 |             self._response_timeout_handler.cancel()
+ 574 |             self._response_timeout_handler = None
+ 575 |         response = None
+ 576 |         try:
+ 577 |             response = self.error_handler.response(self.request, exception)
+ 578 |             version = self.request.version if self.request else "1.1"
+ 579 |             self.transport.write(response.output(version))
+ 580 |         except RuntimeError:
+ 581 |             if self._debug:
+ 582 |                 logger.error(
+ 583 |                     "Connection lost before error written @ %s",
+ 584 |                     self.request.ip if self.request else "Unknown",
+ 585 |                 )
+ 586 |         except Exception as e:
+ 587 |             self.bail_out(
+ 588 |                 "Writing error failed, connection closed {}".format(repr(e)),
+ 589 |                 from_error=True,
+ 590 |             )
+ 591 |         finally:
+ 592 |             if self.parser and (
+ 593 |                 self.keep_alive or getattr(response, "status", 0) == 408
+ 594 |             ):
+ 595 |                 self.log_response(response)
+ 596 |             try:
+ 597 |                 self.transport.close()
+ 598 |             except AttributeError:
+ 599 |                 logger.debug("Connection lost before server could close it.")
+ 600 | 
+ 601 |     def bail_out(self, message, from_error=False):
+ 602 |         """
+ 603 |         In case if the transport pipes are closed and the sanic app encounters
+ 604 |         an error while writing data to the transport pipe, we log the error
+ 605 |         with proper details.
+ 606 | 
+ 607 |         :param message: Error message to display
+ 608 |         :param from_error: If the bail out was invoked while handling an
+ 609 |             exception scenario.
+ 610 | 
+ 611 |         :type message: str
+ 612 |         :type from_error: bool
+ 613 | 
+ 614 |         :return: None
+ 615 |         """
+ 616 |         if from_error or self.transport is None or self.transport.is_closing():
+ 617 |             logger.error(
+ 618 |                 "Transport closed @ %s and exception "
+ 619 |                 "experienced during error handling",
+ 620 |                 (
+ 621 |                     self.transport.get_extra_info("peername")
+ 622 |                     if self.transport is not None
+ 623 |                     else "N/A"
+ 624 |                 ),
+ 625 |             )
+ 626 |             logger.debug("Exception:", exc_info=True)
+ 627 |         else:
+ 628 |             self.write_error(ServerError(message))
+ 629 |             logger.error(message)
+ 630 | 
+ 631 |     def cleanup(self):
+ 632 |         """This is called when KeepAlive feature is used,
+ 633 |         it resets the connection in order for it to be able
+ 634 |         to handle receiving another request on the same connection."""
+ 635 |         self.parser = None
+ 636 |         self.request = None
+ 637 |         self.url = None
+ 638 |         self.headers = None
+ 639 |         self._request_handler_task = None
+ 640 |         self._request_stream_task = None
+ 641 |         self._total_request_size = 0
+ 642 |         self._is_stream_handler = False
+ 643 | 
+ 644 |     def close_if_idle(self):
+ 645 |         """Close the connection if a request is not being sent or received
+ 646 | 
+ 647 |         :return: boolean - True if closed, false if staying open
+ 648 |         """
+ 649 |         if not self.parser:
+ 650 |             self.transport.close()
+ 651 |             return True
+ 652 |         return False
+ 653 | 
+ 654 |     def close(self):
+ 655 |         """
+ 656 |         Force close the connection.
+ 657 |         """
+ 658 |         if self.transport is not None:
+ 659 |             self.transport.close()
+ 660 |             self.transport = None
+ 661 | 
+ 662 | 
+ 663 | def trigger_events(events, loop):
+ 664 |     """Trigger event callbacks (functions or async)
+ 665 | 
+ 666 |     :param events: one or more sync or async functions to execute
+ 667 |     :param loop: event loop
+ 668 |     """
+ 669 |     for event in events:
+ 670 |         result = event(loop)
+ 671 |         if isawaitable(result):
+ 672 |             loop.run_until_complete(result)
+ 673 | 
+ 674 | 
+ 675 | class AsyncioServer:
+ 676 |     """
+ 677 |     Wraps an asyncio server with functionality that might be useful to
+ 678 |     a user who needs to manage the server lifecycle manually.
+ 679 |     """
+ 680 | 
+ 681 |     __slots__ = (
+ 682 |         "loop",
+ 683 |         "serve_coro",
+ 684 |         "_after_start",
+ 685 |         "_before_stop",
+ 686 |         "_after_stop",
+ 687 |         "server",
+ 688 |         "connections",
+ 689 |     )
+ 690 | 
+ 691 |     def __init__(
+ 692 |         self,
+ 693 |         loop,
+ 694 |         serve_coro,
+ 695 |         connections,
+ 696 |         after_start,
+ 697 |         before_stop,
+ 698 |         after_stop,
+ 699 |     ):
+ 700 |         # Note, Sanic already called "before_server_start" events
+ 701 |         # before this helper was even created. So we don't need it here.
+ 702 |         self.loop = loop
+ 703 |         self.serve_coro = serve_coro
+ 704 |         self._after_start = after_start
+ 705 |         self._before_stop = before_stop
+ 706 |         self._after_stop = after_stop
+ 707 |         self.server = None
+ 708 |         self.connections = connections
+ 709 | 
+ 710 |     def after_start(self):
+ 711 |         """Trigger "after_server_start" events"""
+ 712 |         trigger_events(self._after_start, self.loop)
+ 713 | 
+ 714 |     def before_stop(self):
+ 715 |         """Trigger "before_server_stop" events"""
+ 716 |         trigger_events(self._before_stop, self.loop)
+ 717 | 
+ 718 |     def after_stop(self):
+ 719 |         """Trigger "after_server_stop" events"""
+ 720 |         trigger_events(self._after_stop, self.loop)
+ 721 | 
+ 722 |     def is_serving(self):
+ 723 |         if self.server:
+ 724 |             return self.server.is_serving()
+ 725 |         return False
+ 726 | 
+ 727 |     def wait_closed(self):
+ 728 |         if self.server:
+ 729 |             return self.server.wait_closed()
+ 730 | 
+ 731 |     def close(self):
+ 732 |         if self.server:
+ 733 |             self.server.close()
+ 734 |             coro = self.wait_closed()
+ 735 |             task = asyncio.ensure_future(coro, loop=self.loop)
+ 736 |             return task
+ 737 | 
+ 738 |     def __await__(self):
+ 739 |         """Starts the asyncio server, returns AsyncServerCoro"""
+ 740 |         task = asyncio.ensure_future(self.serve_coro)
+ 741 |         while not task.done():
+ 742 |             yield
+ 743 |         self.server = task.result()
+ 744 |         return self
+ 745 | 
+ 746 | 
+ 747 | def serve(
+ 748 |     host,
+ 749 |     port,
+ 750 |     app,
+ 751 |     request_handler,
+ 752 |     error_handler,
+ 753 |     before_start=None,
+ 754 |     after_start=None,
+ 755 |     before_stop=None,
+ 756 |     after_stop=None,
+ 757 |     debug=False,
+ 758 |     request_timeout=60,
+ 759 |     response_timeout=60,
+ 760 |     keep_alive_timeout=5,
+ 761 |     ssl=None,
+ 762 |     sock=None,
+ 763 |     request_max_size=None,
+ 764 |     request_buffer_queue_size=100,
+ 765 |     reuse_port=False,
+ 766 |     loop=None,
+ 767 |     protocol=HttpProtocol,
+ 768 |     backlog=100,
+ 769 |     register_sys_signals=True,
+ 770 |     run_multiple=False,
+ 771 |     run_async=False,
+ 772 |     connections=None,
+ 773 |     signal=Signal(),
+ 774 |     request_class=None,
+ 775 |     access_log=True,
+ 776 |     keep_alive=True,
+ 777 |     is_request_stream=False,
+ 778 |     router=None,
+ 779 |     websocket_max_size=None,
+ 780 |     websocket_max_queue=None,
+ 781 |     websocket_read_limit=2 ** 16,
+ 782 |     websocket_write_limit=2 ** 16,
+ 783 |     state=None,
+ 784 |     graceful_shutdown_timeout=15.0,
+ 785 |     asyncio_server_kwargs=None,
+ 786 | ):
+ 787 |     """Start asynchronous HTTP Server on an individual process.
+ 788 | 
+ 789 |     :param host: Address to host on
+ 790 |     :param port: Port to host on
+ 791 |     :param request_handler: Sanic request handler with middleware
+ 792 |     :param error_handler: Sanic error handler with middleware
+ 793 |     :param before_start: function to be executed before the server starts
+ 794 |                          listening. Takes arguments `app` instance and `loop`
+ 795 |     :param after_start: function to be executed after the server starts
+ 796 |                         listening. Takes  arguments `app` instance and `loop`
+ 797 |     :param before_stop: function to be executed when a stop signal is
+ 798 |                         received before it is respected. Takes arguments
+ 799 |                         `app` instance and `loop`
+ 800 |     :param after_stop: function to be executed when a stop signal is
+ 801 |                        received after it is respected. Takes arguments
+ 802 |                        `app` instance and `loop`
+ 803 |     :param debug: enables debug output (slows server)
+ 804 |     :param request_timeout: time in seconds
+ 805 |     :param response_timeout: time in seconds
+ 806 |     :param keep_alive_timeout: time in seconds
+ 807 |     :param ssl: SSLContext
+ 808 |     :param sock: Socket for the server to accept connections from
+ 809 |     :param request_max_size: size in bytes, `None` for no limit
+ 810 |     :param reuse_port: `True` for multiple workers
+ 811 |     :param loop: asyncio compatible event loop
+ 812 |     :param protocol: subclass of asyncio protocol class
+ 813 |     :param run_async: bool: Do not create a new event loop for the server,
+ 814 |                       and return an AsyncServer object rather than running it
+ 815 |     :param request_class: Request class to use
+ 816 |     :param access_log: disable/enable access log
+ 817 |     :param websocket_max_size: enforces the maximum size for
+ 818 |                                incoming messages in bytes.
+ 819 |     :param websocket_max_queue: sets the maximum length of the queue
+ 820 |                                 that holds incoming messages.
+ 821 |     :param websocket_read_limit: sets the high-water limit of the buffer for
+ 822 |                                  incoming bytes, the low-water limit is half
+ 823 |                                  the high-water limit.
+ 824 |     :param websocket_write_limit: sets the high-water limit of the buffer for
+ 825 |                                   outgoing bytes, the low-water limit is a
+ 826 |                                   quarter of the high-water limit.
+ 827 |     :param is_request_stream: disable/enable Request.stream
+ 828 |     :param request_buffer_queue_size: streaming request buffer queue size
+ 829 |     :param router: Router object
+ 830 |     :param graceful_shutdown_timeout: How long take to Force close non-idle
+ 831 |                                       connection
+ 832 |     :param asyncio_server_kwargs: key-value args for asyncio/uvloop
+ 833 |                                   create_server method
+ 834 |     :return: Nothing
+ 835 |     """
+ 836 |     if not run_async:
+ 837 |         # create new event_loop after fork
+ 838 |         loop = asyncio.new_event_loop()
+ 839 |         asyncio.set_event_loop(loop)
+ 840 | 
+ 841 |     if debug:
+ 842 |         loop.set_debug(debug)
+ 843 | 
+ 844 |     app.asgi = False
+ 845 | 
+ 846 |     connections = connections if connections is not None else set()
+ 847 |     server = partial(
+ 848 |         protocol,
+ 849 |         loop=loop,
+ 850 |         connections=connections,
+ 851 |         signal=signal,
+ 852 |         app=app,
+ 853 |         request_handler=request_handler,
+ 854 |         error_handler=error_handler,
+ 855 |         request_timeout=request_timeout,
+ 856 |         response_timeout=response_timeout,
+ 857 |         keep_alive_timeout=keep_alive_timeout,
+ 858 |         request_max_size=request_max_size,
+ 859 |         request_buffer_queue_size=request_buffer_queue_size,
+ 860 |         request_class=request_class,
+ 861 |         access_log=access_log,
+ 862 |         keep_alive=keep_alive,
+ 863 |         is_request_stream=is_request_stream,
+ 864 |         router=router,
+ 865 |         websocket_max_size=websocket_max_size,
+ 866 |         websocket_max_queue=websocket_max_queue,
+ 867 |         websocket_read_limit=websocket_read_limit,
+ 868 |         websocket_write_limit=websocket_write_limit,
+ 869 |         state=state,
+ 870 |         debug=debug,
+ 871 |     )
+ 872 |     asyncio_server_kwargs = (
+ 873 |         asyncio_server_kwargs if asyncio_server_kwargs else {}
+ 874 |     )
+ 875 |     server_coroutine = loop.create_server(
+ 876 |         server,
+ 877 |         host,
+ 878 |         port,
+ 879 |         ssl=ssl,
+ 880 |         reuse_port=reuse_port,
+ 881 |         sock=sock,
+ 882 |         backlog=backlog,
+ 883 |         **asyncio_server_kwargs
+ 884 |     )
+ 885 | 
+ 886 |     if run_async:
+ 887 |         return AsyncioServer(
+ 888 |             loop,
+ 889 |             server_coroutine,
+ 890 |             connections,
+ 891 |             after_start,
+ 892 |             before_stop,
+ 893 |             after_stop,
+ 894 |         )
+ 895 | 
+ 896 |     trigger_events(before_start, loop)
+ 897 | 
+ 898 |     try:
+ 899 |         http_server = loop.run_until_complete(server_coroutine)
+ 900 |     except BaseException:
+ 901 |         logger.exception("Unable to start server")
+ 902 |         return
+ 903 | 
+ 904 |     trigger_events(after_start, loop)
+ 905 | 
+ 906 |     # Ignore SIGINT when run_multiple
+ 907 |     if run_multiple:
+ 908 |         signal_func(SIGINT, SIG_IGN)
+ 909 | 
+ 910 |     # Register signals for graceful termination
+ 911 |     if register_sys_signals:
+ 912 |         _singals = (SIGTERM,) if run_multiple else (SIGINT, SIGTERM)
+ 913 |         for _signal in _singals:
+ 914 |             try:
+ 915 |                 loop.add_signal_handler(_signal, loop.stop)
+ 916 |             except NotImplementedError:
+ 917 |                 logger.warning(
+ 918 |                     "Sanic tried to use loop.add_signal_handler "
+ 919 |                     "but it is not implemented on this platform."
+ 920 |                 )
+ 921 |     pid = os.getpid()
+ 922 |     try:
+ 923 |         logger.info("Starting worker [%s]", pid)
+ 924 |         loop.run_forever()
+ 925 |     finally:
+ 926 |         logger.info("Stopping worker [%s]", pid)
+ 927 | 
+ 928 |         # Run the on_stop function if provided
+ 929 |         trigger_events(before_stop, loop)
+ 930 | 
+ 931 |         # Wait for event loop to finish and all connections to drain
+ 932 |         http_server.close()
+ 933 |         loop.run_until_complete(http_server.wait_closed())
+ 934 | 
+ 935 |         # Complete all tasks on the loop
+ 936 |         signal.stopped = True
+ 937 |         for connection in connections:
+ 938 |             connection.close_if_idle()
+ 939 | 
+ 940 |         # Gracefully shutdown timeout.
+ 941 |         # We should provide graceful_shutdown_timeout,
+ 942 |         # instead of letting connection hangs forever.
+ 943 |         # Let's roughly calcucate time.
+ 944 |         start_shutdown = 0
+ 945 |         while connections and (start_shutdown < graceful_shutdown_timeout):
+ 946 |             loop.run_until_complete(asyncio.sleep(0.1))
+ 947 |             start_shutdown = start_shutdown + 0.1
+ 948 | 
+ 949 |         # Force close non-idle connection after waiting for
+ 950 |         # graceful_shutdown_timeout
+ 951 |         coros = []
+ 952 |         for conn in connections:
+ 953 |             if hasattr(conn, "websocket") and conn.websocket:
+ 954 |                 coros.append(conn.websocket.close_connection())
+ 955 |             else:
+ 956 |                 conn.close()
+ 957 | 
+ 958 |         if sys.version_info.minor >= 8:
+ 959 |             _shutdown = asyncio.gather(*coros, loop=loop)
+ 960 |         else:
+ 961 |             _shutdown = asyncio.gather(*coros)
+ 962 |         loop.run_until_complete(_shutdown)
+ 963 | 
+ 964 |         trigger_events(after_stop, loop)
+ 965 | 
+ 966 |         loop.close()
+ 967 | 
+ 968 | 
+ 969 | def serve_multiple(server_settings, workers):
+ 970 |     """Start multiple server processes simultaneously.  Stop on interrupt
+ 971 |     and terminate signals, and drain connections when complete.
+ 972 | 
+ 973 |     :param server_settings: kw arguments to be passed to the serve function
+ 974 |     :param workers: number of workers to launch
+ 975 |     :param stop_event: if provided, is used as a stop signal
+ 976 |     :return:
+ 977 |     """
+ 978 |     server_settings["reuse_port"] = True
+ 979 |     server_settings["run_multiple"] = True
+ 980 | 
+ 981 |     # Handling when custom socket is not provided.
+ 982 |     if server_settings.get("sock") is None:
+ 983 |         sock = socket()
+ 984 |         sock.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
+ 985 |         sock.bind((server_settings["host"], server_settings["port"]))
+ 986 |         sock.set_inheritable(True)
+ 987 |         server_settings["sock"] = sock
+ 988 |         server_settings["host"] = None
+ 989 |         server_settings["port"] = None
+ 990 | 
+ 991 |     processes = []
+ 992 | 
+ 993 |     def sig_handler(signal, frame):
+ 994 |         logger.info("Received signal %s. Shutting down.", Signals(signal).name)
+ 995 |         for process in processes:
+ 996 |             os.kill(process.pid, SIGTERM)
+ 997 | 
+ 998 |     signal_func(SIGINT, lambda s, f: sig_handler(s, f))
+ 999 |     signal_func(SIGTERM, lambda s, f: sig_handler(s, f))
+1000 | 
+1001 |     for _ in range(workers):
+1002 |         process = Process(target=serve, kwargs=server_settings)
+1003 |         process.daemon = True
+1004 |         process.start()
+1005 |         processes.append(process)
+1006 | 
+1007 |     for process in processes:
+1008 |         process.join()
+1009 | 
+1010 |     # the above processes will block this until they're stopped
+1011 |     for process in processes:
+1012 |         process.terminate()
+1013 |     server_settings.get("sock").close()
+```
+
+
+FAILING TEST FILES:
+
+[test_file_1] BugsInPy/workspace/sanic/tests/test_app.py
+```python
+  1 | import asyncio
+  2 | import logging
+  3 | import sys
+  4 | 
+  5 | from inspect import isawaitable
+  6 | 
+  7 | import pytest
+  8 | 
+  9 | from sanic.exceptions import SanicException
+ 10 | from sanic.response import text
+ 11 | 
+ 12 | 
+ 13 | def uvloop_installed():
+ 14 |     try:
+ 15 |         import uvloop  # noqa
+ 16 | 
+ 17 |         return True
+ 18 |     except ImportError:
+ 19 |         return False
+ 20 | 
+ 21 | 
+ 22 | def test_app_loop_running(app):
+ 23 |     @app.get("/test")
+ 24 |     async def handler(request):
+ 25 |         assert isinstance(app.loop, asyncio.AbstractEventLoop)
+ 26 |         return text("pass")
+ 27 | 
+ 28 |     request, response = app.test_client.get("/test")
+ 29 |     assert response.text == "pass"
+ 30 | 
+ 31 | 
+ 32 | @pytest.mark.skipif(
+ 33 |     sys.version_info < (3, 7), reason="requires python3.7 or higher"
+ 34 | )
+ 35 | def test_create_asyncio_server(app):
+ 36 |     if not uvloop_installed():
+ 37 |         loop = asyncio.get_event_loop()
+ 38 |         asyncio_srv_coro = app.create_server(return_asyncio_server=True)
+ 39 |         assert isawaitable(asyncio_srv_coro)
+ 40 |         srv = loop.run_until_complete(asyncio_srv_coro)
+ 41 |         assert srv.is_serving() is True
+ 42 | 
+ 43 | 
+ 44 | @pytest.mark.skipif(
+ 45 |     sys.version_info < (3, 7), reason="requires python3.7 or higher"
+ 46 | )
+ 47 | def test_asyncio_server_no_start_serving(app):
+ 48 |     if not uvloop_installed():
+ 49 |         loop = asyncio.get_event_loop()
+ 50 |         asyncio_srv_coro = app.create_server(
+ 51 |             return_asyncio_server=True,
+ 52 |             asyncio_server_kwargs=dict(start_serving=False),
+ 53 |         )
+ 54 |         srv = loop.run_until_complete(asyncio_srv_coro)
+ 55 |         assert srv.is_serving() is False
+ 56 | 
+ 57 | @pytest.mark.skipif(
+ 58 |     sys.version_info < (3, 7), reason="requires python3.7 or higher"
+ 59 | )
+ 60 | def test_asyncio_server_start_serving(app):
+ 61 |     if not uvloop_installed():
+ 62 |         loop = asyncio.get_event_loop()
+ 63 |         asyncio_srv_coro = app.create_server(
+ 64 |             return_asyncio_server=True,
+ 65 |             asyncio_server_kwargs=dict(start_serving=False),
+ 66 |         )
+ 67 |         srv = loop.run_until_complete(asyncio_srv_coro)
+ 68 |         assert srv.is_serving() is False
+ 69 |         loop.run_until_complete(srv.start_serving())
+ 70 |         assert srv.is_serving() is True
+ 71 |         srv.close()
+ 72 |         # Looks like we can't easily test `serve_forever()`
+ 73 | 
+ 74 | def test_app_loop_not_running(app):
+ 75 |     with pytest.raises(SanicException) as excinfo:
+ 76 |         app.loop
+ 77 | 
+ 78 |     assert str(excinfo.value) == (
+ 79 |         "Loop can only be retrieved after the app has started "
+ 80 |         "running. Not supported with `create_server` function"
+ 81 |     )
+ 82 | 
+ 83 | 
+ 84 | def test_app_run_raise_type_error(app):
+ 85 | 
+ 86 |     with pytest.raises(TypeError) as excinfo:
+ 87 |         app.run(loop="loop")
+ 88 | 
+ 89 |     assert str(excinfo.value) == (
+ 90 |         "loop is not a valid argument. To use an existing loop, "
+ 91 |         "change to create_server().\nSee more: "
+ 92 |         "https://sanic.readthedocs.io/en/latest/sanic/deploying.html"
+ 93 |         "#asynchronous-support"
+ 94 |     )
+ 95 | 
+ 96 | 
+ 97 | def test_app_route_raise_value_error(app):
+ 98 | 
+ 99 |     with pytest.raises(ValueError) as excinfo:
+100 | 
+101 |         @app.route("/test")
+102 |         async def handler():
+103 |             return text("test")
+104 | 
+105 |     assert (
+106 |         str(excinfo.value)
+107 |         == "Required parameter `request` missing in the handler() route?"
+108 |     )
+109 | 
+110 | 
+111 | def test_app_handle_request_handler_is_none(app, monkeypatch):
+112 |     def mockreturn(*args, **kwargs):
+113 |         return None, [], {}, "", ""
+114 | 
+115 |     # Not sure how to make app.router.get() return None, so use mock here.
+116 |     monkeypatch.setattr(app.router, "get", mockreturn)
+117 | 
+118 |     @app.get("/test")
+119 |     def handler(request):
+120 |         return text("test")
+121 | 
+122 |     request, response = app.test_client.get("/test")
+123 | 
+124 |     assert "'None' was returned while requesting a handler from the router" in response.text
+125 | 
+126 | 
+127 | @pytest.mark.parametrize("websocket_enabled", [True, False])
+128 | @pytest.mark.parametrize("enable", [True, False])
+129 | def test_app_enable_websocket(app, websocket_enabled, enable):
+130 |     app.websocket_enabled = websocket_enabled
+131 |     app.enable_websocket(enable=enable)
+132 | 
+133 |     assert app.websocket_enabled == enable
+134 | 
+135 |     @app.websocket("/ws")
+136 |     async def handler(request, ws):
+137 |         await ws.send("test")
+138 | 
+139 |     assert app.websocket_enabled == True
+140 | 
+141 | 
+142 | def test_handle_request_with_nested_exception(app, monkeypatch):
+143 | 
+144 |     err_msg = "Mock Exception"
+145 | 
+146 |     # Not sure how to raise an exception in app.error_handler.response(), use mock here
+147 |     def mock_error_handler_response(*args, **kwargs):
+148 |         raise Exception(err_msg)
+149 | 
+150 |     monkeypatch.setattr(
+151 |         app.error_handler, "response", mock_error_handler_response
+152 |     )
+153 | 
+154 |     @app.get("/")
+155 |     def handler(request):
+156 |         raise Exception
+157 | 
+158 |     request, response = app.test_client.get("/")
+159 |     assert response.status == 500
+160 |     assert response.text == "An error occurred while handling an error"
+161 | 
+162 | 
+163 | def test_handle_request_with_nested_exception_debug(app, monkeypatch):
+164 | 
+165 |     err_msg = "Mock Exception"
+166 | 
+167 |     # Not sure how to raise an exception in app.error_handler.response(), use mock here
+168 |     def mock_error_handler_response(*args, **kwargs):
+169 |         raise Exception(err_msg)
+170 | 
+171 |     monkeypatch.setattr(
+172 |         app.error_handler, "response", mock_error_handler_response
+173 |     )
+174 | 
+175 |     @app.get("/")
+176 |     def handler(request):
+177 |         raise Exception
+178 | 
+179 |     request, response = app.test_client.get("/", debug=True)
+180 |     assert response.status == 500
+181 |     assert response.text.startswith(
+182 |         "Error while handling error: {}\nStack: Traceback (most recent call last):\n".format(
+183 |             err_msg
+184 |         )
+185 |     )
+186 | 
+187 | 
+188 | def test_handle_request_with_nested_sanic_exception(app, monkeypatch, caplog):
+189 | 
+190 |     # Not sure how to raise an exception in app.error_handler.response(), use mock here
+191 |     def mock_error_handler_response(*args, **kwargs):
+192 |         raise SanicException("Mock SanicException")
+193 | 
+194 |     monkeypatch.setattr(
+195 |         app.error_handler, "response", mock_error_handler_response
+196 |     )
+197 | 
+198 |     @app.get("/")
+199 |     def handler(request):
+200 |         raise Exception
+201 | 
+202 |     with caplog.at_level(logging.ERROR):
+203 |         request, response = app.test_client.get("/")
+204 |     assert response.status == 500
+205 |     assert "Mock SanicException" in response.text
+206 |     assert (
+207 |         "sanic.root",
+208 |         logging.ERROR,
+209 |         "Exception occurred while handling uri: 'http://127.0.0.1:42101/'",
+210 |     ) in caplog.record_tuples
+```

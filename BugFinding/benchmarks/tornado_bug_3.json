@@ -1,0 +1,9 @@
+{
+  "bug_locations": [
+    {
+      "file_path": "BugsInPy/workspace/tornado/tornado/httpclient.py",
+      "line_start": 233,
+      "line_end": 241
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+# git diff <buggy_version> <patched_version>
+# git diff --name-only fdfaf3dffa49479c7461050eacca07bc5ee8d207 ecb3ea7543cc942659faf3d2144853018afa6139
+setup.py
+tornado/test/static_foo.txt
+tornado/test/web_test.py
+tornado/web.py

@@ -1,0 +1,12 @@
+{
+    "bug_locations": [
+        {
+            "file_id": "file_1",
+            "file_path": "BugsInPy/workspace/scrapy/scrapy/spidermiddlewares/offsite.py",
+            "line_start": 62,
+            "line_end": 62,
+            "confidence": "high",
+            "reason": "The domain filtering only excludes None values, allowing empty hostnames to be included in the regex. This can produce a regex that matches unintended domains and breaks offsite filtering behavior."
+        }
+    ]
+}

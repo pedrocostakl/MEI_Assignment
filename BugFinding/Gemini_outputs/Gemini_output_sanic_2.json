@@ -1,0 +1,12 @@
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "sanic/server.py",
+      "line_start": 722,
+      "line_end": 737,
+      "confidence": "high",
+      "reason": "The AsyncioServer wrapper class is missing the 'start_serving()' and 'serve_forever()' proxy methods to the underlying asyncio server. This causes the test calling 'srv.start_serving()' to fail with an AttributeError."
+    }
+  ]
+}

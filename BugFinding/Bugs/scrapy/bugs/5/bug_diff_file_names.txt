@@ -1,0 +1,4 @@
+# git diff <buggy_version> <patched_version>
+# git diff --name-only 426da0ed07637e7efbcfb0fe49546e187d5d7f67 acd2b8d43b5ebec7ffd364b6f335427041a0b98d
+scrapy/http/response/__init__.py
+tests/test_http_response.py

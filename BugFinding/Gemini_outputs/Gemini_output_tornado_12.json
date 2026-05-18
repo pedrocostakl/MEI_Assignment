@@ -1,0 +1,12 @@
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "tornado/auth.py",
+      "line_start": 988,
+      "line_end": 992,
+      "confidence": "high",
+      "reason": "Facebook's Graph API now returns JSON responses for access tokens rather than URL-encoded strings. Additionally, using parse_qs_bytes without decoding results in byte strings that are not JSON-serializable when written to the response, causing 500 errors."
+    }
+  ]
+}

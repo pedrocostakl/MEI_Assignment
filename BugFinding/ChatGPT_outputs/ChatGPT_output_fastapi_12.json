@@ -1,0 +1,12 @@
+{
+    "bug_locations": [
+        {
+            "file_id": "file_1",
+            "file_path": "BugsInPy/workspace/fastapi/fastapi/security/http.py",
+            "line_start": 114,
+            "line_end": 118,
+            "confidence": "high",
+            "reason": "When auto_error=False, invalid bearer schemes should return None instead of raising HTTP 403. The failing test with a Basic scheme expects optional authentication behavior."
+        }
+    ]
+}

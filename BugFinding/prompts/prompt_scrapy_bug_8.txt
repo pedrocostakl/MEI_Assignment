@@ -1,0 +1,437 @@
+You are given buggy source files and failing test files.
+
+Your task is BUG LOCALIZATION ONLY.
+
+Return only valid JSON using this exact format:
+
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "relative/path.py",
+      "line_start": 1,
+      "line_end": 1,
+      "confidence": "low|medium|high",
+      "reason": "Max 2 sentences."
+    }
+  ]
+}
+
+Rules:
+- Do not propose fixes.
+- Do not rewrite code.
+- Do not explain outside JSON.
+- Line numbers must refer to the numbered buggy source file.
+- Include at most the number of suspected locations you think there are.
+- Prefer the smallest line range that identifies the origin of the bug.
+
+
+SOURCE FILES:
+
+[file_1] BugsInPy/workspace/scrapy/scrapy/item.py
+```python
+ 1 | """
+ 2 | Scrapy Item
+ 3 | 
+ 4 | See documentation in docs/topics/item.rst
+ 5 | """
+ 6 | 
+ 7 | from pprint import pformat
+ 8 | from collections import MutableMapping
+ 9 | 
+10 | from abc import ABCMeta
+11 | import six
+12 | 
+13 | from scrapy.utils.trackref import object_ref
+14 | 
+15 | 
+16 | class BaseItem(object_ref):
+17 |     """Base class for all scraped items."""
+18 |     pass
+19 | 
+20 | 
+21 | class Field(dict):
+22 |     """Container of field metadata"""
+23 | 
+24 | 
+25 | class ItemMeta(ABCMeta):
+26 | 
+27 |     def __new__(mcs, class_name, bases, attrs):
+28 |         new_bases = tuple(base._class for base in bases if hasattr(base, '_class'))
+29 |         _class = super(ItemMeta, mcs).__new__(mcs, 'x_' + class_name, new_bases, attrs)
+30 | 
+31 |         fields = getattr(_class, 'fields', {})
+32 |         new_attrs = {}
+33 |         for n in dir(_class):
+34 |             v = getattr(_class, n)
+35 |             if isinstance(v, Field):
+36 |                 fields[n] = v
+37 |             elif n in attrs:
+38 |                 new_attrs[n] = attrs[n]
+39 | 
+40 |         new_attrs['fields'] = fields
+41 |         new_attrs['_class'] = _class
+42 |         return super(ItemMeta, mcs).__new__(mcs, class_name, bases, new_attrs)
+43 | 
+44 | 
+45 | class DictItem(MutableMapping, BaseItem):
+46 | 
+47 |     fields = {}
+48 | 
+49 |     def __init__(self, *args, **kwargs):
+50 |         self._values = {}
+51 |         if args or kwargs:  # avoid creating dict for most common case
+52 |             for k, v in six.iteritems(dict(*args, **kwargs)):
+53 |                 self[k] = v
+54 | 
+55 |     def __getitem__(self, key):
+56 |         return self._values[key]
+57 | 
+58 |     def __setitem__(self, key, value):
+59 |         if key in self.fields:
+60 |             self._values[key] = value
+61 |         else:
+62 |             raise KeyError("%s does not support field: %s" %
+63 |                 (self.__class__.__name__, key))
+64 | 
+65 |     def __delitem__(self, key):
+66 |         del self._values[key]
+67 | 
+68 |     def __getattr__(self, name):
+69 |         if name in self.fields:
+70 |             raise AttributeError("Use item[%r] to get field value" % name)
+71 |         raise AttributeError(name)
+72 | 
+73 |     def __setattr__(self, name, value):
+74 |         if not name.startswith('_'):
+75 |             raise AttributeError("Use item[%r] = %r to set field value" %
+76 |                 (name, value))
+77 |         super(DictItem, self).__setattr__(name, value)
+78 | 
+79 |     def __len__(self):
+80 |         return len(self._values)
+81 | 
+82 |     def __iter__(self):
+83 |         return iter(self._values)
+84 | 
+85 |     __hash__ = BaseItem.__hash__
+86 | 
+87 |     def keys(self):
+88 |         return self._values.keys()
+89 | 
+90 |     def __repr__(self):
+91 |         return pformat(dict(self))
+92 | 
+93 |     def copy(self):
+94 |         return self.__class__(self)
+95 | 
+96 | 
+97 | @six.add_metaclass(ItemMeta)
+98 | class Item(DictItem):
+99 |     pass
+```
+
+
+FAILING TEST FILES:
+
+[test_file_1] BugsInPy/workspace/scrapy/tests/test_item.py
+```python
+  1 | import sys
+  2 | import unittest
+  3 | 
+  4 | import six
+  5 | 
+  6 | from scrapy.item import ABCMeta, Item, ItemMeta, Field
+  7 | from tests import mock
+  8 | 
+  9 | 
+ 10 | PY36_PLUS = (sys.version_info.major >= 3) and (sys.version_info.minor >= 6)
+ 11 | 
+ 12 | 
+ 13 | class ItemTest(unittest.TestCase):
+ 14 | 
+ 15 |     def assertSortedEqual(self, first, second, msg=None):
+ 16 |         return self.assertEqual(sorted(first), sorted(second), msg)
+ 17 | 
+ 18 |     def test_simple(self):
+ 19 |         class TestItem(Item):
+ 20 |             name = Field()
+ 21 | 
+ 22 |         i = TestItem()
+ 23 |         i['name'] = u'name'
+ 24 |         self.assertEqual(i['name'], u'name')
+ 25 | 
+ 26 |     def test_init(self):
+ 27 |         class TestItem(Item):
+ 28 |             name = Field()
+ 29 | 
+ 30 |         i = TestItem()
+ 31 |         self.assertRaises(KeyError, i.__getitem__, 'name')
+ 32 | 
+ 33 |         i2 = TestItem(name=u'john doe')
+ 34 |         self.assertEqual(i2['name'], u'john doe')
+ 35 | 
+ 36 |         i3 = TestItem({'name': u'john doe'})
+ 37 |         self.assertEqual(i3['name'], u'john doe')
+ 38 | 
+ 39 |         i4 = TestItem(i3)
+ 40 |         self.assertEqual(i4['name'], u'john doe')
+ 41 | 
+ 42 |         self.assertRaises(KeyError, TestItem, {'name': u'john doe',
+ 43 |                                                'other': u'foo'})
+ 44 | 
+ 45 |     def test_invalid_field(self):
+ 46 |         class TestItem(Item):
+ 47 |             pass
+ 48 | 
+ 49 |         i = TestItem()
+ 50 |         self.assertRaises(KeyError, i.__setitem__, 'field', 'text')
+ 51 |         self.assertRaises(KeyError, i.__getitem__, 'field')
+ 52 | 
+ 53 |     def test_repr(self):
+ 54 |         class TestItem(Item):
+ 55 |             name = Field()
+ 56 |             number = Field()
+ 57 | 
+ 58 |         i = TestItem()
+ 59 |         i['name'] = u'John Doe'
+ 60 |         i['number'] = 123
+ 61 |         itemrepr = repr(i)
+ 62 | 
+ 63 |         if six.PY2:
+ 64 |             self.assertEqual(itemrepr,
+ 65 |                              "{'name': u'John Doe', 'number': 123}")
+ 66 |         else:
+ 67 |             self.assertEqual(itemrepr,
+ 68 |                              "{'name': 'John Doe', 'number': 123}")
+ 69 | 
+ 70 |         i2 = eval(itemrepr)
+ 71 |         self.assertEqual(i2['name'], 'John Doe')
+ 72 |         self.assertEqual(i2['number'], 123)
+ 73 | 
+ 74 |     def test_private_attr(self):
+ 75 |         class TestItem(Item):
+ 76 |             name = Field()
+ 77 | 
+ 78 |         i = TestItem()
+ 79 |         i._private = 'test'
+ 80 |         self.assertEqual(i._private, 'test')
+ 81 | 
+ 82 |     def test_raise_getattr(self):
+ 83 |         class TestItem(Item):
+ 84 |             name = Field()
+ 85 | 
+ 86 |         i = TestItem()
+ 87 |         self.assertRaises(AttributeError, getattr, i, 'name')
+ 88 | 
+ 89 |     def test_raise_setattr(self):
+ 90 |         class TestItem(Item):
+ 91 |             name = Field()
+ 92 | 
+ 93 |         i = TestItem()
+ 94 |         self.assertRaises(AttributeError, setattr, i, 'name', 'john')
+ 95 | 
+ 96 |     def test_custom_methods(self):
+ 97 |         class TestItem(Item):
+ 98 |             name = Field()
+ 99 | 
+100 |             def get_name(self):
+101 |                 return self['name']
+102 | 
+103 |             def change_name(self, name):
+104 |                 self['name'] = name
+105 | 
+106 |         i = TestItem()
+107 |         self.assertRaises(KeyError, i.get_name)
+108 |         i['name'] = u'lala'
+109 |         self.assertEqual(i.get_name(), u'lala')
+110 |         i.change_name(u'other')
+111 |         self.assertEqual(i.get_name(), 'other')
+112 | 
+113 |     def test_metaclass(self):
+114 |         class TestItem(Item):
+115 |             name = Field()
+116 |             keys = Field()
+117 |             values = Field()
+118 | 
+119 |         i = TestItem()
+120 |         i['name'] = u'John'
+121 |         self.assertEqual(list(i.keys()), ['name'])
+122 |         self.assertEqual(list(i.values()), ['John'])
+123 | 
+124 |         i['keys'] = u'Keys'
+125 |         i['values'] = u'Values'
+126 |         self.assertSortedEqual(list(i.keys()), ['keys', 'values', 'name'])
+127 |         self.assertSortedEqual(list(i.values()), [u'Keys', u'Values', u'John'])
+128 | 
+129 |     def test_metaclass_with_fields_attribute(self):
+130 |         class TestItem(Item):
+131 |             fields = {'new': Field(default='X')}
+132 | 
+133 |         item = TestItem(new=u'New')
+134 |         self.assertSortedEqual(list(item.keys()), ['new'])
+135 |         self.assertSortedEqual(list(item.values()), [u'New'])
+136 | 
+137 |     def test_metaclass_inheritance(self):
+138 |         class BaseItem(Item):
+139 |             name = Field()
+140 |             keys = Field()
+141 |             values = Field()
+142 | 
+143 |         class TestItem(BaseItem):
+144 |             keys = Field()
+145 | 
+146 |         i = TestItem()
+147 |         i['keys'] = 3
+148 |         self.assertEqual(list(i.keys()), ['keys'])
+149 |         self.assertEqual(list(i.values()), [3])
+150 | 
+151 |     def test_metaclass_multiple_inheritance_simple(self):
+152 |         class A(Item):
+153 |             fields = {'load': Field(default='A')}
+154 |             save = Field(default='A')
+155 | 
+156 |         class B(A): pass
+157 | 
+158 |         class C(Item):
+159 |             fields = {'load': Field(default='C')}
+160 |             save = Field(default='C')
+161 | 
+162 |         class D(B, C): pass
+163 | 
+164 |         item = D(save='X', load='Y')
+165 |         self.assertEqual(item['save'], 'X')
+166 |         self.assertEqual(item['load'], 'Y')
+167 |         self.assertEqual(D.fields, {'load': {'default': 'A'},
+168 |             'save': {'default': 'A'}})
+169 | 
+170 |         # D class inverted
+171 |         class E(C, B): pass
+172 | 
+173 |         self.assertEqual(E(save='X')['save'], 'X')
+174 |         self.assertEqual(E(load='X')['load'], 'X')
+175 |         self.assertEqual(E.fields, {'load': {'default': 'C'},
+176 |             'save': {'default': 'C'}})
+177 | 
+178 |     def test_metaclass_multiple_inheritance_diamond(self):
+179 |         class A(Item):
+180 |             fields = {'update': Field(default='A')}
+181 |             save = Field(default='A')
+182 |             load = Field(default='A')
+183 | 
+184 |         class B(A): pass
+185 | 
+186 |         class C(A):
+187 |             fields = {'update': Field(default='C')}
+188 |             save = Field(default='C')
+189 | 
+190 |         class D(B, C):
+191 |             fields = {'update': Field(default='D')}
+192 |             load = Field(default='D')
+193 | 
+194 |         self.assertEqual(D(save='X')['save'], 'X')
+195 |         self.assertEqual(D(load='X')['load'], 'X')
+196 |         self.assertEqual(D.fields, {'save': {'default': 'C'},
+197 |             'load': {'default': 'D'}, 'update': {'default': 'D'}})
+198 | 
+199 |         # D class inverted
+200 |         class E(C, B):
+201 |             load = Field(default='E')
+202 | 
+203 |         self.assertEqual(E(save='X')['save'], 'X')
+204 |         self.assertEqual(E(load='X')['load'], 'X')
+205 |         self.assertEqual(E.fields, {'save': {'default': 'C'},
+206 |             'load': {'default': 'E'}, 'update': {'default': 'C'}})
+207 | 
+208 |     def test_metaclass_multiple_inheritance_without_metaclass(self):
+209 |         class A(Item):
+210 |             fields = {'load': Field(default='A')}
+211 |             save = Field(default='A')
+212 | 
+213 |         class B(A): pass
+214 | 
+215 |         class C(object):
+216 |             fields = {'load': Field(default='C')}
+217 |             not_allowed = Field(default='not_allowed')
+218 |             save = Field(default='C')
+219 | 
+220 |         class D(B, C): pass
+221 | 
+222 |         self.assertRaises(KeyError, D, not_allowed='value')
+223 |         self.assertEqual(D(save='X')['save'], 'X')
+224 |         self.assertEqual(D.fields, {'save': {'default': 'A'},
+225 |             'load': {'default': 'A'}})
+226 | 
+227 |         # D class inverted
+228 |         class E(C, B): pass
+229 | 
+230 |         self.assertRaises(KeyError, E, not_allowed='value')
+231 |         self.assertEqual(E(save='X')['save'], 'X')
+232 |         self.assertEqual(E.fields, {'save': {'default': 'A'},
+233 |             'load': {'default': 'A'}})
+234 | 
+235 |     def test_to_dict(self):
+236 |         class TestItem(Item):
+237 |             name = Field()
+238 | 
+239 |         i = TestItem()
+240 |         i['name'] = u'John'
+241 |         self.assertEqual(dict(i), {'name': u'John'})
+242 | 
+243 |     def test_copy(self):
+244 |         class TestItem(Item):
+245 |             name = Field()
+246 |         item = TestItem({'name':'lower'})
+247 |         copied_item = item.copy()
+248 |         self.assertNotEqual(id(item), id(copied_item))
+249 |         copied_item['name'] = copied_item['name'].upper()
+250 |         self.assertNotEqual(item['name'], copied_item['name'])
+251 | 
+252 | 
+253 | class ItemMetaTest(unittest.TestCase):
+254 | 
+255 |     def test_new_method_propagates_classcell(self):
+256 |         new_mock = mock.Mock(side_effect=ABCMeta.__new__)
+257 |         base = ItemMeta.__bases__[0]
+258 | 
+259 |         with mock.patch.object(base, '__new__', new_mock):
+260 | 
+261 |             class MyItem(Item):
+262 |                 if not PY36_PLUS:
+263 |                     # This attribute is an internal attribute in Python 3.6+
+264 |                     # and must be propagated properly. See
+265 |                     # https://docs.python.org/3.6/reference/datamodel.html#creating-the-class-object
+266 |                     # In <3.6, we add a dummy attribute just to ensure the
+267 |                     # __new__ method propagates it correctly.
+268 |                     __classcell__ = object()
+269 | 
+270 |                 def f(self):
+271 |                     # For rationale of this see:
+272 |                     # https://github.com/python/cpython/blob/ee1a81b77444c6715cbe610e951c655b6adab88b/Lib/test/test_super.py#L222
+273 |                     return __class__
+274 | 
+275 |             MyItem()
+276 | 
+277 |         (first_call, second_call) = new_mock.call_args_list[-2:]
+278 | 
+279 |         mcs, class_name, bases, attrs = first_call[0]
+280 |         assert '__classcell__' not in attrs
+281 |         mcs, class_name, bases, attrs = second_call[0]
+282 |         assert '__classcell__' in attrs
+283 | 
+284 | 
+285 | class ItemMetaClassCellRegression(unittest.TestCase):
+286 | 
+287 |     def test_item_meta_classcell_regression(self):
+288 |         class MyItem(six.with_metaclass(ItemMeta, Item)):
+289 |             def __init__(self, *args, **kwargs):
+290 |                 # This call to super() trigger the __classcell__ propagation
+291 |                 # requirement. When not done properly raises an error:
+292 |                 # TypeError: __class__ set to <class '__main__.MyItem'>
+293 |                 # defining 'MyItem' as <class '__main__.MyItem'>
+294 |                 super(MyItem, self).__init__(*args, **kwargs)
+295 | 
+296 | 
+297 | if __name__ == "__main__":
+298 |     unittest.main()
+```

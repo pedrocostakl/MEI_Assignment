@@ -1,0 +1,20 @@
+{
+    "bug_locations": [
+        {
+            "file_id": "file_1",
+            "file_path": "BugsInPy/workspace/sanic/sanic/log.py",
+            "line_start": 8,
+            "line_end": 22,
+            "confidence": "high",
+            "reason": "The default logging configuration defines 'root' instead of 'sanic.root', but tests expect a configured 'sanic.root' logger with handlers and configurable level."
+        },
+        {
+            "file_id": "file_1",
+            "file_path": "BugsInPy/workspace/sanic/sanic/log.py",
+            "line_start": 56,
+            "line_end": 56,
+            "confidence": "medium",
+            "reason": "A logger named 'sanic.root' is created, but there is no matching entry in LOGGING_CONFIG_DEFAULTS['loggers'], causing inconsistency between configured and retrieved loggers."
+        }
+    ]
+}

@@ -1,0 +1,24 @@
+{
+  "bug_locations": [
+    {
+      "file_path": "BugsInPy/workspace/tornado/tornado/ioloop.py",
+      "line_start": 47,
+      "line_end": 53
+    },
+    {
+      "file_path": "BugsInPy/workspace/tornado/tornado/ioloop.py",
+      "line_start": 185,
+      "line_end": 191
+    },
+    {
+      "file_path": "BugsInPy/workspace/tornado/tornado/platform/asyncio.py",
+      "line_start": 38,
+      "line_end": 43
+    },
+    {
+      "file_path": "BugsInPy/workspace/tornado/tornado/platform/asyncio.py",
+      "line_start": 49,
+      "line_end": 54
+    }
+  ]
+}

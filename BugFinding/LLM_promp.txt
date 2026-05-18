@@ -1,0 +1,53 @@
+You are given buggy source code and a failing test.
+
+Your task is bug localization only.
+
+Return a JSON object with this exact structure:
+
+{
+  "bug_locations": [
+    {
+      "file": "<relative file path>",
+      "function_or_class": "<nearest enclosing function or class>",
+      "line_start": <first suspected buggy line>,
+      "line_end": <last suspected buggy line>,
+      "confidence": "low|medium|high",
+      "reason": "<max 2 sentences>"
+    }
+  ]
+}
+
+Rules:
+- Do not propose a fix.
+- Do not rewrite code.
+- Do not explain beyond the reason field.
+- Line numbers must refer to the buggy source file.
+
+You are given the following files:
+
+[file_1] fastapi/routing.py
+<FILE CONTENT HERE>
+
+[file_2] tests/test_routing.py
+<FILE CONTENT HERE>
+
+Failing test output:
+<STACK TRACE HERE>
+
+Task:
+Identify the bug location.
+
+------
+example output:
+{
+  "bug_locations": [
+    {
+      "file": "fastapi/routing.py",
+      "function_or_class": "APIRouter",
+      "line_start": 271,
+      "line_end": 275,
+      "confidence": "high",
+      "reason": "The router includes normal routes but fails to include WebSocketRoute instances when prefixing routes."
+    }
+  ]
+}

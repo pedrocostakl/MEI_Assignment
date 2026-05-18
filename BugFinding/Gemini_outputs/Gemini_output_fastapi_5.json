@@ -1,0 +1,12 @@
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "fastapi/utils.py",
+      "line_start": 96,
+      "line_end": 101,
+      "confidence": "high",
+      "reason": "Creating a dynamic model without specifying `__module__` or `__base__`, and then manually injecting `__fields__` and `__validators__` into the class instead of passing them to `create_model`, results in an improperly initialized Pydantic model. This causes sub-model instances to bypass Pydantic's field filtering during response serialization."
+    }
+  ]
+}

@@ -1,0 +1,1719 @@
+You are given buggy source files and failing test files.
+
+Your task is BUG LOCALIZATION ONLY.
+
+Return only valid JSON using this exact format:
+
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "relative/path.py",
+      "line_start": 1,
+      "line_end": 1,
+      "confidence": "low|medium|high",
+      "reason": "Max 2 sentences."
+    }
+  ]
+}
+
+Rules:
+- Do not propose fixes.
+- Do not rewrite code.
+- Do not explain outside JSON.
+- Line numbers must refer to the numbered buggy source file.
+- Include at most the number of suspected locations you think there are.
+- Prefer the smallest line range that identifies the origin of the bug.
+
+
+SOURCE FILES:
+
+[file_1] BugsInPy/workspace/tornado/tornado/auth.py
+```python
+   1 | #!/usr/bin/env python
+   2 | #
+   3 | # Copyright 2009 Facebook
+   4 | #
+   5 | # Licensed under the Apache License, Version 2.0 (the "License"); you may
+   6 | # not use this file except in compliance with the License. You may obtain
+   7 | # a copy of the License at
+   8 | #
+   9 | #     http://www.apache.org/licenses/LICENSE-2.0
+  10 | #
+  11 | # Unless required by applicable law or agreed to in writing, software
+  12 | # distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+  13 | # WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+  14 | # License for the specific language governing permissions and limitations
+  15 | # under the License.
+  16 | 
+  17 | """This module contains implementations of various third-party
+  18 | authentication schemes.
+  19 | 
+  20 | All the classes in this file are class mixins designed to be used with
+  21 | the `tornado.web.RequestHandler` class.  They are used in two ways:
+  22 | 
+  23 | * On a login handler, use methods such as ``authenticate_redirect()``,
+  24 |   ``authorize_redirect()``, and ``get_authenticated_user()`` to
+  25 |   establish the user's identity and store authentication tokens to your
+  26 |   database and/or cookies.
+  27 | * In non-login handlers, use methods such as ``facebook_request()``
+  28 |   or ``twitter_request()`` to use the authentication tokens to make
+  29 |   requests to the respective services.
+  30 | 
+  31 | They all take slightly different arguments due to the fact all these
+  32 | services implement authentication and authorization slightly differently.
+  33 | See the individual service classes below for complete documentation.
+  34 | 
+  35 | Example usage for Google OAuth:
+  36 | 
+  37 | .. testcode::
+  38 | 
+  39 |     class GoogleOAuth2LoginHandler(tornado.web.RequestHandler,
+  40 |                                    tornado.auth.GoogleOAuth2Mixin):
+  41 |         @tornado.gen.coroutine
+  42 |         def get(self):
+  43 |             if self.get_argument('code', False):
+  44 |                 user = yield self.get_authenticated_user(
+  45 |                     redirect_uri='http://your.site.com/auth/google',
+  46 |                     code=self.get_argument('code'))
+  47 |                 # Save the user with e.g. set_secure_cookie
+  48 |             else:
+  49 |                 yield self.authorize_redirect(
+  50 |                     redirect_uri='http://your.site.com/auth/google',
+  51 |                     client_id=self.settings['google_oauth']['key'],
+  52 |                     scope=['profile', 'email'],
+  53 |                     response_type='code',
+  54 |                     extra_params={'approval_prompt': 'auto'})
+  55 | 
+  56 | .. testoutput::
+  57 |    :hide:
+  58 | 
+  59 | 
+  60 | .. versionchanged:: 4.0
+  61 |    All of the callback interfaces in this module are now guaranteed
+  62 |    to run their callback with an argument of ``None`` on error.
+  63 |    Previously some functions would do this while others would simply
+  64 |    terminate the request on their own.  This change also ensures that
+  65 |    errors are more consistently reported through the ``Future`` interfaces.
+  66 | """
+  67 | 
+  68 | from __future__ import absolute_import, division, print_function, with_statement
+  69 | 
+  70 | import base64
+  71 | import binascii
+  72 | import functools
+  73 | import hashlib
+  74 | import hmac
+  75 | import time
+  76 | import uuid
+  77 | 
+  78 | from tornado.concurrent import TracebackFuture, return_future
+  79 | from tornado import gen
+  80 | from tornado import httpclient
+  81 | from tornado import escape
+  82 | from tornado.httputil import url_concat
+  83 | from tornado.log import gen_log
+  84 | from tornado.stack_context import ExceptionStackContext
+  85 | from tornado.util import u, unicode_type, ArgReplacer
+  86 | 
+  87 | try:
+  88 |     import urlparse  # py2
+  89 | except ImportError:
+  90 |     import urllib.parse as urlparse  # py3
+  91 | 
+  92 | try:
+  93 |     import urllib.parse as urllib_parse  # py3
+  94 | except ImportError:
+  95 |     import urllib as urllib_parse  # py2
+  96 | 
+  97 | try:
+  98 |     long  # py2
+  99 | except NameError:
+ 100 |     long = int  # py3
+ 101 | 
+ 102 | 
+ 103 | class AuthError(Exception):
+ 104 |     pass
+ 105 | 
+ 106 | 
+ 107 | def _auth_future_to_callback(callback, future):
+ 108 |     try:
+ 109 |         result = future.result()
+ 110 |     except AuthError as e:
+ 111 |         gen_log.warning(str(e))
+ 112 |         result = None
+ 113 |     callback(result)
+ 114 | 
+ 115 | 
+ 116 | def _auth_return_future(f):
+ 117 |     """Similar to tornado.concurrent.return_future, but uses the auth
+ 118 |     module's legacy callback interface.
+ 119 | 
+ 120 |     Note that when using this decorator the ``callback`` parameter
+ 121 |     inside the function will actually be a future.
+ 122 |     """
+ 123 |     replacer = ArgReplacer(f, 'callback')
+ 124 | 
+ 125 |     @functools.wraps(f)
+ 126 |     def wrapper(*args, **kwargs):
+ 127 |         future = TracebackFuture()
+ 128 |         callback, args, kwargs = replacer.replace(future, args, kwargs)
+ 129 |         if callback is not None:
+ 130 |             future.add_done_callback(
+ 131 |                 functools.partial(_auth_future_to_callback, callback))
+ 132 | 
+ 133 |         def handle_exception(typ, value, tb):
+ 134 |             if future.done():
+ 135 |                 return False
+ 136 |             else:
+ 137 |                 future.set_exc_info((typ, value, tb))
+ 138 |                 return True
+ 139 |         with ExceptionStackContext(handle_exception):
+ 140 |             f(*args, **kwargs)
+ 141 |         return future
+ 142 |     return wrapper
+ 143 | 
+ 144 | 
+ 145 | class OpenIdMixin(object):
+ 146 |     """Abstract implementation of OpenID and Attribute Exchange.
+ 147 | 
+ 148 |     Class attributes:
+ 149 | 
+ 150 |     * ``_OPENID_ENDPOINT``: the identity provider's URI.
+ 151 |     """
+ 152 |     @return_future
+ 153 |     def authenticate_redirect(self, callback_uri=None,
+ 154 |                               ax_attrs=["name", "email", "language", "username"],
+ 155 |                               callback=None):
+ 156 |         """Redirects to the authentication URL for this service.
+ 157 | 
+ 158 |         After authentication, the service will redirect back to the given
+ 159 |         callback URI with additional parameters including ``openid.mode``.
+ 160 | 
+ 161 |         We request the given attributes for the authenticated user by
+ 162 |         default (name, email, language, and username). If you don't need
+ 163 |         all those attributes for your app, you can request fewer with
+ 164 |         the ax_attrs keyword argument.
+ 165 | 
+ 166 |         .. versionchanged:: 3.1
+ 167 |            Returns a `.Future` and takes an optional callback.  These are
+ 168 |            not strictly necessary as this method is synchronous,
+ 169 |            but they are supplied for consistency with
+ 170 |            `OAuthMixin.authorize_redirect`.
+ 171 |         """
+ 172 |         callback_uri = callback_uri or self.request.uri
+ 173 |         args = self._openid_args(callback_uri, ax_attrs=ax_attrs)
+ 174 |         self.redirect(self._OPENID_ENDPOINT + "?" + urllib_parse.urlencode(args))
+ 175 |         callback()
+ 176 | 
+ 177 |     @_auth_return_future
+ 178 |     def get_authenticated_user(self, callback, http_client=None):
+ 179 |         """Fetches the authenticated user data upon redirect.
+ 180 | 
+ 181 |         This method should be called by the handler that receives the
+ 182 |         redirect from the `authenticate_redirect()` method (which is
+ 183 |         often the same as the one that calls it; in that case you would
+ 184 |         call `get_authenticated_user` if the ``openid.mode`` parameter
+ 185 |         is present and `authenticate_redirect` if it is not).
+ 186 | 
+ 187 |         The result of this method will generally be used to set a cookie.
+ 188 |         """
+ 189 |         # Verify the OpenID response via direct request to the OP
+ 190 |         args = dict((k, v[-1]) for k, v in self.request.arguments.items())
+ 191 |         args["openid.mode"] = u("check_authentication")
+ 192 |         url = self._OPENID_ENDPOINT
+ 193 |         if http_client is None:
+ 194 |             http_client = self.get_auth_http_client()
+ 195 |         http_client.fetch(url, functools.partial(
+ 196 |             self._on_authentication_verified, callback),
+ 197 |             method="POST", body=urllib_parse.urlencode(args))
+ 198 | 
+ 199 |     def _openid_args(self, callback_uri, ax_attrs=[], oauth_scope=None):
+ 200 |         url = urlparse.urljoin(self.request.full_url(), callback_uri)
+ 201 |         args = {
+ 202 |             "openid.ns": "http://specs.openid.net/auth/2.0",
+ 203 |             "openid.claimed_id":
+ 204 |             "http://specs.openid.net/auth/2.0/identifier_select",
+ 205 |             "openid.identity":
+ 206 |             "http://specs.openid.net/auth/2.0/identifier_select",
+ 207 |             "openid.return_to": url,
+ 208 |             "openid.realm": urlparse.urljoin(url, '/'),
+ 209 |             "openid.mode": "checkid_setup",
+ 210 |         }
+ 211 |         if ax_attrs:
+ 212 |             args.update({
+ 213 |                 "openid.ns.ax": "http://openid.net/srv/ax/1.0",
+ 214 |                 "openid.ax.mode": "fetch_request",
+ 215 |             })
+ 216 |             ax_attrs = set(ax_attrs)
+ 217 |             required = []
+ 218 |             if "name" in ax_attrs:
+ 219 |                 ax_attrs -= set(["name", "firstname", "fullname", "lastname"])
+ 220 |                 required += ["firstname", "fullname", "lastname"]
+ 221 |                 args.update({
+ 222 |                     "openid.ax.type.firstname":
+ 223 |                     "http://axschema.org/namePerson/first",
+ 224 |                     "openid.ax.type.fullname":
+ 225 |                     "http://axschema.org/namePerson",
+ 226 |                     "openid.ax.type.lastname":
+ 227 |                     "http://axschema.org/namePerson/last",
+ 228 |                 })
+ 229 |             known_attrs = {
+ 230 |                 "email": "http://axschema.org/contact/email",
+ 231 |                 "language": "http://axschema.org/pref/language",
+ 232 |                 "username": "http://axschema.org/namePerson/friendly",
+ 233 |             }
+ 234 |             for name in ax_attrs:
+ 235 |                 args["openid.ax.type." + name] = known_attrs[name]
+ 236 |                 required.append(name)
+ 237 |             args["openid.ax.required"] = ",".join(required)
+ 238 |         if oauth_scope:
+ 239 |             args.update({
+ 240 |                 "openid.ns.oauth":
+ 241 |                 "http://specs.openid.net/extensions/oauth/1.0",
+ 242 |                 "openid.oauth.consumer": self.request.host.split(":")[0],
+ 243 |                 "openid.oauth.scope": oauth_scope,
+ 244 |             })
+ 245 |         return args
+ 246 | 
+ 247 |     def _on_authentication_verified(self, future, response):
+ 248 |         if response.error or b"is_valid:true" not in response.body:
+ 249 |             future.set_exception(AuthError(
+ 250 |                 "Invalid OpenID response: %s" % (response.error or
+ 251 |                                                  response.body)))
+ 252 |             return
+ 253 | 
+ 254 |         # Make sure we got back at least an email from attribute exchange
+ 255 |         ax_ns = None
+ 256 |         for name in self.request.arguments:
+ 257 |             if name.startswith("openid.ns.") and \
+ 258 |                     self.get_argument(name) == u("http://openid.net/srv/ax/1.0"):
+ 259 |                 ax_ns = name[10:]
+ 260 |                 break
+ 261 | 
+ 262 |         def get_ax_arg(uri):
+ 263 |             if not ax_ns:
+ 264 |                 return u("")
+ 265 |             prefix = "openid." + ax_ns + ".type."
+ 266 |             ax_name = None
+ 267 |             for name in self.request.arguments.keys():
+ 268 |                 if self.get_argument(name) == uri and name.startswith(prefix):
+ 269 |                     part = name[len(prefix):]
+ 270 |                     ax_name = "openid." + ax_ns + ".value." + part
+ 271 |                     break
+ 272 |             if not ax_name:
+ 273 |                 return u("")
+ 274 |             return self.get_argument(ax_name, u(""))
+ 275 | 
+ 276 |         email = get_ax_arg("http://axschema.org/contact/email")
+ 277 |         name = get_ax_arg("http://axschema.org/namePerson")
+ 278 |         first_name = get_ax_arg("http://axschema.org/namePerson/first")
+ 279 |         last_name = get_ax_arg("http://axschema.org/namePerson/last")
+ 280 |         username = get_ax_arg("http://axschema.org/namePerson/friendly")
+ 281 |         locale = get_ax_arg("http://axschema.org/pref/language").lower()
+ 282 |         user = dict()
+ 283 |         name_parts = []
+ 284 |         if first_name:
+ 285 |             user["first_name"] = first_name
+ 286 |             name_parts.append(first_name)
+ 287 |         if last_name:
+ 288 |             user["last_name"] = last_name
+ 289 |             name_parts.append(last_name)
+ 290 |         if name:
+ 291 |             user["name"] = name
+ 292 |         elif name_parts:
+ 293 |             user["name"] = u(" ").join(name_parts)
+ 294 |         elif email:
+ 295 |             user["name"] = email.split("@")[0]
+ 296 |         if email:
+ 297 |             user["email"] = email
+ 298 |         if locale:
+ 299 |             user["locale"] = locale
+ 300 |         if username:
+ 301 |             user["username"] = username
+ 302 |         claimed_id = self.get_argument("openid.claimed_id", None)
+ 303 |         if claimed_id:
+ 304 |             user["claimed_id"] = claimed_id
+ 305 |         future.set_result(user)
+ 306 | 
+ 307 |     def get_auth_http_client(self):
+ 308 |         """Returns the `.AsyncHTTPClient` instance to be used for auth requests.
+ 309 | 
+ 310 |         May be overridden by subclasses to use an HTTP client other than
+ 311 |         the default.
+ 312 |         """
+ 313 |         return httpclient.AsyncHTTPClient()
+ 314 | 
+ 315 | 
+ 316 | class OAuthMixin(object):
+ 317 |     """Abstract implementation of OAuth 1.0 and 1.0a.
+ 318 | 
+ 319 |     See `TwitterMixin` below for an example implementation.
+ 320 | 
+ 321 |     Class attributes:
+ 322 | 
+ 323 |     * ``_OAUTH_AUTHORIZE_URL``: The service's OAuth authorization url.
+ 324 |     * ``_OAUTH_ACCESS_TOKEN_URL``: The service's OAuth access token url.
+ 325 |     * ``_OAUTH_VERSION``: May be either "1.0" or "1.0a".
+ 326 |     * ``_OAUTH_NO_CALLBACKS``: Set this to True if the service requires
+ 327 |       advance registration of callbacks.
+ 328 | 
+ 329 |     Subclasses must also override the `_oauth_get_user_future` and
+ 330 |     `_oauth_consumer_token` methods.
+ 331 |     """
+ 332 |     @return_future
+ 333 |     def authorize_redirect(self, callback_uri=None, extra_params=None,
+ 334 |                            http_client=None, callback=None):
+ 335 |         """Redirects the user to obtain OAuth authorization for this service.
+ 336 | 
+ 337 |         The ``callback_uri`` may be omitted if you have previously
+ 338 |         registered a callback URI with the third-party service.  For
+ 339 |         some services (including Friendfeed), you must use a
+ 340 |         previously-registered callback URI and cannot specify a
+ 341 |         callback via this method.
+ 342 | 
+ 343 |         This method sets a cookie called ``_oauth_request_token`` which is
+ 344 |         subsequently used (and cleared) in `get_authenticated_user` for
+ 345 |         security purposes.
+ 346 | 
+ 347 |         Note that this method is asynchronous, although it calls
+ 348 |         `.RequestHandler.finish` for you so it may not be necessary
+ 349 |         to pass a callback or use the `.Future` it returns.  However,
+ 350 |         if this method is called from a function decorated with
+ 351 |         `.gen.coroutine`, you must call it with ``yield`` to keep the
+ 352 |         response from being closed prematurely.
+ 353 | 
+ 354 |         .. versionchanged:: 3.1
+ 355 |            Now returns a `.Future` and takes an optional callback, for
+ 356 |            compatibility with `.gen.coroutine`.
+ 357 |         """
+ 358 |         if callback_uri and getattr(self, "_OAUTH_NO_CALLBACKS", False):
+ 359 |             raise Exception("This service does not support oauth_callback")
+ 360 |         if http_client is None:
+ 361 |             http_client = self.get_auth_http_client()
+ 362 |         if getattr(self, "_OAUTH_VERSION", "1.0a") == "1.0a":
+ 363 |             http_client.fetch(
+ 364 |                 self._oauth_request_token_url(callback_uri=callback_uri,
+ 365 |                                               extra_params=extra_params),
+ 366 |                 functools.partial(
+ 367 |                     self._on_request_token,
+ 368 |                     self._OAUTH_AUTHORIZE_URL,
+ 369 |                     callback_uri,
+ 370 |                     callback))
+ 371 |         else:
+ 372 |             http_client.fetch(
+ 373 |                 self._oauth_request_token_url(),
+ 374 |                 functools.partial(
+ 375 |                     self._on_request_token, self._OAUTH_AUTHORIZE_URL,
+ 376 |                     callback_uri,
+ 377 |                     callback))
+ 378 | 
+ 379 |     @_auth_return_future
+ 380 |     def get_authenticated_user(self, callback, http_client=None):
+ 381 |         """Gets the OAuth authorized user and access token.
+ 382 | 
+ 383 |         This method should be called from the handler for your
+ 384 |         OAuth callback URL to complete the registration process. We run the
+ 385 |         callback with the authenticated user dictionary.  This dictionary
+ 386 |         will contain an ``access_key`` which can be used to make authorized
+ 387 |         requests to this service on behalf of the user.  The dictionary will
+ 388 |         also contain other fields such as ``name``, depending on the service
+ 389 |         used.
+ 390 |         """
+ 391 |         future = callback
+ 392 |         request_key = escape.utf8(self.get_argument("oauth_token"))
+ 393 |         oauth_verifier = self.get_argument("oauth_verifier", None)
+ 394 |         request_cookie = self.get_cookie("_oauth_request_token")
+ 395 |         if not request_cookie:
+ 396 |             future.set_exception(AuthError(
+ 397 |                 "Missing OAuth request token cookie"))
+ 398 |             return
+ 399 |         self.clear_cookie("_oauth_request_token")
+ 400 |         cookie_key, cookie_secret = [base64.b64decode(escape.utf8(i)) for i in request_cookie.split("|")]
+ 401 |         if cookie_key != request_key:
+ 402 |             future.set_exception(AuthError(
+ 403 |                 "Request token does not match cookie"))
+ 404 |             return
+ 405 |         token = dict(key=cookie_key, secret=cookie_secret)
+ 406 |         if oauth_verifier:
+ 407 |             token["verifier"] = oauth_verifier
+ 408 |         if http_client is None:
+ 409 |             http_client = self.get_auth_http_client()
+ 410 |         http_client.fetch(self._oauth_access_token_url(token),
+ 411 |                           functools.partial(self._on_access_token, callback))
+ 412 | 
+ 413 |     def _oauth_request_token_url(self, callback_uri=None, extra_params=None):
+ 414 |         consumer_token = self._oauth_consumer_token()
+ 415 |         url = self._OAUTH_REQUEST_TOKEN_URL
+ 416 |         args = dict(
+ 417 |             oauth_consumer_key=escape.to_basestring(consumer_token["key"]),
+ 418 |             oauth_signature_method="HMAC-SHA1",
+ 419 |             oauth_timestamp=str(int(time.time())),
+ 420 |             oauth_nonce=escape.to_basestring(binascii.b2a_hex(uuid.uuid4().bytes)),
+ 421 |             oauth_version="1.0",
+ 422 |         )
+ 423 |         if getattr(self, "_OAUTH_VERSION", "1.0a") == "1.0a":
+ 424 |             if callback_uri == "oob":
+ 425 |                 args["oauth_callback"] = "oob"
+ 426 |             elif callback_uri:
+ 427 |                 args["oauth_callback"] = urlparse.urljoin(
+ 428 |                     self.request.full_url(), callback_uri)
+ 429 |             if extra_params:
+ 430 |                 args.update(extra_params)
+ 431 |             signature = _oauth10a_signature(consumer_token, "GET", url, args)
+ 432 |         else:
+ 433 |             signature = _oauth_signature(consumer_token, "GET", url, args)
+ 434 | 
+ 435 |         args["oauth_signature"] = signature
+ 436 |         return url + "?" + urllib_parse.urlencode(args)
+ 437 | 
+ 438 |     def _on_request_token(self, authorize_url, callback_uri, callback,
+ 439 |                           response):
+ 440 |         if response.error:
+ 441 |             raise Exception("Could not get request token: %s" % response.error)
+ 442 |         request_token = _oauth_parse_response(response.body)
+ 443 |         data = (base64.b64encode(escape.utf8(request_token["key"])) + b"|" +
+ 444 |                 base64.b64encode(escape.utf8(request_token["secret"])))
+ 445 |         self.set_cookie("_oauth_request_token", data)
+ 446 |         args = dict(oauth_token=request_token["key"])
+ 447 |         if callback_uri == "oob":
+ 448 |             self.finish(authorize_url + "?" + urllib_parse.urlencode(args))
+ 449 |             callback()
+ 450 |             return
+ 451 |         elif callback_uri:
+ 452 |             args["oauth_callback"] = urlparse.urljoin(
+ 453 |                 self.request.full_url(), callback_uri)
+ 454 |         self.redirect(authorize_url + "?" + urllib_parse.urlencode(args))
+ 455 |         callback()
+ 456 | 
+ 457 |     def _oauth_access_token_url(self, request_token):
+ 458 |         consumer_token = self._oauth_consumer_token()
+ 459 |         url = self._OAUTH_ACCESS_TOKEN_URL
+ 460 |         args = dict(
+ 461 |             oauth_consumer_key=escape.to_basestring(consumer_token["key"]),
+ 462 |             oauth_token=escape.to_basestring(request_token["key"]),
+ 463 |             oauth_signature_method="HMAC-SHA1",
+ 464 |             oauth_timestamp=str(int(time.time())),
+ 465 |             oauth_nonce=escape.to_basestring(binascii.b2a_hex(uuid.uuid4().bytes)),
+ 466 |             oauth_version="1.0",
+ 467 |         )
+ 468 |         if "verifier" in request_token:
+ 469 |             args["oauth_verifier"] = request_token["verifier"]
+ 470 | 
+ 471 |         if getattr(self, "_OAUTH_VERSION", "1.0a") == "1.0a":
+ 472 |             signature = _oauth10a_signature(consumer_token, "GET", url, args,
+ 473 |                                             request_token)
+ 474 |         else:
+ 475 |             signature = _oauth_signature(consumer_token, "GET", url, args,
+ 476 |                                          request_token)
+ 477 | 
+ 478 |         args["oauth_signature"] = signature
+ 479 |         return url + "?" + urllib_parse.urlencode(args)
+ 480 | 
+ 481 |     def _on_access_token(self, future, response):
+ 482 |         if response.error:
+ 483 |             future.set_exception(AuthError("Could not fetch access token"))
+ 484 |             return
+ 485 | 
+ 486 |         access_token = _oauth_parse_response(response.body)
+ 487 |         self._oauth_get_user_future(access_token).add_done_callback(
+ 488 |             functools.partial(self._on_oauth_get_user, access_token, future))
+ 489 | 
+ 490 |     def _oauth_consumer_token(self):
+ 491 |         """Subclasses must override this to return their OAuth consumer keys.
+ 492 | 
+ 493 |         The return value should be a `dict` with keys ``key`` and ``secret``.
+ 494 |         """
+ 495 |         raise NotImplementedError()
+ 496 | 
+ 497 |     @return_future
+ 498 |     def _oauth_get_user_future(self, access_token, callback):
+ 499 |         """Subclasses must override this to get basic information about the
+ 500 |         user.
+ 501 | 
+ 502 |         Should return a `.Future` whose result is a dictionary
+ 503 |         containing information about the user, which may have been
+ 504 |         retrieved by using ``access_token`` to make a request to the
+ 505 |         service.
+ 506 | 
+ 507 |         The access token will be added to the returned dictionary to make
+ 508 |         the result of `get_authenticated_user`.
+ 509 | 
+ 510 |         For backwards compatibility, the callback-based ``_oauth_get_user``
+ 511 |         method is also supported.
+ 512 |         """
+ 513 |         # By default, call the old-style _oauth_get_user, but new code
+ 514 |         # should override this method instead.
+ 515 |         self._oauth_get_user(access_token, callback)
+ 516 | 
+ 517 |     def _oauth_get_user(self, access_token, callback):
+ 518 |         raise NotImplementedError()
+ 519 | 
+ 520 |     def _on_oauth_get_user(self, access_token, future, user_future):
+ 521 |         if user_future.exception() is not None:
+ 522 |             future.set_exception(user_future.exception())
+ 523 |             return
+ 524 |         user = user_future.result()
+ 525 |         if not user:
+ 526 |             future.set_exception(AuthError("Error getting user"))
+ 527 |             return
+ 528 |         user["access_token"] = access_token
+ 529 |         future.set_result(user)
+ 530 | 
+ 531 |     def _oauth_request_parameters(self, url, access_token, parameters={},
+ 532 |                                   method="GET"):
+ 533 |         """Returns the OAuth parameters as a dict for the given request.
+ 534 | 
+ 535 |         parameters should include all POST arguments and query string arguments
+ 536 |         that will be sent with the request.
+ 537 |         """
+ 538 |         consumer_token = self._oauth_consumer_token()
+ 539 |         base_args = dict(
+ 540 |             oauth_consumer_key=escape.to_basestring(consumer_token["key"]),
+ 541 |             oauth_token=escape.to_basestring(access_token["key"]),
+ 542 |             oauth_signature_method="HMAC-SHA1",
+ 543 |             oauth_timestamp=str(int(time.time())),
+ 544 |             oauth_nonce=escape.to_basestring(binascii.b2a_hex(uuid.uuid4().bytes)),
+ 545 |             oauth_version="1.0",
+ 546 |         )
+ 547 |         args = {}
+ 548 |         args.update(base_args)
+ 549 |         args.update(parameters)
+ 550 |         if getattr(self, "_OAUTH_VERSION", "1.0a") == "1.0a":
+ 551 |             signature = _oauth10a_signature(consumer_token, method, url, args,
+ 552 |                                             access_token)
+ 553 |         else:
+ 554 |             signature = _oauth_signature(consumer_token, method, url, args,
+ 555 |                                          access_token)
+ 556 |         base_args["oauth_signature"] = escape.to_basestring(signature)
+ 557 |         return base_args
+ 558 | 
+ 559 |     def get_auth_http_client(self):
+ 560 |         """Returns the `.AsyncHTTPClient` instance to be used for auth requests.
+ 561 | 
+ 562 |         May be overridden by subclasses to use an HTTP client other than
+ 563 |         the default.
+ 564 |         """
+ 565 |         return httpclient.AsyncHTTPClient()
+ 566 | 
+ 567 | 
+ 568 | class OAuth2Mixin(object):
+ 569 |     """Abstract implementation of OAuth 2.0.
+ 570 | 
+ 571 |     See `FacebookGraphMixin` or `GoogleOAuth2Mixin` below for example
+ 572 |     implementations.
+ 573 | 
+ 574 |     Class attributes:
+ 575 | 
+ 576 |     * ``_OAUTH_AUTHORIZE_URL``: The service's authorization url.
+ 577 |     * ``_OAUTH_ACCESS_TOKEN_URL``:  The service's access token url.
+ 578 |     """
+ 579 |     @return_future
+ 580 |     def authorize_redirect(self, redirect_uri=None, client_id=None,
+ 581 |                            client_secret=None, extra_params=None,
+ 582 |                            callback=None, scope=None, response_type="code"):
+ 583 |         """Redirects the user to obtain OAuth authorization for this service.
+ 584 | 
+ 585 |         Some providers require that you register a redirect URL with
+ 586 |         your application instead of passing one via this method. You
+ 587 |         should call this method to log the user in, and then call
+ 588 |         ``get_authenticated_user`` in the handler for your
+ 589 |         redirect URL to complete the authorization process.
+ 590 | 
+ 591 |         .. versionchanged:: 3.1
+ 592 |            Returns a `.Future` and takes an optional callback.  These are
+ 593 |            not strictly necessary as this method is synchronous,
+ 594 |            but they are supplied for consistency with
+ 595 |            `OAuthMixin.authorize_redirect`.
+ 596 |         """
+ 597 |         args = {
+ 598 |             "redirect_uri": redirect_uri,
+ 599 |             "client_id": client_id,
+ 600 |             "response_type": response_type
+ 601 |         }
+ 602 |         if extra_params:
+ 603 |             args.update(extra_params)
+ 604 |         if scope:
+ 605 |             args['scope'] = ' '.join(scope)
+ 606 |         self.redirect(
+ 607 |             url_concat(self._OAUTH_AUTHORIZE_URL, args))
+ 608 |         callback()
+ 609 | 
+ 610 |     def _oauth_request_token_url(self, redirect_uri=None, client_id=None,
+ 611 |                                  client_secret=None, code=None,
+ 612 |                                  extra_params=None):
+ 613 |         url = self._OAUTH_ACCESS_TOKEN_URL
+ 614 |         args = dict(
+ 615 |             redirect_uri=redirect_uri,
+ 616 |             code=code,
+ 617 |             client_id=client_id,
+ 618 |             client_secret=client_secret,
+ 619 |         )
+ 620 |         if extra_params:
+ 621 |             args.update(extra_params)
+ 622 |         return url_concat(url, args)
+ 623 | 
+ 624 |     @_auth_return_future
+ 625 |     def oauth2_request(self, url, callback, access_token=None,
+ 626 |                        post_args=None, **args):
+ 627 |         """Fetches the given URL auth an OAuth2 access token.
+ 628 | 
+ 629 |         If the request is a POST, ``post_args`` should be provided. Query
+ 630 |         string arguments should be given as keyword arguments.
+ 631 | 
+ 632 |         Example usage:
+ 633 | 
+ 634 |         ..testcode::
+ 635 | 
+ 636 |             class MainHandler(tornado.web.RequestHandler,
+ 637 |                               tornado.auth.FacebookGraphMixin):
+ 638 |                 @tornado.web.authenticated
+ 639 |                 @tornado.gen.coroutine
+ 640 |                 def get(self):
+ 641 |                     new_entry = yield self.oauth2_request(
+ 642 |                         "https://graph.facebook.com/me/feed",
+ 643 |                         post_args={"message": "I am posting from my Tornado application!"},
+ 644 |                         access_token=self.current_user["access_token"])
+ 645 | 
+ 646 |                     if not new_entry:
+ 647 |                         # Call failed; perhaps missing permission?
+ 648 |                         yield self.authorize_redirect()
+ 649 |                         return
+ 650 |                     self.finish("Posted a message!")
+ 651 | 
+ 652 |         .. testoutput::
+ 653 |            :hide:
+ 654 | 
+ 655 |         .. versionadded:: 4.3
+ 656 |         """
+ 657 |         all_args = {}
+ 658 |         if access_token:
+ 659 |             all_args["access_token"] = access_token
+ 660 |             all_args.update(args)
+ 661 | 
+ 662 |         if all_args:
+ 663 |             url += "?" + urllib_parse.urlencode(all_args)
+ 664 |         callback = functools.partial(self._on_oauth2_request, callback)
+ 665 |         http = self.get_auth_http_client()
+ 666 |         if post_args is not None:
+ 667 |             http.fetch(url, method="POST", body=urllib_parse.urlencode(post_args),
+ 668 |                        callback=callback)
+ 669 |         else:
+ 670 |             http.fetch(url, callback=callback)
+ 671 | 
+ 672 |     def _on_oauth2_request(self, future, response):
+ 673 |         if response.error:
+ 674 |             future.set_exception(AuthError("Error response %s fetching %s" %
+ 675 |                                            (response.error, response.request.url)))
+ 676 |             return
+ 677 | 
+ 678 |         future.set_result(escape.json_decode(response.body))
+ 679 | 
+ 680 |     def get_auth_http_client(self):
+ 681 |         """Returns the `.AsyncHTTPClient` instance to be used for auth requests.
+ 682 | 
+ 683 |         May be overridden by subclasses to use an HTTP client other than
+ 684 |         the default.
+ 685 | 
+ 686 |         .. versionadded:: 4.3
+ 687 |         """
+ 688 |         return httpclient.AsyncHTTPClient()
+ 689 | 
+ 690 | 
+ 691 | class TwitterMixin(OAuthMixin):
+ 692 |     """Twitter OAuth authentication.
+ 693 | 
+ 694 |     To authenticate with Twitter, register your application with
+ 695 |     Twitter at http://twitter.com/apps. Then copy your Consumer Key
+ 696 |     and Consumer Secret to the application
+ 697 |     `~tornado.web.Application.settings` ``twitter_consumer_key`` and
+ 698 |     ``twitter_consumer_secret``. Use this mixin on the handler for the
+ 699 |     URL you registered as your application's callback URL.
+ 700 | 
+ 701 |     When your application is set up, you can use this mixin like this
+ 702 |     to authenticate the user with Twitter and get access to their stream:
+ 703 | 
+ 704 |     .. testcode::
+ 705 | 
+ 706 |         class TwitterLoginHandler(tornado.web.RequestHandler,
+ 707 |                                   tornado.auth.TwitterMixin):
+ 708 |             @tornado.gen.coroutine
+ 709 |             def get(self):
+ 710 |                 if self.get_argument("oauth_token", None):
+ 711 |                     user = yield self.get_authenticated_user()
+ 712 |                     # Save the user using e.g. set_secure_cookie()
+ 713 |                 else:
+ 714 |                     yield self.authorize_redirect()
+ 715 | 
+ 716 |     .. testoutput::
+ 717 |        :hide:
+ 718 | 
+ 719 |     The user object returned by `~OAuthMixin.get_authenticated_user`
+ 720 |     includes the attributes ``username``, ``name``, ``access_token``,
+ 721 |     and all of the custom Twitter user attributes described at
+ 722 |     https://dev.twitter.com/docs/api/1.1/get/users/show
+ 723 |     """
+ 724 |     _OAUTH_REQUEST_TOKEN_URL = "https://api.twitter.com/oauth/request_token"
+ 725 |     _OAUTH_ACCESS_TOKEN_URL = "https://api.twitter.com/oauth/access_token"
+ 726 |     _OAUTH_AUTHORIZE_URL = "https://api.twitter.com/oauth/authorize"
+ 727 |     _OAUTH_AUTHENTICATE_URL = "https://api.twitter.com/oauth/authenticate"
+ 728 |     _OAUTH_NO_CALLBACKS = False
+ 729 |     _TWITTER_BASE_URL = "https://api.twitter.com/1.1"
+ 730 | 
+ 731 |     @return_future
+ 732 |     def authenticate_redirect(self, callback_uri=None, callback=None):
+ 733 |         """Just like `~OAuthMixin.authorize_redirect`, but
+ 734 |         auto-redirects if authorized.
+ 735 | 
+ 736 |         This is generally the right interface to use if you are using
+ 737 |         Twitter for single-sign on.
+ 738 | 
+ 739 |         .. versionchanged:: 3.1
+ 740 |            Now returns a `.Future` and takes an optional callback, for
+ 741 |            compatibility with `.gen.coroutine`.
+ 742 |         """
+ 743 |         http = self.get_auth_http_client()
+ 744 |         http.fetch(self._oauth_request_token_url(callback_uri=callback_uri),
+ 745 |                    functools.partial(
+ 746 |                        self._on_request_token, self._OAUTH_AUTHENTICATE_URL,
+ 747 |                        None, callback))
+ 748 | 
+ 749 |     @_auth_return_future
+ 750 |     def twitter_request(self, path, callback=None, access_token=None,
+ 751 |                         post_args=None, **args):
+ 752 |         """Fetches the given API path, e.g., ``statuses/user_timeline/btaylor``
+ 753 | 
+ 754 |         The path should not include the format or API version number.
+ 755 |         (we automatically use JSON format and API version 1).
+ 756 | 
+ 757 |         If the request is a POST, ``post_args`` should be provided. Query
+ 758 |         string arguments should be given as keyword arguments.
+ 759 | 
+ 760 |         All the Twitter methods are documented at http://dev.twitter.com/
+ 761 | 
+ 762 |         Many methods require an OAuth access token which you can
+ 763 |         obtain through `~OAuthMixin.authorize_redirect` and
+ 764 |         `~OAuthMixin.get_authenticated_user`. The user returned through that
+ 765 |         process includes an 'access_token' attribute that can be used
+ 766 |         to make authenticated requests via this method. Example
+ 767 |         usage:
+ 768 | 
+ 769 |         .. testcode::
+ 770 | 
+ 771 |             class MainHandler(tornado.web.RequestHandler,
+ 772 |                               tornado.auth.TwitterMixin):
+ 773 |                 @tornado.web.authenticated
+ 774 |                 @tornado.gen.coroutine
+ 775 |                 def get(self):
+ 776 |                     new_entry = yield self.twitter_request(
+ 777 |                         "/statuses/update",
+ 778 |                         post_args={"status": "Testing Tornado Web Server"},
+ 779 |                         access_token=self.current_user["access_token"])
+ 780 |                     if not new_entry:
+ 781 |                         # Call failed; perhaps missing permission?
+ 782 |                         yield self.authorize_redirect()
+ 783 |                         return
+ 784 |                     self.finish("Posted a message!")
+ 785 | 
+ 786 |         .. testoutput::
+ 787 |            :hide:
+ 788 | 
+ 789 |         """
+ 790 |         if path.startswith('http:') or path.startswith('https:'):
+ 791 |             # Raw urls are useful for e.g. search which doesn't follow the
+ 792 |             # usual pattern: http://search.twitter.com/search.json
+ 793 |             url = path
+ 794 |         else:
+ 795 |             url = self._TWITTER_BASE_URL + path + ".json"
+ 796 |         # Add the OAuth resource request signature if we have credentials
+ 797 |         if access_token:
+ 798 |             all_args = {}
+ 799 |             all_args.update(args)
+ 800 |             all_args.update(post_args or {})
+ 801 |             method = "POST" if post_args is not None else "GET"
+ 802 |             oauth = self._oauth_request_parameters(
+ 803 |                 url, access_token, all_args, method=method)
+ 804 |             args.update(oauth)
+ 805 |         if args:
+ 806 |             url += "?" + urllib_parse.urlencode(args)
+ 807 |         http = self.get_auth_http_client()
+ 808 |         http_callback = functools.partial(self._on_twitter_request, callback)
+ 809 |         if post_args is not None:
+ 810 |             http.fetch(url, method="POST", body=urllib_parse.urlencode(post_args),
+ 811 |                        callback=http_callback)
+ 812 |         else:
+ 813 |             http.fetch(url, callback=http_callback)
+ 814 | 
+ 815 |     def _on_twitter_request(self, future, response):
+ 816 |         if response.error:
+ 817 |             future.set_exception(AuthError(
+ 818 |                 "Error response %s fetching %s" % (response.error,
+ 819 |                                                    response.request.url)))
+ 820 |             return
+ 821 |         future.set_result(escape.json_decode(response.body))
+ 822 | 
+ 823 |     def _oauth_consumer_token(self):
+ 824 |         self.require_setting("twitter_consumer_key", "Twitter OAuth")
+ 825 |         self.require_setting("twitter_consumer_secret", "Twitter OAuth")
+ 826 |         return dict(
+ 827 |             key=self.settings["twitter_consumer_key"],
+ 828 |             secret=self.settings["twitter_consumer_secret"])
+ 829 | 
+ 830 |     @gen.coroutine
+ 831 |     def _oauth_get_user_future(self, access_token):
+ 832 |         user = yield self.twitter_request(
+ 833 |             "/account/verify_credentials",
+ 834 |             access_token=access_token)
+ 835 |         if user:
+ 836 |             user["username"] = user["screen_name"]
+ 837 |         raise gen.Return(user)
+ 838 | 
+ 839 | 
+ 840 | class GoogleOAuth2Mixin(OAuth2Mixin):
+ 841 |     """Google authentication using OAuth2.
+ 842 | 
+ 843 |     In order to use, register your application with Google and copy the
+ 844 |     relevant parameters to your application settings.
+ 845 | 
+ 846 |     * Go to the Google Dev Console at http://console.developers.google.com
+ 847 |     * Select a project, or create a new one.
+ 848 |     * In the sidebar on the left, select APIs & Auth.
+ 849 |     * In the list of APIs, find the Google+ API service and set it to ON.
+ 850 |     * In the sidebar on the left, select Credentials.
+ 851 |     * In the OAuth section of the page, select Create New Client ID.
+ 852 |     * Set the Redirect URI to point to your auth handler
+ 853 |     * Copy the "Client secret" and "Client ID" to the application settings as
+ 854 |       {"google_oauth": {"key": CLIENT_ID, "secret": CLIENT_SECRET}}
+ 855 | 
+ 856 |     .. versionadded:: 3.2
+ 857 |     """
+ 858 |     _OAUTH_AUTHORIZE_URL = "https://accounts.google.com/o/oauth2/auth"
+ 859 |     _OAUTH_ACCESS_TOKEN_URL = "https://accounts.google.com/o/oauth2/token"
+ 860 |     _OAUTH_USERINFO_URL = "https://www.googleapis.com/oauth2/v1/userinfo"
+ 861 |     _OAUTH_NO_CALLBACKS = False
+ 862 |     _OAUTH_SETTINGS_KEY = 'google_oauth'
+ 863 | 
+ 864 |     @_auth_return_future
+ 865 |     def get_authenticated_user(self, redirect_uri, code, callback):
+ 866 |         """Handles the login for the Google user, returning an access token.
+ 867 | 
+ 868 |         The result is a dictionary containing an ``access_token`` field
+ 869 |         ([among others](https://developers.google.com/identity/protocols/OAuth2WebServer#handlingtheresponse)).
+ 870 |         Unlike other ``get_authenticated_user`` methods in this package,
+ 871 |         this method does not return any additional information about the user.
+ 872 |         The returned access token can be used with `OAuth2Mixin.oauth2_request`
+ 873 |         to request additional information (perhaps from
+ 874 |         ``https://www.googleapis.com/oauth2/v2/userinfo``)
+ 875 | 
+ 876 |         Example usage:
+ 877 | 
+ 878 |         .. testcode::
+ 879 | 
+ 880 |             class GoogleOAuth2LoginHandler(tornado.web.RequestHandler,
+ 881 |                                            tornado.auth.GoogleOAuth2Mixin):
+ 882 |                 @tornado.gen.coroutine
+ 883 |                 def get(self):
+ 884 |                     if self.get_argument('code', False):
+ 885 |                         access = yield self.get_authenticated_user(
+ 886 |                             redirect_uri='http://your.site.com/auth/google',
+ 887 |                             code=self.get_argument('code'))
+ 888 |                         user = yield self.oauth2_request(
+ 889 |                             "https://www.googleapis.com/oauth2/v1/userinfo",
+ 890 |                             access_token=access["access_token"])
+ 891 |                         # Save the user and access token with
+ 892 |                         # e.g. set_secure_cookie.
+ 893 |                     else:
+ 894 |                         yield self.authorize_redirect(
+ 895 |                             redirect_uri='http://your.site.com/auth/google',
+ 896 |                             client_id=self.settings['google_oauth']['key'],
+ 897 |                             scope=['profile', 'email'],
+ 898 |                             response_type='code',
+ 899 |                             extra_params={'approval_prompt': 'auto'})
+ 900 | 
+ 901 |         .. testoutput::
+ 902 |            :hide:
+ 903 | 
+ 904 |         """
+ 905 |         http = self.get_auth_http_client()
+ 906 |         body = urllib_parse.urlencode({
+ 907 |             "redirect_uri": redirect_uri,
+ 908 |             "code": code,
+ 909 |             "client_id": self.settings[self._OAUTH_SETTINGS_KEY]['key'],
+ 910 |             "client_secret": self.settings[self._OAUTH_SETTINGS_KEY]['secret'],
+ 911 |             "grant_type": "authorization_code",
+ 912 |         })
+ 913 | 
+ 914 |         http.fetch(self._OAUTH_ACCESS_TOKEN_URL,
+ 915 |                    functools.partial(self._on_access_token, callback),
+ 916 |                    method="POST", headers={'Content-Type': 'application/x-www-form-urlencoded'}, body=body)
+ 917 | 
+ 918 |     def _on_access_token(self, future, response):
+ 919 |         """Callback function for the exchange to the access token."""
+ 920 |         if response.error:
+ 921 |             future.set_exception(AuthError('Google auth error: %s' % str(response)))
+ 922 |             return
+ 923 | 
+ 924 |         args = escape.json_decode(response.body)
+ 925 |         future.set_result(args)
+ 926 | 
+ 927 | 
+ 928 | class FacebookGraphMixin(OAuth2Mixin):
+ 929 |     """Facebook authentication using the new Graph API and OAuth2."""
+ 930 |     _OAUTH_ACCESS_TOKEN_URL = "https://graph.facebook.com/oauth/access_token?"
+ 931 |     _OAUTH_AUTHORIZE_URL = "https://www.facebook.com/dialog/oauth?"
+ 932 |     _OAUTH_NO_CALLBACKS = False
+ 933 |     _FACEBOOK_BASE_URL = "https://graph.facebook.com"
+ 934 | 
+ 935 |     @_auth_return_future
+ 936 |     def get_authenticated_user(self, redirect_uri, client_id, client_secret,
+ 937 |                                code, callback, extra_fields=None):
+ 938 |         """Handles the login for the Facebook user, returning a user object.
+ 939 | 
+ 940 |         Example usage:
+ 941 | 
+ 942 |         .. testcode::
+ 943 | 
+ 944 |             class FacebookGraphLoginHandler(tornado.web.RequestHandler,
+ 945 |                                             tornado.auth.FacebookGraphMixin):
+ 946 |               @tornado.gen.coroutine
+ 947 |               def get(self):
+ 948 |                   if self.get_argument("code", False):
+ 949 |                       user = yield self.get_authenticated_user(
+ 950 |                           redirect_uri='/auth/facebookgraph/',
+ 951 |                           client_id=self.settings["facebook_api_key"],
+ 952 |                           client_secret=self.settings["facebook_secret"],
+ 953 |                           code=self.get_argument("code"))
+ 954 |                       # Save the user with e.g. set_secure_cookie
+ 955 |                   else:
+ 956 |                       yield self.authorize_redirect(
+ 957 |                           redirect_uri='/auth/facebookgraph/',
+ 958 |                           client_id=self.settings["facebook_api_key"],
+ 959 |                           extra_params={"scope": "read_stream,offline_access"})
+ 960 | 
+ 961 |         .. testoutput::
+ 962 |            :hide:
+ 963 | 
+ 964 |         """
+ 965 |         http = self.get_auth_http_client()
+ 966 |         args = {
+ 967 |             "redirect_uri": redirect_uri,
+ 968 |             "code": code,
+ 969 |             "client_id": client_id,
+ 970 |             "client_secret": client_secret,
+ 971 |         }
+ 972 | 
+ 973 |         fields = set(['id', 'name', 'first_name', 'last_name',
+ 974 |                       'locale', 'picture', 'link'])
+ 975 |         if extra_fields:
+ 976 |             fields.update(extra_fields)
+ 977 | 
+ 978 |         http.fetch(self._oauth_request_token_url(**args),
+ 979 |                    functools.partial(self._on_access_token, redirect_uri, client_id,
+ 980 |                                      client_secret, callback, fields))
+ 981 | 
+ 982 |     def _on_access_token(self, redirect_uri, client_id, client_secret,
+ 983 |                          future, fields, response):
+ 984 |         if response.error:
+ 985 |             future.set_exception(AuthError('Facebook auth error: %s' % str(response)))
+ 986 |             return
+ 987 | 
+ 988 |         args = escape.parse_qs_bytes(escape.native_str(response.body))
+ 989 |         session = {
+ 990 |             "access_token": args["access_token"][-1],
+ 991 |             "expires": args.get("expires")
+ 992 |         }
+ 993 | 
+ 994 |         self.facebook_request(
+ 995 |             path="/me",
+ 996 |             callback=functools.partial(
+ 997 |                 self._on_get_user_info, future, session, fields),
+ 998 |             access_token=session["access_token"],
+ 999 |             fields=",".join(fields)
+1000 |         )
+1001 | 
+1002 |     def _on_get_user_info(self, future, session, fields, user):
+1003 |         if user is None:
+1004 |             future.set_result(None)
+1005 |             return
+1006 | 
+1007 |         fieldmap = {}
+1008 |         for field in fields:
+1009 |             fieldmap[field] = user.get(field)
+1010 | 
+1011 |         fieldmap.update({"access_token": session["access_token"], "session_expires": session.get("expires")})
+1012 |         future.set_result(fieldmap)
+1013 | 
+1014 |     @_auth_return_future
+1015 |     def facebook_request(self, path, callback, access_token=None,
+1016 |                          post_args=None, **args):
+1017 |         """Fetches the given relative API path, e.g., "/btaylor/picture"
+1018 | 
+1019 |         If the request is a POST, ``post_args`` should be provided. Query
+1020 |         string arguments should be given as keyword arguments.
+1021 | 
+1022 |         An introduction to the Facebook Graph API can be found at
+1023 |         http://developers.facebook.com/docs/api
+1024 | 
+1025 |         Many methods require an OAuth access token which you can
+1026 |         obtain through `~OAuth2Mixin.authorize_redirect` and
+1027 |         `get_authenticated_user`. The user returned through that
+1028 |         process includes an ``access_token`` attribute that can be
+1029 |         used to make authenticated requests via this method.
+1030 | 
+1031 |         Example usage:
+1032 | 
+1033 |         ..testcode::
+1034 | 
+1035 |             class MainHandler(tornado.web.RequestHandler,
+1036 |                               tornado.auth.FacebookGraphMixin):
+1037 |                 @tornado.web.authenticated
+1038 |                 @tornado.gen.coroutine
+1039 |                 def get(self):
+1040 |                     new_entry = yield self.facebook_request(
+1041 |                         "/me/feed",
+1042 |                         post_args={"message": "I am posting from my Tornado application!"},
+1043 |                         access_token=self.current_user["access_token"])
+1044 | 
+1045 |                     if not new_entry:
+1046 |                         # Call failed; perhaps missing permission?
+1047 |                         yield self.authorize_redirect()
+1048 |                         return
+1049 |                     self.finish("Posted a message!")
+1050 | 
+1051 |         .. testoutput::
+1052 |            :hide:
+1053 | 
+1054 |         The given path is relative to ``self._FACEBOOK_BASE_URL``,
+1055 |         by default "https://graph.facebook.com".
+1056 | 
+1057 |         This method is a wrapper around `OAuth2Mixin.oauth2_request`;
+1058 |         the only difference is that this method takes a relative path,
+1059 |         while ``oauth2_request`` takes a complete url.
+1060 | 
+1061 |         .. versionchanged:: 3.1
+1062 |            Added the ability to override ``self._FACEBOOK_BASE_URL``.
+1063 |         """
+1064 |         url = self._FACEBOOK_BASE_URL + path
+1065 |         return self.oauth2_request(url, callback, access_token,
+1066 |                                    post_args, **args)
+1067 | 
+1068 | 
+1069 | def _oauth_signature(consumer_token, method, url, parameters={}, token=None):
+1070 |     """Calculates the HMAC-SHA1 OAuth signature for the given request.
+1071 | 
+1072 |     See http://oauth.net/core/1.0/#signing_process
+1073 |     """
+1074 |     parts = urlparse.urlparse(url)
+1075 |     scheme, netloc, path = parts[:3]
+1076 |     normalized_url = scheme.lower() + "://" + netloc.lower() + path
+1077 | 
+1078 |     base_elems = []
+1079 |     base_elems.append(method.upper())
+1080 |     base_elems.append(normalized_url)
+1081 |     base_elems.append("&".join("%s=%s" % (k, _oauth_escape(str(v)))
+1082 |                                for k, v in sorted(parameters.items())))
+1083 |     base_string = "&".join(_oauth_escape(e) for e in base_elems)
+1084 | 
+1085 |     key_elems = [escape.utf8(consumer_token["secret"])]
+1086 |     key_elems.append(escape.utf8(token["secret"] if token else ""))
+1087 |     key = b"&".join(key_elems)
+1088 | 
+1089 |     hash = hmac.new(key, escape.utf8(base_string), hashlib.sha1)
+1090 |     return binascii.b2a_base64(hash.digest())[:-1]
+1091 | 
+1092 | 
+1093 | def _oauth10a_signature(consumer_token, method, url, parameters={}, token=None):
+1094 |     """Calculates the HMAC-SHA1 OAuth 1.0a signature for the given request.
+1095 | 
+1096 |     See http://oauth.net/core/1.0a/#signing_process
+1097 |     """
+1098 |     parts = urlparse.urlparse(url)
+1099 |     scheme, netloc, path = parts[:3]
+1100 |     normalized_url = scheme.lower() + "://" + netloc.lower() + path
+1101 | 
+1102 |     base_elems = []
+1103 |     base_elems.append(method.upper())
+1104 |     base_elems.append(normalized_url)
+1105 |     base_elems.append("&".join("%s=%s" % (k, _oauth_escape(str(v)))
+1106 |                                for k, v in sorted(parameters.items())))
+1107 | 
+1108 |     base_string = "&".join(_oauth_escape(e) for e in base_elems)
+1109 |     key_elems = [escape.utf8(urllib_parse.quote(consumer_token["secret"], safe='~'))]
+1110 |     key_elems.append(escape.utf8(urllib_parse.quote(token["secret"], safe='~') if token else ""))
+1111 |     key = b"&".join(key_elems)
+1112 | 
+1113 |     hash = hmac.new(key, escape.utf8(base_string), hashlib.sha1)
+1114 |     return binascii.b2a_base64(hash.digest())[:-1]
+1115 | 
+1116 | 
+1117 | def _oauth_escape(val):
+1118 |     if isinstance(val, unicode_type):
+1119 |         val = val.encode("utf-8")
+1120 |     return urllib_parse.quote(val, safe="~")
+1121 | 
+1122 | 
+1123 | def _oauth_parse_response(body):
+1124 |     # I can't find an officially-defined encoding for oauth responses and
+1125 |     # have never seen anyone use non-ascii.  Leave the response in a byte
+1126 |     # string for python 2, and use utf8 on python 3.
+1127 |     body = escape.native_str(body)
+1128 |     p = urlparse.parse_qs(body, keep_blank_values=False)
+1129 |     token = dict(key=p["oauth_token"][0], secret=p["oauth_token_secret"][0])
+1130 | 
+1131 |     # Add the extra parameters the Provider included to the token
+1132 |     special = ("oauth_token", "oauth_token_secret")
+1133 |     token.update((k, p[k][0]) for k in p if k not in special)
+1134 |     return token
+```
+
+
+FAILING TEST FILES:
+
+[test_file_1] BugsInPy/workspace/tornado/tornado/test/auth_test.py
+```python
+  1 | # These tests do not currently do much to verify the correct implementation
+  2 | # of the openid/oauth protocols, they just exercise the major code paths
+  3 | # and ensure that it doesn't blow up (e.g. with unicode/bytes issues in
+  4 | # python 3)
+  5 | 
+  6 | 
+  7 | from __future__ import absolute_import, division, print_function, with_statement
+  8 | from tornado.auth import OpenIdMixin, OAuthMixin, OAuth2Mixin, TwitterMixin, AuthError, GoogleOAuth2Mixin, FacebookGraphMixin
+  9 | from tornado.concurrent import Future
+ 10 | from tornado.escape import json_decode
+ 11 | from tornado import gen
+ 12 | from tornado.httputil import url_concat
+ 13 | from tornado.log import gen_log
+ 14 | from tornado.testing import AsyncHTTPTestCase, ExpectLog
+ 15 | from tornado.util import u
+ 16 | from tornado.web import RequestHandler, Application, asynchronous, HTTPError
+ 17 | 
+ 18 | 
+ 19 | class OpenIdClientLoginHandler(RequestHandler, OpenIdMixin):
+ 20 |     def initialize(self, test):
+ 21 |         self._OPENID_ENDPOINT = test.get_url('/openid/server/authenticate')
+ 22 | 
+ 23 |     @asynchronous
+ 24 |     def get(self):
+ 25 |         if self.get_argument('openid.mode', None):
+ 26 |             self.get_authenticated_user(
+ 27 |                 self.on_user, http_client=self.settings['http_client'])
+ 28 |             return
+ 29 |         res = self.authenticate_redirect()
+ 30 |         assert isinstance(res, Future)
+ 31 |         assert res.done()
+ 32 | 
+ 33 |     def on_user(self, user):
+ 34 |         if user is None:
+ 35 |             raise Exception("user is None")
+ 36 |         self.finish(user)
+ 37 | 
+ 38 | 
+ 39 | class OpenIdServerAuthenticateHandler(RequestHandler):
+ 40 |     def post(self):
+ 41 |         if self.get_argument('openid.mode') != 'check_authentication':
+ 42 |             raise Exception("incorrect openid.mode %r")
+ 43 |         self.write('is_valid:true')
+ 44 | 
+ 45 | 
+ 46 | class OAuth1ClientLoginHandler(RequestHandler, OAuthMixin):
+ 47 |     def initialize(self, test, version):
+ 48 |         self._OAUTH_VERSION = version
+ 49 |         self._OAUTH_REQUEST_TOKEN_URL = test.get_url('/oauth1/server/request_token')
+ 50 |         self._OAUTH_AUTHORIZE_URL = test.get_url('/oauth1/server/authorize')
+ 51 |         self._OAUTH_ACCESS_TOKEN_URL = test.get_url('/oauth1/server/access_token')
+ 52 | 
+ 53 |     def _oauth_consumer_token(self):
+ 54 |         return dict(key='asdf', secret='qwer')
+ 55 | 
+ 56 |     @asynchronous
+ 57 |     def get(self):
+ 58 |         if self.get_argument('oauth_token', None):
+ 59 |             self.get_authenticated_user(
+ 60 |                 self.on_user, http_client=self.settings['http_client'])
+ 61 |             return
+ 62 |         res = self.authorize_redirect(http_client=self.settings['http_client'])
+ 63 |         assert isinstance(res, Future)
+ 64 | 
+ 65 |     def on_user(self, user):
+ 66 |         if user is None:
+ 67 |             raise Exception("user is None")
+ 68 |         self.finish(user)
+ 69 | 
+ 70 |     def _oauth_get_user(self, access_token, callback):
+ 71 |         if self.get_argument('fail_in_get_user', None):
+ 72 |             raise Exception("failing in get_user")
+ 73 |         if access_token != dict(key='uiop', secret='5678'):
+ 74 |             raise Exception("incorrect access token %r" % access_token)
+ 75 |         callback(dict(email='foo@example.com'))
+ 76 | 
+ 77 | 
+ 78 | class OAuth1ClientLoginCoroutineHandler(OAuth1ClientLoginHandler):
+ 79 |     """Replaces OAuth1ClientLoginCoroutineHandler's get() with a coroutine."""
+ 80 |     @gen.coroutine
+ 81 |     def get(self):
+ 82 |         if self.get_argument('oauth_token', None):
+ 83 |             # Ensure that any exceptions are set on the returned Future,
+ 84 |             # not simply thrown into the surrounding StackContext.
+ 85 |             try:
+ 86 |                 yield self.get_authenticated_user()
+ 87 |             except Exception as e:
+ 88 |                 self.set_status(503)
+ 89 |                 self.write("got exception: %s" % e)
+ 90 |         else:
+ 91 |             yield self.authorize_redirect()
+ 92 | 
+ 93 | 
+ 94 | class OAuth1ClientRequestParametersHandler(RequestHandler, OAuthMixin):
+ 95 |     def initialize(self, version):
+ 96 |         self._OAUTH_VERSION = version
+ 97 | 
+ 98 |     def _oauth_consumer_token(self):
+ 99 |         return dict(key='asdf', secret='qwer')
+100 | 
+101 |     def get(self):
+102 |         params = self._oauth_request_parameters(
+103 |             'http://www.example.com/api/asdf',
+104 |             dict(key='uiop', secret='5678'),
+105 |             parameters=dict(foo='bar'))
+106 |         self.write(params)
+107 | 
+108 | 
+109 | class OAuth1ServerRequestTokenHandler(RequestHandler):
+110 |     def get(self):
+111 |         self.write('oauth_token=zxcv&oauth_token_secret=1234')
+112 | 
+113 | 
+114 | class OAuth1ServerAccessTokenHandler(RequestHandler):
+115 |     def get(self):
+116 |         self.write('oauth_token=uiop&oauth_token_secret=5678')
+117 | 
+118 | 
+119 | class OAuth2ClientLoginHandler(RequestHandler, OAuth2Mixin):
+120 |     def initialize(self, test):
+121 |         self._OAUTH_AUTHORIZE_URL = test.get_url('/oauth2/server/authorize')
+122 | 
+123 |     def get(self):
+124 |         res = self.authorize_redirect()
+125 |         assert isinstance(res, Future)
+126 |         assert res.done()
+127 | 
+128 | 
+129 | class FacebookClientLoginHandler(RequestHandler, FacebookGraphMixin):
+130 |     def initialize(self, test):
+131 |         self._OAUTH_AUTHORIZE_URL = test.get_url('/facebook/server/authorize')
+132 |         self._OAUTH_ACCESS_TOKEN_URL = test.get_url('/facebook/server/access_token')
+133 |         self._FACEBOOK_BASE_URL = test.get_url('/facebook/server')
+134 | 
+135 |     @gen.coroutine
+136 |     def get(self):
+137 |         if self.get_argument("code", None):
+138 |             user = yield self.get_authenticated_user(
+139 |                 redirect_uri=self.request.full_url(),
+140 |                 client_id=self.settings["facebook_api_key"],
+141 |                 client_secret=self.settings["facebook_secret"],
+142 |                 code=self.get_argument("code"))
+143 |             self.write(user)
+144 |         else:
+145 |                 yield self.authorize_redirect(
+146 |                     redirect_uri=self.request.full_url(),
+147 |                     client_id=self.settings["facebook_api_key"],
+148 |                     extra_params={"scope": "read_stream,offline_access"})
+149 | 
+150 | 
+151 | class FacebookServerAccessTokenHandler(RequestHandler):
+152 |     def get(self):
+153 |         self.write('access_token=asdf')
+154 | 
+155 | 
+156 | class FacebookServerMeHandler(RequestHandler):
+157 |     def get(self):
+158 |         self.write('{}')
+159 | 
+160 | 
+161 | class TwitterClientHandler(RequestHandler, TwitterMixin):
+162 |     def initialize(self, test):
+163 |         self._OAUTH_REQUEST_TOKEN_URL = test.get_url('/oauth1/server/request_token')
+164 |         self._OAUTH_ACCESS_TOKEN_URL = test.get_url('/twitter/server/access_token')
+165 |         self._OAUTH_AUTHORIZE_URL = test.get_url('/oauth1/server/authorize')
+166 |         self._TWITTER_BASE_URL = test.get_url('/twitter/api')
+167 | 
+168 |     def get_auth_http_client(self):
+169 |         return self.settings['http_client']
+170 | 
+171 | 
+172 | class TwitterClientLoginHandler(TwitterClientHandler):
+173 |     @asynchronous
+174 |     def get(self):
+175 |         if self.get_argument("oauth_token", None):
+176 |             self.get_authenticated_user(self.on_user)
+177 |             return
+178 |         self.authorize_redirect()
+179 | 
+180 |     def on_user(self, user):
+181 |         if user is None:
+182 |             raise Exception("user is None")
+183 |         self.finish(user)
+184 | 
+185 | 
+186 | class TwitterClientLoginGenEngineHandler(TwitterClientHandler):
+187 |     @asynchronous
+188 |     @gen.engine
+189 |     def get(self):
+190 |         if self.get_argument("oauth_token", None):
+191 |             user = yield self.get_authenticated_user()
+192 |             self.finish(user)
+193 |         else:
+194 |             # Old style: with @gen.engine we can ignore the Future from
+195 |             # authorize_redirect.
+196 |             self.authorize_redirect()
+197 | 
+198 | 
+199 | class TwitterClientLoginGenCoroutineHandler(TwitterClientHandler):
+200 |     @gen.coroutine
+201 |     def get(self):
+202 |         if self.get_argument("oauth_token", None):
+203 |             user = yield self.get_authenticated_user()
+204 |             self.finish(user)
+205 |         else:
+206 |             # New style: with @gen.coroutine the result must be yielded
+207 |             # or else the request will be auto-finished too soon.
+208 |             yield self.authorize_redirect()
+209 | 
+210 | 
+211 | class TwitterClientShowUserHandler(TwitterClientHandler):
+212 |     @asynchronous
+213 |     @gen.engine
+214 |     def get(self):
+215 |         # TODO: would be nice to go through the login flow instead of
+216 |         # cheating with a hard-coded access token.
+217 |         response = yield gen.Task(self.twitter_request,
+218 |                                   '/users/show/%s' % self.get_argument('name'),
+219 |                                   access_token=dict(key='hjkl', secret='vbnm'))
+220 |         if response is None:
+221 |             self.set_status(500)
+222 |             self.finish('error from twitter request')
+223 |         else:
+224 |             self.finish(response)
+225 | 
+226 | 
+227 | class TwitterClientShowUserFutureHandler(TwitterClientHandler):
+228 |     @asynchronous
+229 |     @gen.engine
+230 |     def get(self):
+231 |         try:
+232 |             response = yield self.twitter_request(
+233 |                 '/users/show/%s' % self.get_argument('name'),
+234 |                 access_token=dict(key='hjkl', secret='vbnm'))
+235 |         except AuthError as e:
+236 |             self.set_status(500)
+237 |             self.finish(str(e))
+238 |             return
+239 |         assert response is not None
+240 |         self.finish(response)
+241 | 
+242 | 
+243 | class TwitterServerAccessTokenHandler(RequestHandler):
+244 |     def get(self):
+245 |         self.write('oauth_token=hjkl&oauth_token_secret=vbnm&screen_name=foo')
+246 | 
+247 | 
+248 | class TwitterServerShowUserHandler(RequestHandler):
+249 |     def get(self, screen_name):
+250 |         if screen_name == 'error':
+251 |             raise HTTPError(500)
+252 |         assert 'oauth_nonce' in self.request.arguments
+253 |         assert 'oauth_timestamp' in self.request.arguments
+254 |         assert 'oauth_signature' in self.request.arguments
+255 |         assert self.get_argument('oauth_consumer_key') == 'test_twitter_consumer_key'
+256 |         assert self.get_argument('oauth_signature_method') == 'HMAC-SHA1'
+257 |         assert self.get_argument('oauth_version') == '1.0'
+258 |         assert self.get_argument('oauth_token') == 'hjkl'
+259 |         self.write(dict(screen_name=screen_name, name=screen_name.capitalize()))
+260 | 
+261 | 
+262 | class TwitterServerVerifyCredentialsHandler(RequestHandler):
+263 |     def get(self):
+264 |         assert 'oauth_nonce' in self.request.arguments
+265 |         assert 'oauth_timestamp' in self.request.arguments
+266 |         assert 'oauth_signature' in self.request.arguments
+267 |         assert self.get_argument('oauth_consumer_key') == 'test_twitter_consumer_key'
+268 |         assert self.get_argument('oauth_signature_method') == 'HMAC-SHA1'
+269 |         assert self.get_argument('oauth_version') == '1.0'
+270 |         assert self.get_argument('oauth_token') == 'hjkl'
+271 |         self.write(dict(screen_name='foo', name='Foo'))
+272 | 
+273 | 
+274 | class AuthTest(AsyncHTTPTestCase):
+275 |     def get_app(self):
+276 |         return Application(
+277 |             [
+278 |                 # test endpoints
+279 |                 ('/openid/client/login', OpenIdClientLoginHandler, dict(test=self)),
+280 |                 ('/oauth10/client/login', OAuth1ClientLoginHandler,
+281 |                  dict(test=self, version='1.0')),
+282 |                 ('/oauth10/client/request_params',
+283 |                  OAuth1ClientRequestParametersHandler,
+284 |                  dict(version='1.0')),
+285 |                 ('/oauth10a/client/login', OAuth1ClientLoginHandler,
+286 |                  dict(test=self, version='1.0a')),
+287 |                 ('/oauth10a/client/login_coroutine',
+288 |                  OAuth1ClientLoginCoroutineHandler,
+289 |                  dict(test=self, version='1.0a')),
+290 |                 ('/oauth10a/client/request_params',
+291 |                  OAuth1ClientRequestParametersHandler,
+292 |                  dict(version='1.0a')),
+293 |                 ('/oauth2/client/login', OAuth2ClientLoginHandler, dict(test=self)),
+294 | 
+295 |                 ('/facebook/client/login', FacebookClientLoginHandler, dict(test=self)),
+296 | 
+297 |                 ('/twitter/client/login', TwitterClientLoginHandler, dict(test=self)),
+298 |                 ('/twitter/client/login_gen_engine', TwitterClientLoginGenEngineHandler, dict(test=self)),
+299 |                 ('/twitter/client/login_gen_coroutine', TwitterClientLoginGenCoroutineHandler, dict(test=self)),
+300 |                 ('/twitter/client/show_user', TwitterClientShowUserHandler, dict(test=self)),
+301 |                 ('/twitter/client/show_user_future', TwitterClientShowUserFutureHandler, dict(test=self)),
+302 | 
+303 |                 # simulated servers
+304 |                 ('/openid/server/authenticate', OpenIdServerAuthenticateHandler),
+305 |                 ('/oauth1/server/request_token', OAuth1ServerRequestTokenHandler),
+306 |                 ('/oauth1/server/access_token', OAuth1ServerAccessTokenHandler),
+307 | 
+308 |                 ('/facebook/server/access_token', FacebookServerAccessTokenHandler),
+309 |                 ('/facebook/server/me', FacebookServerMeHandler),
+310 |                 ('/twitter/server/access_token', TwitterServerAccessTokenHandler),
+311 |                 (r'/twitter/api/users/show/(.*)\.json', TwitterServerShowUserHandler),
+312 |                 (r'/twitter/api/account/verify_credentials\.json', TwitterServerVerifyCredentialsHandler),
+313 |             ],
+314 |             http_client=self.http_client,
+315 |             twitter_consumer_key='test_twitter_consumer_key',
+316 |             twitter_consumer_secret='test_twitter_consumer_secret',
+317 |             facebook_api_key='test_facebook_api_key',
+318 |             facebook_secret='test_facebook_secret')
+319 | 
+320 |     def test_openid_redirect(self):
+321 |         response = self.fetch('/openid/client/login', follow_redirects=False)
+322 |         self.assertEqual(response.code, 302)
+323 |         self.assertTrue(
+324 |             '/openid/server/authenticate?' in response.headers['Location'])
+325 | 
+326 |     def test_openid_get_user(self):
+327 |         response = self.fetch('/openid/client/login?openid.mode=blah&openid.ns.ax=http://openid.net/srv/ax/1.0&openid.ax.type.email=http://axschema.org/contact/email&openid.ax.value.email=foo@example.com')
+328 |         response.rethrow()
+329 |         parsed = json_decode(response.body)
+330 |         self.assertEqual(parsed["email"], "foo@example.com")
+331 | 
+332 |     def test_oauth10_redirect(self):
+333 |         response = self.fetch('/oauth10/client/login', follow_redirects=False)
+334 |         self.assertEqual(response.code, 302)
+335 |         self.assertTrue(response.headers['Location'].endswith(
+336 |             '/oauth1/server/authorize?oauth_token=zxcv'))
+337 |         # the cookie is base64('zxcv')|base64('1234')
+338 |         self.assertTrue(
+339 |             '_oauth_request_token="enhjdg==|MTIzNA=="' in response.headers['Set-Cookie'],
+340 |             response.headers['Set-Cookie'])
+341 | 
+342 |     def test_oauth10_get_user(self):
+343 |         response = self.fetch(
+344 |             '/oauth10/client/login?oauth_token=zxcv',
+345 |             headers={'Cookie': '_oauth_request_token=enhjdg==|MTIzNA=='})
+346 |         response.rethrow()
+347 |         parsed = json_decode(response.body)
+348 |         self.assertEqual(parsed['email'], 'foo@example.com')
+349 |         self.assertEqual(parsed['access_token'], dict(key='uiop', secret='5678'))
+350 | 
+351 |     def test_oauth10_request_parameters(self):
+352 |         response = self.fetch('/oauth10/client/request_params')
+353 |         response.rethrow()
+354 |         parsed = json_decode(response.body)
+355 |         self.assertEqual(parsed['oauth_consumer_key'], 'asdf')
+356 |         self.assertEqual(parsed['oauth_token'], 'uiop')
+357 |         self.assertTrue('oauth_nonce' in parsed)
+358 |         self.assertTrue('oauth_signature' in parsed)
+359 | 
+360 |     def test_oauth10a_redirect(self):
+361 |         response = self.fetch('/oauth10a/client/login', follow_redirects=False)
+362 |         self.assertEqual(response.code, 302)
+363 |         self.assertTrue(response.headers['Location'].endswith(
+364 |             '/oauth1/server/authorize?oauth_token=zxcv'))
+365 |         # the cookie is base64('zxcv')|base64('1234')
+366 |         self.assertTrue(
+367 |             '_oauth_request_token="enhjdg==|MTIzNA=="' in response.headers['Set-Cookie'],
+368 |             response.headers['Set-Cookie'])
+369 | 
+370 |     def test_oauth10a_get_user(self):
+371 |         response = self.fetch(
+372 |             '/oauth10a/client/login?oauth_token=zxcv',
+373 |             headers={'Cookie': '_oauth_request_token=enhjdg==|MTIzNA=='})
+374 |         response.rethrow()
+375 |         parsed = json_decode(response.body)
+376 |         self.assertEqual(parsed['email'], 'foo@example.com')
+377 |         self.assertEqual(parsed['access_token'], dict(key='uiop', secret='5678'))
+378 | 
+379 |     def test_oauth10a_request_parameters(self):
+380 |         response = self.fetch('/oauth10a/client/request_params')
+381 |         response.rethrow()
+382 |         parsed = json_decode(response.body)
+383 |         self.assertEqual(parsed['oauth_consumer_key'], 'asdf')
+384 |         self.assertEqual(parsed['oauth_token'], 'uiop')
+385 |         self.assertTrue('oauth_nonce' in parsed)
+386 |         self.assertTrue('oauth_signature' in parsed)
+387 | 
+388 |     def test_oauth10a_get_user_coroutine_exception(self):
+389 |         response = self.fetch(
+390 |             '/oauth10a/client/login_coroutine?oauth_token=zxcv&fail_in_get_user=true',
+391 |             headers={'Cookie': '_oauth_request_token=enhjdg==|MTIzNA=='})
+392 |         self.assertEqual(response.code, 503)
+393 | 
+394 |     def test_oauth2_redirect(self):
+395 |         response = self.fetch('/oauth2/client/login', follow_redirects=False)
+396 |         self.assertEqual(response.code, 302)
+397 |         self.assertTrue('/oauth2/server/authorize?' in response.headers['Location'])
+398 | 
+399 |     def test_facebook_login(self):
+400 |         response = self.fetch('/facebook/client/login', follow_redirects=False)
+401 |         self.assertEqual(response.code, 302)
+402 |         self.assertTrue('/facebook/server/authorize?' in response.headers['Location'])
+403 |         response = self.fetch('/facebook/client/login?code=1234', follow_redirects=False)
+404 |         self.assertEqual(response.code, 200)
+405 | 
+406 |     def base_twitter_redirect(self, url):
+407 |         # Same as test_oauth10a_redirect
+408 |         response = self.fetch(url, follow_redirects=False)
+409 |         self.assertEqual(response.code, 302)
+410 |         self.assertTrue(response.headers['Location'].endswith(
+411 |             '/oauth1/server/authorize?oauth_token=zxcv'))
+412 |         # the cookie is base64('zxcv')|base64('1234')
+413 |         self.assertTrue(
+414 |             '_oauth_request_token="enhjdg==|MTIzNA=="' in response.headers['Set-Cookie'],
+415 |             response.headers['Set-Cookie'])
+416 | 
+417 |     def test_twitter_redirect(self):
+418 |         self.base_twitter_redirect('/twitter/client/login')
+419 | 
+420 |     def test_twitter_redirect_gen_engine(self):
+421 |         self.base_twitter_redirect('/twitter/client/login_gen_engine')
+422 | 
+423 |     def test_twitter_redirect_gen_coroutine(self):
+424 |         self.base_twitter_redirect('/twitter/client/login_gen_coroutine')
+425 | 
+426 |     def test_twitter_get_user(self):
+427 |         response = self.fetch(
+428 |             '/twitter/client/login?oauth_token=zxcv',
+429 |             headers={'Cookie': '_oauth_request_token=enhjdg==|MTIzNA=='})
+430 |         response.rethrow()
+431 |         parsed = json_decode(response.body)
+432 |         self.assertEqual(parsed,
+433 |                          {u('access_token'): {u('key'): u('hjkl'),
+434 |                                               u('screen_name'): u('foo'),
+435 |                                               u('secret'): u('vbnm')},
+436 |                           u('name'): u('Foo'),
+437 |                           u('screen_name'): u('foo'),
+438 |                           u('username'): u('foo')})
+439 | 
+440 |     def test_twitter_show_user(self):
+441 |         response = self.fetch('/twitter/client/show_user?name=somebody')
+442 |         response.rethrow()
+443 |         self.assertEqual(json_decode(response.body),
+444 |                          {'name': 'Somebody', 'screen_name': 'somebody'})
+445 | 
+446 |     def test_twitter_show_user_error(self):
+447 |         with ExpectLog(gen_log, 'Error response HTTP 500'):
+448 |             response = self.fetch('/twitter/client/show_user?name=error')
+449 |         self.assertEqual(response.code, 500)
+450 |         self.assertEqual(response.body, b'error from twitter request')
+451 | 
+452 |     def test_twitter_show_user_future(self):
+453 |         response = self.fetch('/twitter/client/show_user_future?name=somebody')
+454 |         response.rethrow()
+455 |         self.assertEqual(json_decode(response.body),
+456 |                          {'name': 'Somebody', 'screen_name': 'somebody'})
+457 | 
+458 |     def test_twitter_show_user_future_error(self):
+459 |         response = self.fetch('/twitter/client/show_user_future?name=error')
+460 |         self.assertEqual(response.code, 500)
+461 |         self.assertIn(b'Error response HTTP 500', response.body)
+462 | 
+463 | 
+464 | class GoogleLoginHandler(RequestHandler, GoogleOAuth2Mixin):
+465 |     def initialize(self, test):
+466 |         self.test = test
+467 |         self._OAUTH_REDIRECT_URI = test.get_url('/client/login')
+468 |         self._OAUTH_AUTHORIZE_URL = test.get_url('/google/oauth2/authorize')
+469 |         self._OAUTH_ACCESS_TOKEN_URL = test.get_url('/google/oauth2/token')
+470 | 
+471 |     @gen.coroutine
+472 |     def get(self):
+473 |         code = self.get_argument('code', None)
+474 |         if code is not None:
+475 |             # retrieve authenticate google user
+476 |             access = yield self.get_authenticated_user(self._OAUTH_REDIRECT_URI,
+477 |                                                        code)
+478 |             user = yield self.oauth2_request(
+479 |                 self.test.get_url("/google/oauth2/userinfo"),
+480 |                 access_token=access["access_token"])
+481 |             # return the user and access token as json
+482 |             user["access_token"] = access["access_token"]
+483 |             self.write(user)
+484 |         else:
+485 |             yield self.authorize_redirect(
+486 |                 redirect_uri=self._OAUTH_REDIRECT_URI,
+487 |                 client_id=self.settings['google_oauth']['key'],
+488 |                 client_secret=self.settings['google_oauth']['secret'],
+489 |                 scope=['profile', 'email'],
+490 |                 response_type='code',
+491 |                 extra_params={'prompt': 'select_account'})
+492 | 
+493 | 
+494 | class GoogleOAuth2AuthorizeHandler(RequestHandler):
+495 |     def get(self):
+496 |         # issue a fake auth code and redirect to redirect_uri
+497 |         code = 'fake-authorization-code'
+498 |         self.redirect(url_concat(self.get_argument('redirect_uri'),
+499 |                                  dict(code=code)))
+500 | 
+501 | 
+502 | class GoogleOAuth2TokenHandler(RequestHandler):
+503 |     def post(self):
+504 |         assert self.get_argument('code') == 'fake-authorization-code'
+505 |         # issue a fake token
+506 |         self.finish({
+507 |             'access_token': 'fake-access-token',
+508 |             'expires_in': 'never-expires'
+509 |         })
+510 | 
+511 | 
+512 | class GoogleOAuth2UserinfoHandler(RequestHandler):
+513 |     def get(self):
+514 |         assert self.get_argument('access_token') == 'fake-access-token'
+515 |         # return a fake user
+516 |         self.finish({
+517 |                 'name': 'Foo',
+518 |                 'email': 'foo@example.com'
+519 |                 })
+520 | 
+521 | 
+522 | class GoogleOAuth2Test(AsyncHTTPTestCase):
+523 |     def get_app(self):
+524 |         return Application(
+525 |             [
+526 |                 # test endpoints
+527 |                 ('/client/login', GoogleLoginHandler, dict(test=self)),
+528 | 
+529 |                 # simulated google authorization server endpoints
+530 |                 ('/google/oauth2/authorize', GoogleOAuth2AuthorizeHandler),
+531 |                 ('/google/oauth2/token', GoogleOAuth2TokenHandler),
+532 |                 ('/google/oauth2/userinfo', GoogleOAuth2UserinfoHandler),
+533 |             ],
+534 |             google_oauth={
+535 |                 "key": 'fake_google_client_id',
+536 |                 "secret": 'fake_google_client_secret'
+537 |             })
+538 | 
+539 |     def test_google_login(self):
+540 |         response = self.fetch('/client/login')
+541 |         self.assertDictEqual({
+542 |             u('name'): u('Foo'),
+543 |             u('email'): u('foo@example.com'),
+544 |             u('access_token'): u('fake-access-token'),
+545 |         }, json_decode(response.body))
+```

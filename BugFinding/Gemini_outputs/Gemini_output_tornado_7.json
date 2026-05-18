@@ -1,0 +1,12 @@
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "tornado/ioloop.py",
+      "line_start": 1125,
+      "line_end": 1126,
+      "confidence": "high",
+      "reason": "The use of true division and math.floor with floating-point representations introduces precision errors, which can cause the periodic callback to inadvertently skip intervals or schedule the next timeout improperly."
+    }
+  ]
+}

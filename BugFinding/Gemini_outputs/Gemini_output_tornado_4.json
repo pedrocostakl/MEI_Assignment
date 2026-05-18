@@ -1,0 +1,12 @@
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "tornado/web.py",
+      "line_start": 2484,
+      "line_end": 2489,
+      "confidence": "high",
+      "reason": "The query arguments from `self.request.query_arguments` contain `bytes` values. Passing them through `qs_to_qsl` to `url_concat` without decoding causes `b'...'` string representations in the redirect URL instead of the properly encoded values."
+    }
+  ]
+}

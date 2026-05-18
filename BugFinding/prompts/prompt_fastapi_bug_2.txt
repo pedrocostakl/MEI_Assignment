@@ -1,0 +1,1123 @@
+You are given buggy source files and failing test files.
+
+Your task is BUG LOCALIZATION ONLY.
+
+Return only valid JSON using this exact format:
+
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "relative/path.py",
+      "line_start": 1,
+      "line_end": 1,
+      "confidence": "low|medium|high",
+      "reason": "Max 2 sentences."
+    }
+  ]
+}
+
+Rules:
+- Do not propose fixes.
+- Do not rewrite code.
+- Do not explain outside JSON.
+- Line numbers must refer to the numbered buggy source file.
+- Include at most the number of suspected locations you think there are.
+- Prefer the smallest line range that identifies the origin of the bug.
+
+
+SOURCE FILES:
+
+[file_1] BugsInPy/workspace/fastapi/fastapi/routing.py
+```python
+  1 | import asyncio
+  2 | import inspect
+  3 | from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Type, Union
+  4 | 
+  5 | from fastapi import params
+  6 | from fastapi.dependencies.models import Dependant
+  7 | from fastapi.dependencies.utils import (
+  8 |     get_body_field,
+  9 |     get_dependant,
+ 10 |     get_parameterless_sub_dependant,
+ 11 |     solve_dependencies,
+ 12 | )
+ 13 | from fastapi.encoders import DictIntStrAny, SetIntStr, jsonable_encoder
+ 14 | from fastapi.exceptions import RequestValidationError, WebSocketRequestValidationError
+ 15 | from fastapi.logger import logger
+ 16 | from fastapi.openapi.constants import STATUS_CODES_WITH_NO_BODY
+ 17 | from fastapi.utils import (
+ 18 |     PYDANTIC_1,
+ 19 |     create_cloned_field,
+ 20 |     create_response_field,
+ 21 |     generate_operation_id_for_path,
+ 22 |     get_field_info,
+ 23 |     warning_response_model_skip_defaults_deprecated,
+ 24 | )
+ 25 | from pydantic import BaseModel
+ 26 | from pydantic.error_wrappers import ErrorWrapper, ValidationError
+ 27 | from starlette import routing
+ 28 | from starlette.concurrency import run_in_threadpool
+ 29 | from starlette.exceptions import HTTPException
+ 30 | from starlette.requests import Request
+ 31 | from starlette.responses import JSONResponse, Response
+ 32 | from starlette.routing import Mount  # noqa
+ 33 | from starlette.routing import (
+ 34 |     compile_path,
+ 35 |     get_name,
+ 36 |     request_response,
+ 37 |     websocket_session,
+ 38 | )
+ 39 | from starlette.status import WS_1008_POLICY_VIOLATION
+ 40 | from starlette.types import ASGIApp
+ 41 | from starlette.websockets import WebSocket
+ 42 | 
+ 43 | try:
+ 44 |     from pydantic.fields import FieldInfo, ModelField
+ 45 | except ImportError:  # pragma: nocover
+ 46 |     # TODO: remove when removing support for Pydantic < 1.0.0
+ 47 |     from pydantic import Schema as FieldInfo  # type: ignore
+ 48 |     from pydantic.fields import Field as ModelField  # type: ignore
+ 49 | 
+ 50 | 
+ 51 | def _prepare_response_content(
+ 52 |     res: Any, *, by_alias: bool = True, exclude_unset: bool
+ 53 | ) -> Any:
+ 54 |     if isinstance(res, BaseModel):
+ 55 |         if PYDANTIC_1:
+ 56 |             return res.dict(by_alias=by_alias, exclude_unset=exclude_unset)
+ 57 |         else:
+ 58 |             return res.dict(
+ 59 |                 by_alias=by_alias, skip_defaults=exclude_unset
+ 60 |             )  # pragma: nocover
+ 61 |     elif isinstance(res, list):
+ 62 |         return [
+ 63 |             _prepare_response_content(item, exclude_unset=exclude_unset) for item in res
+ 64 |         ]
+ 65 |     elif isinstance(res, dict):
+ 66 |         return {
+ 67 |             k: _prepare_response_content(v, exclude_unset=exclude_unset)
+ 68 |             for k, v in res.items()
+ 69 |         }
+ 70 |     return res
+ 71 | 
+ 72 | 
+ 73 | async def serialize_response(
+ 74 |     *,
+ 75 |     field: ModelField = None,
+ 76 |     response_content: Any,
+ 77 |     include: Union[SetIntStr, DictIntStrAny] = None,
+ 78 |     exclude: Union[SetIntStr, DictIntStrAny] = set(),
+ 79 |     by_alias: bool = True,
+ 80 |     exclude_unset: bool = False,
+ 81 |     is_coroutine: bool = True,
+ 82 | ) -> Any:
+ 83 |     if field:
+ 84 |         errors = []
+ 85 |         response_content = _prepare_response_content(
+ 86 |             response_content, by_alias=by_alias, exclude_unset=exclude_unset
+ 87 |         )
+ 88 |         if is_coroutine:
+ 89 |             value, errors_ = field.validate(response_content, {}, loc=("response",))
+ 90 |         else:
+ 91 |             value, errors_ = await run_in_threadpool(
+ 92 |                 field.validate, response_content, {}, loc=("response",)
+ 93 |             )
+ 94 |         if isinstance(errors_, ErrorWrapper):
+ 95 |             errors.append(errors_)
+ 96 |         elif isinstance(errors_, list):
+ 97 |             errors.extend(errors_)
+ 98 |         if errors:
+ 99 |             raise ValidationError(errors, field.type_)
+100 |         return jsonable_encoder(
+101 |             value,
+102 |             include=include,
+103 |             exclude=exclude,
+104 |             by_alias=by_alias,
+105 |             exclude_unset=exclude_unset,
+106 |         )
+107 |     else:
+108 |         return jsonable_encoder(response_content)
+109 | 
+110 | 
+111 | async def run_endpoint_function(
+112 |     *, dependant: Dependant, values: Dict[str, Any], is_coroutine: bool
+113 | ) -> Any:
+114 |     # Only called by get_request_handler. Has been split into its own function to
+115 |     # facilitate profiling endpoints, since inner functions are harder to profile.
+116 |     assert dependant.call is not None, "dependant.call must be a function"
+117 | 
+118 |     if is_coroutine:
+119 |         return await dependant.call(**values)
+120 |     else:
+121 |         return await run_in_threadpool(dependant.call, **values)
+122 | 
+123 | 
+124 | def get_request_handler(
+125 |     dependant: Dependant,
+126 |     body_field: ModelField = None,
+127 |     status_code: int = 200,
+128 |     response_class: Type[Response] = JSONResponse,
+129 |     response_field: ModelField = None,
+130 |     response_model_include: Union[SetIntStr, DictIntStrAny] = None,
+131 |     response_model_exclude: Union[SetIntStr, DictIntStrAny] = set(),
+132 |     response_model_by_alias: bool = True,
+133 |     response_model_exclude_unset: bool = False,
+134 |     dependency_overrides_provider: Any = None,
+135 | ) -> Callable:
+136 |     assert dependant.call is not None, "dependant.call must be a function"
+137 |     is_coroutine = asyncio.iscoroutinefunction(dependant.call)
+138 |     is_body_form = body_field and isinstance(get_field_info(body_field), params.Form)
+139 | 
+140 |     async def app(request: Request) -> Response:
+141 |         try:
+142 |             body = None
+143 |             if body_field:
+144 |                 if is_body_form:
+145 |                     body = await request.form()
+146 |                 else:
+147 |                     body_bytes = await request.body()
+148 |                     if body_bytes:
+149 |                         body = await request.json()
+150 |         except Exception as e:
+151 |             logger.error(f"Error getting request body: {e}")
+152 |             raise HTTPException(
+153 |                 status_code=400, detail="There was an error parsing the body"
+154 |             ) from e
+155 |         solved_result = await solve_dependencies(
+156 |             request=request,
+157 |             dependant=dependant,
+158 |             body=body,
+159 |             dependency_overrides_provider=dependency_overrides_provider,
+160 |         )
+161 |         values, errors, background_tasks, sub_response, _ = solved_result
+162 |         if errors:
+163 |             raise RequestValidationError(errors, body=body)
+164 |         else:
+165 |             raw_response = await run_endpoint_function(
+166 |                 dependant=dependant, values=values, is_coroutine=is_coroutine
+167 |             )
+168 | 
+169 |             if isinstance(raw_response, Response):
+170 |                 if raw_response.background is None:
+171 |                     raw_response.background = background_tasks
+172 |                 return raw_response
+173 |             response_data = await serialize_response(
+174 |                 field=response_field,
+175 |                 response_content=raw_response,
+176 |                 include=response_model_include,
+177 |                 exclude=response_model_exclude,
+178 |                 by_alias=response_model_by_alias,
+179 |                 exclude_unset=response_model_exclude_unset,
+180 |                 is_coroutine=is_coroutine,
+181 |             )
+182 |             response = response_class(
+183 |                 content=response_data,
+184 |                 status_code=status_code,
+185 |                 background=background_tasks,
+186 |             )
+187 |             response.headers.raw.extend(sub_response.headers.raw)
+188 |             if sub_response.status_code:
+189 |                 response.status_code = sub_response.status_code
+190 |             return response
+191 | 
+192 |     return app
+193 | 
+194 | 
+195 | def get_websocket_app(
+196 |     dependant: Dependant, dependency_overrides_provider: Any = None
+197 | ) -> Callable:
+198 |     async def app(websocket: WebSocket) -> None:
+199 |         solved_result = await solve_dependencies(
+200 |             request=websocket,
+201 |             dependant=dependant,
+202 |             dependency_overrides_provider=dependency_overrides_provider,
+203 |         )
+204 |         values, errors, _, _2, _3 = solved_result
+205 |         if errors:
+206 |             await websocket.close(code=WS_1008_POLICY_VIOLATION)
+207 |             raise WebSocketRequestValidationError(errors)
+208 |         assert dependant.call is not None, "dependant.call must be a function"
+209 |         await dependant.call(**values)
+210 | 
+211 |     return app
+212 | 
+213 | 
+214 | class APIWebSocketRoute(routing.WebSocketRoute):
+215 |     def __init__(
+216 |         self,
+217 |         path: str,
+218 |         endpoint: Callable,
+219 |         *,
+220 |         name: str = None,
+221 |         dependency_overrides_provider: Any = None,
+222 |     ) -> None:
+223 |         self.path = path
+224 |         self.endpoint = endpoint
+225 |         self.name = get_name(endpoint) if name is None else name
+226 |         self.dependant = get_dependant(path=path, call=self.endpoint)
+227 |         self.app = websocket_session(
+228 |             get_websocket_app(
+229 |                 dependant=self.dependant,
+230 |                 dependency_overrides_provider=dependency_overrides_provider,
+231 |             )
+232 |         )
+233 |         self.path_regex, self.path_format, self.param_convertors = compile_path(path)
+234 | 
+235 | 
+236 | class APIRoute(routing.Route):
+237 |     def __init__(
+238 |         self,
+239 |         path: str,
+240 |         endpoint: Callable,
+241 |         *,
+242 |         response_model: Type[Any] = None,
+243 |         status_code: int = 200,
+244 |         tags: List[str] = None,
+245 |         dependencies: Sequence[params.Depends] = None,
+246 |         summary: str = None,
+247 |         description: str = None,
+248 |         response_description: str = "Successful Response",
+249 |         responses: Dict[Union[int, str], Dict[str, Any]] = None,
+250 |         deprecated: bool = None,
+251 |         name: str = None,
+252 |         methods: Optional[Union[Set[str], List[str]]] = None,
+253 |         operation_id: str = None,
+254 |         response_model_include: Union[SetIntStr, DictIntStrAny] = None,
+255 |         response_model_exclude: Union[SetIntStr, DictIntStrAny] = set(),
+256 |         response_model_by_alias: bool = True,
+257 |         response_model_exclude_unset: bool = False,
+258 |         include_in_schema: bool = True,
+259 |         response_class: Optional[Type[Response]] = None,
+260 |         dependency_overrides_provider: Any = None,
+261 |         callbacks: Optional[List["APIRoute"]] = None,
+262 |     ) -> None:
+263 |         self.path = path
+264 |         self.endpoint = endpoint
+265 |         self.name = get_name(endpoint) if name is None else name
+266 |         self.path_regex, self.path_format, self.param_convertors = compile_path(path)
+267 |         if methods is None:
+268 |             methods = ["GET"]
+269 |         self.methods = set([method.upper() for method in methods])
+270 |         self.unique_id = generate_operation_id_for_path(
+271 |             name=self.name, path=self.path_format, method=list(methods)[0]
+272 |         )
+273 |         self.response_model = response_model
+274 |         if self.response_model:
+275 |             assert (
+276 |                 status_code not in STATUS_CODES_WITH_NO_BODY
+277 |             ), f"Status code {status_code} must not have a response body"
+278 |             response_name = "Response_" + self.unique_id
+279 |             self.response_field = create_response_field(
+280 |                 name=response_name, type_=self.response_model
+281 |             )
+282 |             # Create a clone of the field, so that a Pydantic submodel is not returned
+283 |             # as is just because it's an instance of a subclass of a more limited class
+284 |             # e.g. UserInDB (containing hashed_password) could be a subclass of User
+285 |             # that doesn't have the hashed_password. But because it's a subclass, it
+286 |             # would pass the validation and be returned as is.
+287 |             # By being a new field, no inheritance will be passed as is. A new model
+288 |             # will be always created.
+289 |             self.secure_cloned_response_field: Optional[
+290 |                 ModelField
+291 |             ] = create_cloned_field(self.response_field)
+292 |         else:
+293 |             self.response_field = None  # type: ignore
+294 |             self.secure_cloned_response_field = None
+295 |         self.status_code = status_code
+296 |         self.tags = tags or []
+297 |         if dependencies:
+298 |             self.dependencies = list(dependencies)
+299 |         else:
+300 |             self.dependencies = []
+301 |         self.summary = summary
+302 |         self.description = description or inspect.cleandoc(self.endpoint.__doc__ or "")
+303 |         # if a "form feed" character (page break) is found in the description text,
+304 |         # truncate description text to the content preceding the first "form feed"
+305 |         self.description = self.description.split("\f")[0]
+306 |         self.response_description = response_description
+307 |         self.responses = responses or {}
+308 |         response_fields = {}
+309 |         for additional_status_code, response in self.responses.items():
+310 |             assert isinstance(response, dict), "An additional response must be a dict"
+311 |             model = response.get("model")
+312 |             if model:
+313 |                 assert (
+314 |                     additional_status_code not in STATUS_CODES_WITH_NO_BODY
+315 |                 ), f"Status code {additional_status_code} must not have a response body"
+316 |                 response_name = f"Response_{additional_status_code}_{self.unique_id}"
+317 |                 response_field = create_response_field(name=response_name, type_=model)
+318 |                 response_fields[additional_status_code] = response_field
+319 |         if response_fields:
+320 |             self.response_fields: Dict[Union[int, str], ModelField] = response_fields
+321 |         else:
+322 |             self.response_fields = {}
+323 |         self.deprecated = deprecated
+324 |         self.operation_id = operation_id
+325 |         self.response_model_include = response_model_include
+326 |         self.response_model_exclude = response_model_exclude
+327 |         self.response_model_by_alias = response_model_by_alias
+328 |         self.response_model_exclude_unset = response_model_exclude_unset
+329 |         self.include_in_schema = include_in_schema
+330 |         self.response_class = response_class
+331 | 
+332 |         assert callable(endpoint), f"An endpoint must be a callable"
+333 |         self.dependant = get_dependant(path=self.path_format, call=self.endpoint)
+334 |         for depends in self.dependencies[::-1]:
+335 |             self.dependant.dependencies.insert(
+336 |                 0,
+337 |                 get_parameterless_sub_dependant(depends=depends, path=self.path_format),
+338 |             )
+339 |         self.body_field = get_body_field(dependant=self.dependant, name=self.unique_id)
+340 |         self.dependency_overrides_provider = dependency_overrides_provider
+341 |         self.callbacks = callbacks
+342 |         self.app = request_response(self.get_route_handler())
+343 | 
+344 |     def get_route_handler(self) -> Callable:
+345 |         return get_request_handler(
+346 |             dependant=self.dependant,
+347 |             body_field=self.body_field,
+348 |             status_code=self.status_code,
+349 |             response_class=self.response_class or JSONResponse,
+350 |             response_field=self.secure_cloned_response_field,
+351 |             response_model_include=self.response_model_include,
+352 |             response_model_exclude=self.response_model_exclude,
+353 |             response_model_by_alias=self.response_model_by_alias,
+354 |             response_model_exclude_unset=self.response_model_exclude_unset,
+355 |             dependency_overrides_provider=self.dependency_overrides_provider,
+356 |         )
+357 | 
+358 | 
+359 | class APIRouter(routing.Router):
+360 |     def __init__(
+361 |         self,
+362 |         routes: List[routing.BaseRoute] = None,
+363 |         redirect_slashes: bool = True,
+364 |         default: ASGIApp = None,
+365 |         dependency_overrides_provider: Any = None,
+366 |         route_class: Type[APIRoute] = APIRoute,
+367 |         default_response_class: Type[Response] = None,
+368 |         on_startup: Sequence[Callable] = None,
+369 |         on_shutdown: Sequence[Callable] = None,
+370 |     ) -> None:
+371 |         super().__init__(
+372 |             routes=routes,
+373 |             redirect_slashes=redirect_slashes,
+374 |             default=default,
+375 |             on_startup=on_startup,
+376 |             on_shutdown=on_shutdown,
+377 |         )
+378 |         self.dependency_overrides_provider = dependency_overrides_provider
+379 |         self.route_class = route_class
+380 |         self.default_response_class = default_response_class
+381 | 
+382 |     def add_api_route(
+383 |         self,
+384 |         path: str,
+385 |         endpoint: Callable,
+386 |         *,
+387 |         response_model: Type[Any] = None,
+388 |         status_code: int = 200,
+389 |         tags: List[str] = None,
+390 |         dependencies: Sequence[params.Depends] = None,
+391 |         summary: str = None,
+392 |         description: str = None,
+393 |         response_description: str = "Successful Response",
+394 |         responses: Dict[Union[int, str], Dict[str, Any]] = None,
+395 |         deprecated: bool = None,
+396 |         methods: Optional[Union[Set[str], List[str]]] = None,
+397 |         operation_id: str = None,
+398 |         response_model_include: Union[SetIntStr, DictIntStrAny] = None,
+399 |         response_model_exclude: Union[SetIntStr, DictIntStrAny] = set(),
+400 |         response_model_by_alias: bool = True,
+401 |         response_model_skip_defaults: bool = None,
+402 |         response_model_exclude_unset: bool = False,
+403 |         include_in_schema: bool = True,
+404 |         response_class: Type[Response] = None,
+405 |         name: str = None,
+406 |         route_class_override: Optional[Type[APIRoute]] = None,
+407 |         callbacks: List[APIRoute] = None,
+408 |     ) -> None:
+409 |         if response_model_skip_defaults is not None:
+410 |             warning_response_model_skip_defaults_deprecated()  # pragma: nocover
+411 |         route_class = route_class_override or self.route_class
+412 |         route = route_class(
+413 |             path,
+414 |             endpoint=endpoint,
+415 |             response_model=response_model,
+416 |             status_code=status_code,
+417 |             tags=tags or [],
+418 |             dependencies=dependencies,
+419 |             summary=summary,
+420 |             description=description,
+421 |             response_description=response_description,
+422 |             responses=responses or {},
+423 |             deprecated=deprecated,
+424 |             methods=methods,
+425 |             operation_id=operation_id,
+426 |             response_model_include=response_model_include,
+427 |             response_model_exclude=response_model_exclude,
+428 |             response_model_by_alias=response_model_by_alias,
+429 |             response_model_exclude_unset=bool(
+430 |                 response_model_exclude_unset or response_model_skip_defaults
+431 |             ),
+432 |             include_in_schema=include_in_schema,
+433 |             response_class=response_class or self.default_response_class,
+434 |             name=name,
+435 |             dependency_overrides_provider=self.dependency_overrides_provider,
+436 |             callbacks=callbacks,
+437 |         )
+438 |         self.routes.append(route)
+439 | 
+440 |     def api_route(
+441 |         self,
+442 |         path: str,
+443 |         *,
+444 |         response_model: Type[Any] = None,
+445 |         status_code: int = 200,
+446 |         tags: List[str] = None,
+447 |         dependencies: Sequence[params.Depends] = None,
+448 |         summary: str = None,
+449 |         description: str = None,
+450 |         response_description: str = "Successful Response",
+451 |         responses: Dict[Union[int, str], Dict[str, Any]] = None,
+452 |         deprecated: bool = None,
+453 |         methods: List[str] = None,
+454 |         operation_id: str = None,
+455 |         response_model_include: Union[SetIntStr, DictIntStrAny] = None,
+456 |         response_model_exclude: Union[SetIntStr, DictIntStrAny] = set(),
+457 |         response_model_by_alias: bool = True,
+458 |         response_model_skip_defaults: bool = None,
+459 |         response_model_exclude_unset: bool = False,
+460 |         include_in_schema: bool = True,
+461 |         response_class: Type[Response] = None,
+462 |         name: str = None,
+463 |         callbacks: List[APIRoute] = None,
+464 |     ) -> Callable:
+465 |         if response_model_skip_defaults is not None:
+466 |             warning_response_model_skip_defaults_deprecated()  # pragma: nocover
+467 | 
+468 |         def decorator(func: Callable) -> Callable:
+469 |             self.add_api_route(
+470 |                 path,
+471 |                 func,
+472 |                 response_model=response_model,
+473 |                 status_code=status_code,
+474 |                 tags=tags or [],
+475 |                 dependencies=dependencies,
+476 |                 summary=summary,
+477 |                 description=description,
+478 |                 response_description=response_description,
+479 |                 responses=responses or {},
+480 |                 deprecated=deprecated,
+481 |                 methods=methods,
+482 |                 operation_id=operation_id,
+483 |                 response_model_include=response_model_include,
+484 |                 response_model_exclude=response_model_exclude,
+485 |                 response_model_by_alias=response_model_by_alias,
+486 |                 response_model_exclude_unset=bool(
+487 |                     response_model_exclude_unset or response_model_skip_defaults
+488 |                 ),
+489 |                 include_in_schema=include_in_schema,
+490 |                 response_class=response_class or self.default_response_class,
+491 |                 name=name,
+492 |                 callbacks=callbacks,
+493 |             )
+494 |             return func
+495 | 
+496 |         return decorator
+497 | 
+498 |     def add_api_websocket_route(
+499 |         self, path: str, endpoint: Callable, name: str = None
+500 |     ) -> None:
+501 |         route = APIWebSocketRoute(path, endpoint=endpoint, name=name)
+502 |         self.routes.append(route)
+503 | 
+504 |     def websocket(self, path: str, name: str = None) -> Callable:
+505 |         def decorator(func: Callable) -> Callable:
+506 |             self.add_api_websocket_route(path, func, name=name)
+507 |             return func
+508 | 
+509 |         return decorator
+510 | 
+511 |     def include_router(
+512 |         self,
+513 |         router: "APIRouter",
+514 |         *,
+515 |         prefix: str = "",
+516 |         tags: List[str] = None,
+517 |         dependencies: Sequence[params.Depends] = None,
+518 |         responses: Dict[Union[int, str], Dict[str, Any]] = None,
+519 |         default_response_class: Optional[Type[Response]] = None,
+520 |     ) -> None:
+521 |         if prefix:
+522 |             assert prefix.startswith("/"), "A path prefix must start with '/'"
+523 |             assert not prefix.endswith(
+524 |                 "/"
+525 |             ), "A path prefix must not end with '/', as the routes will start with '/'"
+526 |         else:
+527 |             for r in router.routes:
+528 |                 path = getattr(r, "path")
+529 |                 name = getattr(r, "name", "unknown")
+530 |                 if path is not None and not path:
+531 |                     raise Exception(
+532 |                         f"Prefix and path cannot be both empty (path operation: {name})"
+533 |                     )
+534 |         if responses is None:
+535 |             responses = {}
+536 |         for route in router.routes:
+537 |             if isinstance(route, APIRoute):
+538 |                 combined_responses = {**responses, **route.responses}
+539 |                 self.add_api_route(
+540 |                     prefix + route.path,
+541 |                     route.endpoint,
+542 |                     response_model=route.response_model,
+543 |                     status_code=route.status_code,
+544 |                     tags=(route.tags or []) + (tags or []),
+545 |                     dependencies=list(dependencies or [])
+546 |                     + list(route.dependencies or []),
+547 |                     summary=route.summary,
+548 |                     description=route.description,
+549 |                     response_description=route.response_description,
+550 |                     responses=combined_responses,
+551 |                     deprecated=route.deprecated,
+552 |                     methods=route.methods,
+553 |                     operation_id=route.operation_id,
+554 |                     response_model_include=route.response_model_include,
+555 |                     response_model_exclude=route.response_model_exclude,
+556 |                     response_model_by_alias=route.response_model_by_alias,
+557 |                     response_model_exclude_unset=route.response_model_exclude_unset,
+558 |                     include_in_schema=route.include_in_schema,
+559 |                     response_class=route.response_class or default_response_class,
+560 |                     name=route.name,
+561 |                     route_class_override=type(route),
+562 |                     callbacks=route.callbacks,
+563 |                 )
+564 |             elif isinstance(route, routing.Route):
+565 |                 self.add_route(
+566 |                     prefix + route.path,
+567 |                     route.endpoint,
+568 |                     methods=list(route.methods or []),
+569 |                     include_in_schema=route.include_in_schema,
+570 |                     name=route.name,
+571 |                 )
+572 |             elif isinstance(route, APIWebSocketRoute):
+573 |                 self.add_api_websocket_route(
+574 |                     prefix + route.path, route.endpoint, name=route.name
+575 |                 )
+576 |             elif isinstance(route, routing.WebSocketRoute):
+577 |                 self.add_websocket_route(
+578 |                     prefix + route.path, route.endpoint, name=route.name
+579 |                 )
+580 |         for handler in router.on_startup:
+581 |             self.add_event_handler("startup", handler)
+582 |         for handler in router.on_shutdown:
+583 |             self.add_event_handler("shutdown", handler)
+584 | 
+585 |     def get(
+586 |         self,
+587 |         path: str,
+588 |         *,
+589 |         response_model: Type[Any] = None,
+590 |         status_code: int = 200,
+591 |         tags: List[str] = None,
+592 |         dependencies: Sequence[params.Depends] = None,
+593 |         summary: str = None,
+594 |         description: str = None,
+595 |         response_description: str = "Successful Response",
+596 |         responses: Dict[Union[int, str], Dict[str, Any]] = None,
+597 |         deprecated: bool = None,
+598 |         operation_id: str = None,
+599 |         response_model_include: Union[SetIntStr, DictIntStrAny] = None,
+600 |         response_model_exclude: Union[SetIntStr, DictIntStrAny] = set(),
+601 |         response_model_by_alias: bool = True,
+602 |         response_model_skip_defaults: bool = None,
+603 |         response_model_exclude_unset: bool = False,
+604 |         include_in_schema: bool = True,
+605 |         response_class: Type[Response] = None,
+606 |         name: str = None,
+607 |         callbacks: List[APIRoute] = None,
+608 |     ) -> Callable:
+609 |         if response_model_skip_defaults is not None:
+610 |             warning_response_model_skip_defaults_deprecated()  # pragma: nocover
+611 |         return self.api_route(
+612 |             path=path,
+613 |             response_model=response_model,
+614 |             status_code=status_code,
+615 |             tags=tags or [],
+616 |             dependencies=dependencies,
+617 |             summary=summary,
+618 |             description=description,
+619 |             response_description=response_description,
+620 |             responses=responses or {},
+621 |             deprecated=deprecated,
+622 |             methods=["GET"],
+623 |             operation_id=operation_id,
+624 |             response_model_include=response_model_include,
+625 |             response_model_exclude=response_model_exclude,
+626 |             response_model_by_alias=response_model_by_alias,
+627 |             response_model_exclude_unset=bool(
+628 |                 response_model_exclude_unset or response_model_skip_defaults
+629 |             ),
+630 |             include_in_schema=include_in_schema,
+631 |             response_class=response_class or self.default_response_class,
+632 |             name=name,
+633 |             callbacks=callbacks,
+634 |         )
+635 | 
+636 |     def put(
+637 |         self,
+638 |         path: str,
+639 |         *,
+640 |         response_model: Type[Any] = None,
+641 |         status_code: int = 200,
+642 |         tags: List[str] = None,
+643 |         dependencies: Sequence[params.Depends] = None,
+644 |         summary: str = None,
+645 |         description: str = None,
+646 |         response_description: str = "Successful Response",
+647 |         responses: Dict[Union[int, str], Dict[str, Any]] = None,
+648 |         deprecated: bool = None,
+649 |         operation_id: str = None,
+650 |         response_model_include: Union[SetIntStr, DictIntStrAny] = None,
+651 |         response_model_exclude: Union[SetIntStr, DictIntStrAny] = set(),
+652 |         response_model_by_alias: bool = True,
+653 |         response_model_skip_defaults: bool = None,
+654 |         response_model_exclude_unset: bool = False,
+655 |         include_in_schema: bool = True,
+656 |         response_class: Type[Response] = None,
+657 |         name: str = None,
+658 |         callbacks: List[APIRoute] = None,
+659 |     ) -> Callable:
+660 |         if response_model_skip_defaults is not None:
+661 |             warning_response_model_skip_defaults_deprecated()  # pragma: nocover
+662 |         return self.api_route(
+663 |             path=path,
+664 |             response_model=response_model,
+665 |             status_code=status_code,
+666 |             tags=tags or [],
+667 |             dependencies=dependencies,
+668 |             summary=summary,
+669 |             description=description,
+670 |             response_description=response_description,
+671 |             responses=responses or {},
+672 |             deprecated=deprecated,
+673 |             methods=["PUT"],
+674 |             operation_id=operation_id,
+675 |             response_model_include=response_model_include,
+676 |             response_model_exclude=response_model_exclude,
+677 |             response_model_by_alias=response_model_by_alias,
+678 |             response_model_exclude_unset=bool(
+679 |                 response_model_exclude_unset or response_model_skip_defaults
+680 |             ),
+681 |             include_in_schema=include_in_schema,
+682 |             response_class=response_class or self.default_response_class,
+683 |             name=name,
+684 |             callbacks=callbacks,
+685 |         )
+686 | 
+687 |     def post(
+688 |         self,
+689 |         path: str,
+690 |         *,
+691 |         response_model: Type[Any] = None,
+692 |         status_code: int = 200,
+693 |         tags: List[str] = None,
+694 |         dependencies: Sequence[params.Depends] = None,
+695 |         summary: str = None,
+696 |         description: str = None,
+697 |         response_description: str = "Successful Response",
+698 |         responses: Dict[Union[int, str], Dict[str, Any]] = None,
+699 |         deprecated: bool = None,
+700 |         operation_id: str = None,
+701 |         response_model_include: Union[SetIntStr, DictIntStrAny] = None,
+702 |         response_model_exclude: Union[SetIntStr, DictIntStrAny] = set(),
+703 |         response_model_by_alias: bool = True,
+704 |         response_model_skip_defaults: bool = None,
+705 |         response_model_exclude_unset: bool = False,
+706 |         include_in_schema: bool = True,
+707 |         response_class: Type[Response] = None,
+708 |         name: str = None,
+709 |         callbacks: List[APIRoute] = None,
+710 |     ) -> Callable:
+711 |         if response_model_skip_defaults is not None:
+712 |             warning_response_model_skip_defaults_deprecated()  # pragma: nocover
+713 |         return self.api_route(
+714 |             path=path,
+715 |             response_model=response_model,
+716 |             status_code=status_code,
+717 |             tags=tags or [],
+718 |             dependencies=dependencies,
+719 |             summary=summary,
+720 |             description=description,
+721 |             response_description=response_description,
+722 |             responses=responses or {},
+723 |             deprecated=deprecated,
+724 |             methods=["POST"],
+725 |             operation_id=operation_id,
+726 |             response_model_include=response_model_include,
+727 |             response_model_exclude=response_model_exclude,
+728 |             response_model_by_alias=response_model_by_alias,
+729 |             response_model_exclude_unset=bool(
+730 |                 response_model_exclude_unset or response_model_skip_defaults
+731 |             ),
+732 |             include_in_schema=include_in_schema,
+733 |             response_class=response_class or self.default_response_class,
+734 |             name=name,
+735 |             callbacks=callbacks,
+736 |         )
+737 | 
+738 |     def delete(
+739 |         self,
+740 |         path: str,
+741 |         *,
+742 |         response_model: Type[Any] = None,
+743 |         status_code: int = 200,
+744 |         tags: List[str] = None,
+745 |         dependencies: Sequence[params.Depends] = None,
+746 |         summary: str = None,
+747 |         description: str = None,
+748 |         response_description: str = "Successful Response",
+749 |         responses: Dict[Union[int, str], Dict[str, Any]] = None,
+750 |         deprecated: bool = None,
+751 |         operation_id: str = None,
+752 |         response_model_include: Union[SetIntStr, DictIntStrAny] = None,
+753 |         response_model_exclude: Union[SetIntStr, DictIntStrAny] = set(),
+754 |         response_model_by_alias: bool = True,
+755 |         response_model_skip_defaults: bool = None,
+756 |         response_model_exclude_unset: bool = False,
+757 |         include_in_schema: bool = True,
+758 |         response_class: Type[Response] = None,
+759 |         name: str = None,
+760 |         callbacks: List[APIRoute] = None,
+761 |     ) -> Callable:
+762 |         if response_model_skip_defaults is not None:
+763 |             warning_response_model_skip_defaults_deprecated()  # pragma: nocover
+764 |         return self.api_route(
+765 |             path=path,
+766 |             response_model=response_model,
+767 |             status_code=status_code,
+768 |             tags=tags or [],
+769 |             dependencies=dependencies,
+770 |             summary=summary,
+771 |             description=description,
+772 |             response_description=response_description,
+773 |             responses=responses or {},
+774 |             deprecated=deprecated,
+775 |             methods=["DELETE"],
+776 |             operation_id=operation_id,
+777 |             response_model_include=response_model_include,
+778 |             response_model_exclude=response_model_exclude,
+779 |             response_model_by_alias=response_model_by_alias,
+780 |             response_model_exclude_unset=bool(
+781 |                 response_model_exclude_unset or response_model_skip_defaults
+782 |             ),
+783 |             include_in_schema=include_in_schema,
+784 |             response_class=response_class or self.default_response_class,
+785 |             name=name,
+786 |             callbacks=callbacks,
+787 |         )
+788 | 
+789 |     def options(
+790 |         self,
+791 |         path: str,
+792 |         *,
+793 |         response_model: Type[Any] = None,
+794 |         status_code: int = 200,
+795 |         tags: List[str] = None,
+796 |         dependencies: Sequence[params.Depends] = None,
+797 |         summary: str = None,
+798 |         description: str = None,
+799 |         response_description: str = "Successful Response",
+800 |         responses: Dict[Union[int, str], Dict[str, Any]] = None,
+801 |         deprecated: bool = None,
+802 |         operation_id: str = None,
+803 |         response_model_include: Union[SetIntStr, DictIntStrAny] = None,
+804 |         response_model_exclude: Union[SetIntStr, DictIntStrAny] = set(),
+805 |         response_model_by_alias: bool = True,
+806 |         response_model_skip_defaults: bool = None,
+807 |         response_model_exclude_unset: bool = False,
+808 |         include_in_schema: bool = True,
+809 |         response_class: Type[Response] = None,
+810 |         name: str = None,
+811 |         callbacks: List[APIRoute] = None,
+812 |     ) -> Callable:
+813 |         if response_model_skip_defaults is not None:
+814 |             warning_response_model_skip_defaults_deprecated()  # pragma: nocover
+815 |         return self.api_route(
+816 |             path=path,
+817 |             response_model=response_model,
+818 |             status_code=status_code,
+819 |             tags=tags or [],
+820 |             dependencies=dependencies,
+821 |             summary=summary,
+822 |             description=description,
+823 |             response_description=response_description,
+824 |             responses=responses or {},
+825 |             deprecated=deprecated,
+826 |             methods=["OPTIONS"],
+827 |             operation_id=operation_id,
+828 |             response_model_include=response_model_include,
+829 |             response_model_exclude=response_model_exclude,
+830 |             response_model_by_alias=response_model_by_alias,
+831 |             response_model_exclude_unset=bool(
+832 |                 response_model_exclude_unset or response_model_skip_defaults
+833 |             ),
+834 |             include_in_schema=include_in_schema,
+835 |             response_class=response_class or self.default_response_class,
+836 |             name=name,
+837 |             callbacks=callbacks,
+838 |         )
+839 | 
+840 |     def head(
+841 |         self,
+842 |         path: str,
+843 |         *,
+844 |         response_model: Type[Any] = None,
+845 |         status_code: int = 200,
+846 |         tags: List[str] = None,
+847 |         dependencies: Sequence[params.Depends] = None,
+848 |         summary: str = None,
+849 |         description: str = None,
+850 |         response_description: str = "Successful Response",
+851 |         responses: Dict[Union[int, str], Dict[str, Any]] = None,
+852 |         deprecated: bool = None,
+853 |         operation_id: str = None,
+854 |         response_model_include: Union[SetIntStr, DictIntStrAny] = None,
+855 |         response_model_exclude: Union[SetIntStr, DictIntStrAny] = set(),
+856 |         response_model_by_alias: bool = True,
+857 |         response_model_skip_defaults: bool = None,
+858 |         response_model_exclude_unset: bool = False,
+859 |         include_in_schema: bool = True,
+860 |         response_class: Type[Response] = None,
+861 |         name: str = None,
+862 |         callbacks: List[APIRoute] = None,
+863 |     ) -> Callable:
+864 |         if response_model_skip_defaults is not None:
+865 |             warning_response_model_skip_defaults_deprecated()  # pragma: nocover
+866 |         return self.api_route(
+867 |             path=path,
+868 |             response_model=response_model,
+869 |             status_code=status_code,
+870 |             tags=tags or [],
+871 |             dependencies=dependencies,
+872 |             summary=summary,
+873 |             description=description,
+874 |             response_description=response_description,
+875 |             responses=responses or {},
+876 |             deprecated=deprecated,
+877 |             methods=["HEAD"],
+878 |             operation_id=operation_id,
+879 |             response_model_include=response_model_include,
+880 |             response_model_exclude=response_model_exclude,
+881 |             response_model_by_alias=response_model_by_alias,
+882 |             response_model_exclude_unset=bool(
+883 |                 response_model_exclude_unset or response_model_skip_defaults
+884 |             ),
+885 |             include_in_schema=include_in_schema,
+886 |             response_class=response_class or self.default_response_class,
+887 |             name=name,
+888 |             callbacks=callbacks,
+889 |         )
+890 | 
+891 |     def patch(
+892 |         self,
+893 |         path: str,
+894 |         *,
+895 |         response_model: Type[Any] = None,
+896 |         status_code: int = 200,
+897 |         tags: List[str] = None,
+898 |         dependencies: Sequence[params.Depends] = None,
+899 |         summary: str = None,
+900 |         description: str = None,
+901 |         response_description: str = "Successful Response",
+902 |         responses: Dict[Union[int, str], Dict[str, Any]] = None,
+903 |         deprecated: bool = None,
+904 |         operation_id: str = None,
+905 |         response_model_include: Union[SetIntStr, DictIntStrAny] = None,
+906 |         response_model_exclude: Union[SetIntStr, DictIntStrAny] = set(),
+907 |         response_model_by_alias: bool = True,
+908 |         response_model_skip_defaults: bool = None,
+909 |         response_model_exclude_unset: bool = False,
+910 |         include_in_schema: bool = True,
+911 |         response_class: Type[Response] = None,
+912 |         name: str = None,
+913 |         callbacks: List[APIRoute] = None,
+914 |     ) -> Callable:
+915 |         if response_model_skip_defaults is not None:
+916 |             warning_response_model_skip_defaults_deprecated()  # pragma: nocover
+917 |         return self.api_route(
+918 |             path=path,
+919 |             response_model=response_model,
+920 |             status_code=status_code,
+921 |             tags=tags or [],
+922 |             dependencies=dependencies,
+923 |             summary=summary,
+924 |             description=description,
+925 |             response_description=response_description,
+926 |             responses=responses or {},
+927 |             deprecated=deprecated,
+928 |             methods=["PATCH"],
+929 |             operation_id=operation_id,
+930 |             response_model_include=response_model_include,
+931 |             response_model_exclude=response_model_exclude,
+932 |             response_model_by_alias=response_model_by_alias,
+933 |             response_model_exclude_unset=bool(
+934 |                 response_model_exclude_unset or response_model_skip_defaults
+935 |             ),
+936 |             include_in_schema=include_in_schema,
+937 |             response_class=response_class or self.default_response_class,
+938 |             name=name,
+939 |             callbacks=callbacks,
+940 |         )
+941 | 
+942 |     def trace(
+943 |         self,
+944 |         path: str,
+945 |         *,
+946 |         response_model: Type[Any] = None,
+947 |         status_code: int = 200,
+948 |         tags: List[str] = None,
+949 |         dependencies: Sequence[params.Depends] = None,
+950 |         summary: str = None,
+951 |         description: str = None,
+952 |         response_description: str = "Successful Response",
+953 |         responses: Dict[Union[int, str], Dict[str, Any]] = None,
+954 |         deprecated: bool = None,
+955 |         operation_id: str = None,
+956 |         response_model_include: Union[SetIntStr, DictIntStrAny] = None,
+957 |         response_model_exclude: Union[SetIntStr, DictIntStrAny] = set(),
+958 |         response_model_by_alias: bool = True,
+959 |         response_model_skip_defaults: bool = None,
+960 |         response_model_exclude_unset: bool = False,
+961 |         include_in_schema: bool = True,
+962 |         response_class: Type[Response] = None,
+963 |         name: str = None,
+964 |         callbacks: List[APIRoute] = None,
+965 |     ) -> Callable:
+966 |         if response_model_skip_defaults is not None:
+967 |             warning_response_model_skip_defaults_deprecated()  # pragma: nocover
+968 |         return self.api_route(
+969 |             path=path,
+970 |             response_model=response_model,
+971 |             status_code=status_code,
+972 |             tags=tags or [],
+973 |             dependencies=dependencies,
+974 |             summary=summary,
+975 |             description=description,
+976 |             response_description=response_description,
+977 |             responses=responses or {},
+978 |             deprecated=deprecated,
+979 |             methods=["TRACE"],
+980 |             operation_id=operation_id,
+981 |             response_model_include=response_model_include,
+982 |             response_model_exclude=response_model_exclude,
+983 |             response_model_by_alias=response_model_by_alias,
+984 |             response_model_exclude_unset=bool(
+985 |                 response_model_exclude_unset or response_model_skip_defaults
+986 |             ),
+987 |             include_in_schema=include_in_schema,
+988 |             response_class=response_class or self.default_response_class,
+989 |             name=name,
+990 |             callbacks=callbacks,
+991 |         )
+```
+
+
+FAILING TEST FILES:
+
+[test_file] BugsInPy/workspace/fastapi/tests/test_ws_router.py
+```python
+ 1 | from fastapi import APIRouter, Depends, FastAPI, WebSocket
+ 2 | from fastapi.testclient import TestClient
+ 3 | 
+ 4 | router = APIRouter()
+ 5 | prefix_router = APIRouter()
+ 6 | app = FastAPI()
+ 7 | 
+ 8 | 
+ 9 | @app.websocket_route("/")
+10 | async def index(websocket: WebSocket):
+11 |     await websocket.accept()
+12 |     await websocket.send_text("Hello, world!")
+13 |     await websocket.close()
+14 | 
+15 | 
+16 | @router.websocket_route("/router")
+17 | async def routerindex(websocket: WebSocket):
+18 |     await websocket.accept()
+19 |     await websocket.send_text("Hello, router!")
+20 |     await websocket.close()
+21 | 
+22 | 
+23 | @prefix_router.websocket_route("/")
+24 | async def routerprefixindex(websocket: WebSocket):
+25 |     await websocket.accept()
+26 |     await websocket.send_text("Hello, router with prefix!")
+27 |     await websocket.close()
+28 | 
+29 | 
+30 | @router.websocket("/router2")
+31 | async def routerindex(websocket: WebSocket):
+32 |     await websocket.accept()
+33 |     await websocket.send_text("Hello, router!")
+34 |     await websocket.close()
+35 | 
+36 | 
+37 | async def ws_dependency():
+38 |     return "Socket Dependency"
+39 | 
+40 | 
+41 | @router.websocket("/router-ws-depends/")
+42 | async def router_ws_decorator_depends(
+43 |     websocket: WebSocket, data=Depends(ws_dependency)
+44 | ):
+45 |     await websocket.accept()
+46 |     await websocket.send_text(data)
+47 |     await websocket.close()
+48 | 
+49 | 
+50 | app.include_router(router)
+51 | app.include_router(prefix_router, prefix="/prefix")
+52 | 
+53 | 
+54 | def test_app():
+55 |     client = TestClient(app)
+56 |     with client.websocket_connect("/") as websocket:
+57 |         data = websocket.receive_text()
+58 |         assert data == "Hello, world!"
+59 | 
+60 | 
+61 | def test_router():
+62 |     client = TestClient(app)
+63 |     with client.websocket_connect("/router") as websocket:
+64 |         data = websocket.receive_text()
+65 |         assert data == "Hello, router!"
+66 | 
+67 | 
+68 | def test_prefix_router():
+69 |     client = TestClient(app)
+70 |     with client.websocket_connect("/prefix/") as websocket:
+71 |         data = websocket.receive_text()
+72 |         assert data == "Hello, router with prefix!"
+73 | 
+74 | 
+75 | def test_router2():
+76 |     client = TestClient(app)
+77 |     with client.websocket_connect("/router2") as websocket:
+78 |         data = websocket.receive_text()
+79 |         assert data == "Hello, router!"
+80 | 
+81 | 
+82 | def test_router_ws_depends():
+83 |     client = TestClient(app)
+84 |     with client.websocket_connect("/router-ws-depends/") as websocket:
+85 |         assert websocket.receive_text() == "Socket Dependency"
+86 | 
+87 | 
+88 | def test_router_ws_depends_with_override():
+89 |     client = TestClient(app)
+90 |     app.dependency_overrides[ws_dependency] = lambda: "Override"
+91 |     with client.websocket_connect("/router-ws-depends/") as websocket:
+92 |         assert websocket.receive_text() == "Override"
+```

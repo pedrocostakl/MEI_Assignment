@@ -1,0 +1,12 @@
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "httpie/downloads.py",
+      "line_start": 97,
+      "line_end": 98,
+      "confidence": "high",
+      "reason": "The function uses `mailbox.Message` (which relies on Python's legacy email API / compat32 policy) to parse the `Content-Disposition` header. This legacy parser does not correctly handle unquoting strings with escaped quotes, leading to the failing test case."
+    }
+  ]
+}

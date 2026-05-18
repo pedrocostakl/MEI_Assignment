@@ -1,0 +1,12 @@
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "httpie/client.py",
+      "line_start": 42,
+      "line_end": 43,
+      "confidence": "high",
+      "reason": "The requests_session is created here, but its max_redirects attribute is not set using args.max_redirects. Because of this, the underlying requests library uses its default limit (30) instead of the user-specified limit."
+    }
+  ]
+}

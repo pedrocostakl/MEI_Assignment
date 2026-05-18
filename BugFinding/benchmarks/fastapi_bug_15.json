@@ -1,0 +1,9 @@
+{
+  "bug_locations": [
+    {
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/routing.py",
+      "line_start": 271,
+      "line_end": 276
+    }
+  ]
+}

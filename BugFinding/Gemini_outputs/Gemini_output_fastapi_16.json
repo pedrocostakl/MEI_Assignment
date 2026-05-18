@@ -1,0 +1,12 @@
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "fastapi/encoders.py",
+      "line_start": 18,
+      "line_end": 28,
+      "confidence": "high",
+      "reason": "Accessing `obj.Config.json_encoders` raises an AttributeError if `json_encoders` is not defined on the model's inner `Config` class. Additionally, the existing `custom_encoder` parameter is not properly merged or propagated to the recursive `jsonable_encoder` calls."
+    }
+  ]
+}

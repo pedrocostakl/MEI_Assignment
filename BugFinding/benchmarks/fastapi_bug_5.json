@@ -1,0 +1,9 @@
+{
+  "bug_locations": [
+    {
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/utils.py",
+      "line_start": 97,
+      "line_end": 103
+    }
+  ]
+}

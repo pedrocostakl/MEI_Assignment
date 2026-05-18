@@ -1,0 +1,5 @@
+# git diff <buggy_version> <patched_version>
+# git diff --name-only 7ccd81f70653857bd8f3a15ee946aa3fb0edc2cb 74c4d1c1dbe6bfdb05d6e4fc767ffe062398f0a3
+# change from buggy → fixed.
+fastapi/openapi/utils.py
+tests/test_param_in_path_and_dependency.py

@@ -1,0 +1,4 @@
+# git diff <buggy_version> <patched_version>
+# git diff --name-only c8f3d07e86dd41074971b5423fb932c2eda6db1e 16dad81715d3970149c0cf7a318e73a0d84be1ff
+scrapy/contracts/__init__.py
+tests/test_contracts.py

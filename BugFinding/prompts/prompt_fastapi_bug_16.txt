@@ -1,0 +1,244 @@
+You are given buggy source files and failing test files.
+
+Your task is BUG LOCALIZATION ONLY.
+
+Return only valid JSON using this exact format:
+
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "relative/path.py",
+      "line_start": 1,
+      "line_end": 1,
+      "confidence": "low|medium|high",
+      "reason": "Max 2 sentences."
+    }
+  ]
+}
+
+Rules:
+- Do not propose fixes.
+- Do not rewrite code.
+- Do not explain outside JSON.
+- Line numbers must refer to the numbered buggy source file.
+- Include at most the number of suspected locations you think there are.
+- Prefer the smallest line range that identifies the origin of the bug.
+
+
+SOURCE FILES:
+
+[file_1] BugsInPy/workspace/fastapi/fastapi/encoders.py
+```python
+ 1 | from enum import Enum
+ 2 | from types import GeneratorType
+ 3 | from typing import Any, Set
+ 4 | 
+ 5 | from pydantic import BaseModel
+ 6 | from pydantic.json import ENCODERS_BY_TYPE
+ 7 | 
+ 8 | 
+ 9 | def jsonable_encoder(
+10 |     obj: Any,
+11 |     include: Set[str] = None,
+12 |     exclude: Set[str] = set(),
+13 |     by_alias: bool = False,
+14 |     include_none: bool = True,
+15 |     custom_encoder: dict = {},
+16 | ) -> Any:
+17 |     if isinstance(obj, BaseModel):
+18 |         if not obj.Config.json_encoders:
+19 |             return jsonable_encoder(
+20 |                 obj.dict(include=include, exclude=exclude, by_alias=by_alias),
+21 |                 include_none=include_none,
+22 |             )
+23 |         else:
+24 |             return jsonable_encoder(
+25 |                 obj.dict(include=include, exclude=exclude, by_alias=by_alias),
+26 |                 include_none=include_none,
+27 |                 custom_encoder=obj.Config.json_encoders,
+28 |             )
+29 |     if isinstance(obj, Enum):
+30 |         return obj.value
+31 |     if isinstance(obj, (str, int, float, type(None))):
+32 |         return obj
+33 |     if isinstance(obj, dict):
+34 |         return {
+35 |             jsonable_encoder(
+36 |                 key,
+37 |                 by_alias=by_alias,
+38 |                 include_none=include_none,
+39 |                 custom_encoder=custom_encoder,
+40 |             ): jsonable_encoder(
+41 |                 value,
+42 |                 by_alias=by_alias,
+43 |                 include_none=include_none,
+44 |                 custom_encoder=custom_encoder,
+45 |             )
+46 |             for key, value in obj.items()
+47 |             if value is not None or include_none
+48 |         }
+49 |     if isinstance(obj, (list, set, frozenset, GeneratorType, tuple)):
+50 |         return [
+51 |             jsonable_encoder(
+52 |                 item,
+53 |                 include=include,
+54 |                 exclude=exclude,
+55 |                 by_alias=by_alias,
+56 |                 include_none=include_none,
+57 |                 custom_encoder=custom_encoder,
+58 |             )
+59 |             for item in obj
+60 |         ]
+61 |     errors = []
+62 |     try:
+63 |         if custom_encoder and type(obj) in custom_encoder:
+64 |             encoder = custom_encoder[type(obj)]
+65 |         else:
+66 |             encoder = ENCODERS_BY_TYPE[type(obj)]
+67 |         return encoder(obj)
+68 |     except KeyError as e:
+69 |         errors.append(e)
+70 |         try:
+71 |             data = dict(obj)
+72 |         except Exception as e:
+73 |             errors.append(e)
+74 |             try:
+75 |                 data = vars(obj)
+76 |             except Exception as e:
+77 |                 errors.append(e)
+78 |                 raise ValueError(errors)
+79 |     return jsonable_encoder(data, by_alias=by_alias, include_none=include_none)
+```
+
+
+FAILING TEST FILES:
+
+[test_file_1] BugsInPy/workspace/fastapi/tests/test_jsonable_encoder.py
+```python
+ 1 | from datetime import datetime, timezone
+ 2 | from enum import Enum
+ 3 | 
+ 4 | import pytest
+ 5 | from fastapi.encoders import jsonable_encoder
+ 6 | from pydantic import BaseModel
+ 7 | 
+ 8 | 
+ 9 | class Person:
+10 |     def __init__(self, name: str):
+11 |         self.name = name
+12 | 
+13 | 
+14 | class Pet:
+15 |     def __init__(self, owner: Person, name: str):
+16 |         self.owner = owner
+17 |         self.name = name
+18 | 
+19 | 
+20 | class DictablePerson(Person):
+21 |     def __iter__(self):
+22 |         return ((k, v) for k, v in self.__dict__.items())
+23 | 
+24 | 
+25 | class DictablePet(Pet):
+26 |     def __iter__(self):
+27 |         return ((k, v) for k, v in self.__dict__.items())
+28 | 
+29 | 
+30 | class Unserializable:
+31 |     def __iter__(self):
+32 |         raise NotImplementedError()
+33 | 
+34 |     @property
+35 |     def __dict__(self):
+36 |         raise NotImplementedError()
+37 | 
+38 | 
+39 | class ModelWithCustomEncoder(BaseModel):
+40 |     dt_field: datetime
+41 | 
+42 |     class Config:
+43 |         json_encoders = {
+44 |             datetime: lambda dt: dt.replace(
+45 |                 microsecond=0, tzinfo=timezone.utc
+46 |             ).isoformat()
+47 |         }
+48 | 
+49 | 
+50 | class RoleEnum(Enum):
+51 |     admin = "admin"
+52 |     normal = "normal"
+53 | 
+54 | 
+55 | class ModelWithConfig(BaseModel):
+56 |     role: RoleEnum = None
+57 | 
+58 |     class Config:
+59 |         use_enum_values = True
+60 | 
+61 | 
+62 | def test_encode_class():
+63 |     person = Person(name="Foo")
+64 |     pet = Pet(owner=person, name="Firulais")
+65 |     assert jsonable_encoder(pet) == {"name": "Firulais", "owner": {"name": "Foo"}}
+66 | 
+67 | 
+68 | def test_encode_dictable():
+69 |     person = DictablePerson(name="Foo")
+70 |     pet = DictablePet(owner=person, name="Firulais")
+71 |     assert jsonable_encoder(pet) == {"name": "Firulais", "owner": {"name": "Foo"}}
+72 | 
+73 | 
+74 | def test_encode_unsupported():
+75 |     unserializable = Unserializable()
+76 |     with pytest.raises(ValueError):
+77 |         jsonable_encoder(unserializable)
+78 | 
+79 | 
+80 | def test_encode_custom_json_encoders_model():
+81 |     model = ModelWithCustomEncoder(dt_field=datetime(2019, 1, 1, 8))
+82 |     assert jsonable_encoder(model) == {"dt_field": "2019-01-01T08:00:00+00:00"}
+83 | 
+84 | 
+85 | def test_encode_model_with_config():
+86 |     model = ModelWithConfig(role=RoleEnum.admin)
+87 |     assert jsonable_encoder(model) == {"role": "admin"}
+```
+
+[test_file_2] BugsInPy/workspace/fastapi/tests/test_datetime_custom_encoder.py
+```python
+ 1 | from datetime import datetime, timezone
+ 2 | 
+ 3 | from fastapi import FastAPI
+ 4 | from pydantic import BaseModel
+ 5 | from starlette.testclient import TestClient
+ 6 | 
+ 7 | 
+ 8 | class ModelWithDatetimeField(BaseModel):
+ 9 |     dt_field: datetime
+10 | 
+11 |     class Config:
+12 |         json_encoders = {
+13 |             datetime: lambda dt: dt.replace(
+14 |                 microsecond=0, tzinfo=timezone.utc
+15 |             ).isoformat()
+16 |         }
+17 | 
+18 | 
+19 | app = FastAPI()
+20 | model = ModelWithDatetimeField(dt_field=datetime(2019, 1, 1, 8))
+21 | 
+22 | 
+23 | @app.get("/model", response_model=ModelWithDatetimeField)
+24 | def get_model():
+25 |     return model
+26 | 
+27 | 
+28 | client = TestClient(app)
+29 | 
+30 | 
+31 | def test_dt():
+32 |     with client:
+33 |         response = client.get("/model")
+34 |     assert response.json() == {"dt_field": "2019-01-01T08:00:00+00:00"}
+```

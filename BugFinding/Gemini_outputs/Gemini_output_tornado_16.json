@@ -1,0 +1,12 @@
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "tornado/gen.py",
+      "line_start": 358,
+      "line_end": 363,
+      "confidence": "high",
+      "reason": "WaitIterator's next() returns a Future, but because WaitIterator only holds weak references to avoid cycles, it gets prematurely garbage-collected if the caller only holds a reference to the returned Future. Attaching a hard reference of the WaitIterator (`self`) to the `_running_future` before returning it will keep it alive."
+    }
+  ]
+}

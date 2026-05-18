@@ -1,0 +1,12 @@
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "httpie/sessions.py",
+      "line_start": 103,
+      "line_end": 104,
+      "confidence": "high",
+      "reason": "When the '--download' flag is used, httpie injects a string literal (e.g., 'identity' for Accept-Encoding) into the request headers. Calling '.decode('utf8')' on a string raises an AttributeError in Python 3."
+    }
+  ]
+}

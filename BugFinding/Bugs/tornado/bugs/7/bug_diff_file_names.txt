@@ -1,0 +1,5 @@
+# git diff <buggy_version> <patched_version>
+# git diff --name-only fa3409179588536f2f743d16e537f6f9827fa92f a3b44cd701e0e82693363701bc0346b0125d2362
+# change from buggy → fixed.
+tornado/ioloop.py
+tornado/test/ioloop_test.py

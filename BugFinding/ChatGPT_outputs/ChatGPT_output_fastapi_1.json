@@ -1,0 +1,20 @@
+{
+"bug_locations": [
+{
+"file_id": "file_2",
+"file_path": "BugsInPy/workspace/fastapi/fastapi/encoders.py",
+"line_start": 30,
+"line_end": 39,
+"confidence": "high",
+"reason": "The failing test calls jsonable_encoder with exclude_defaults, but this function signature does not accept that argument. "
+},
+{
+"file_id": "file_2",
+"file_path": "BugsInPy/workspace/fastapi/fastapi/encoders.py",
+"line_start": 56,
+"line_end": 61,
+"confidence": "medium",
+"reason": "The BaseModel serialization forwards exclude_unset but not exclude_defaults to obj.dict, so default-valued fields cannot be excluded as expected. "
+}
+]
+}

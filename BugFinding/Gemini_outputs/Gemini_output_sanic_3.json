@@ -1,0 +1,12 @@
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "sanic/app.py",
+      "line_start": 863,
+      "line_end": 865,
+      "confidence": "high",
+      "reason": "When building external URLs, `netloc` defaults to the configured `SERVER_NAME`. It ignores the `host` associated with the matched `route`."
+    }
+  ]
+}

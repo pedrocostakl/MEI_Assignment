@@ -1,0 +1,511 @@
+{
+  "cases": [
+    {
+      "case_name": "fastapi_1",
+      "output_file": "ChatGPT_outputs\\ChatGPT_output_fastapi_1.json",
+      "benchmark_file": "benchmarks\\fastapi_bug_1.json",
+      "num_real_bugs": 60,
+      "num_reported_bugs": 2,
+      "true_positives": 2,
+      "false_positives": 0,
+      "false_negatives": 58
+    },
+    {
+      "case_name": "fastapi_10",
+      "output_file": "ChatGPT_outputs\\ChatGPT_output_fastapi_10.json",
+      "benchmark_file": "benchmarks\\fastapi_bug_10.json",
+      "num_real_bugs": 1,
+      "num_reported_bugs": 2,
+      "true_positives": 1,
+      "false_positives": 1,
+      "false_negatives": 0
+    },
+    {
+      "case_name": "fastapi_11",
+      "output_file": "ChatGPT_outputs\\ChatGPT_output_fastapi_11.json",
+      "benchmark_file": "benchmarks\\fastapi_bug_11.json",
+      "num_real_bugs": 1,
+      "num_reported_bugs": 3,
+      "true_positives": 1,
+      "false_positives": 2,
+      "false_negatives": 0
+    },
+    {
+      "case_name": "fastapi_12",
+      "output_file": "ChatGPT_outputs\\ChatGPT_output_fastapi_12.json",
+      "benchmark_file": "benchmarks\\fastapi_bug_12.json",
+      "num_real_bugs": 1,
+      "num_reported_bugs": 1,
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0
+    },
+    {
+      "case_name": "fastapi_13",
+      "output_file": "ChatGPT_outputs\\ChatGPT_output_fastapi_13.json",
+      "benchmark_file": "benchmarks\\fastapi_bug_13.json",
+      "num_real_bugs": 2,
+      "num_reported_bugs": 1,
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 1
+    },
+    {
+      "case_name": "fastapi_14",
+      "output_file": "ChatGPT_outputs\\ChatGPT_output_fastapi_14.json",
+      "benchmark_file": "benchmarks\\fastapi_bug_14.json",
+      "num_real_bugs": 3,
+      "num_reported_bugs": 2,
+      "true_positives": 2,
+      "false_positives": 0,
+      "false_negatives": 1
+    },
+    {
+      "case_name": "fastapi_15",
+      "output_file": "ChatGPT_outputs\\ChatGPT_output_fastapi_15.json",
+      "benchmark_file": "benchmarks\\fastapi_bug_15.json",
+      "num_real_bugs": 1,
+      "num_reported_bugs": 1,
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0
+    },
+    {
+      "case_name": "fastapi_16",
+      "output_file": "ChatGPT_outputs\\ChatGPT_output_fastapi_16.json",
+      "benchmark_file": "benchmarks\\fastapi_bug_16.json",
+      "num_real_bugs": 1,
+      "num_reported_bugs": 2,
+      "true_positives": 1,
+      "false_positives": 1,
+      "false_negatives": 0
+    },
+    {
+      "case_name": "fastapi_2",
+      "output_file": "ChatGPT_outputs\\ChatGPT_output_fastapi_2.json",
+      "benchmark_file": "benchmarks\\fastapi_bug_2.json",
+      "num_real_bugs": 1,
+      "num_reported_bugs": 2,
+      "true_positives": 1,
+      "false_positives": 1,
+      "false_negatives": 0
+    },
+    {
+      "case_name": "fastapi_3",
+      "output_file": "ChatGPT_outputs\\ChatGPT_output_fastapi_3.json",
+      "benchmark_file": "benchmarks\\fastapi_bug_3.json",
+      "num_real_bugs": 2,
+      "num_reported_bugs": 2,
+      "true_positives": 1,
+      "false_positives": 1,
+      "false_negatives": 1
+    },
+    {
+      "case_name": "fastapi_4",
+      "output_file": "ChatGPT_outputs\\ChatGPT_output_fastapi_4.json",
+      "benchmark_file": "benchmarks\\fastapi_bug_4.json",
+      "num_real_bugs": 1,
+      "num_reported_bugs": 1,
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0
+    },
+    {
+      "case_name": "fastapi_5",
+      "output_file": "ChatGPT_outputs\\ChatGPT_output_fastapi_5.json",
+      "benchmark_file": "benchmarks\\fastapi_bug_5.json",
+      "num_real_bugs": 1,
+      "num_reported_bugs": 2,
+      "true_positives": 1,
+      "false_positives": 1,
+      "false_negatives": 0
+    },
+    {
+      "case_name": "fastapi_6",
+      "output_file": "ChatGPT_outputs\\ChatGPT_output_fastapi_6.json",
+      "benchmark_file": "benchmarks\\fastapi_bug_6.json",
+      "num_real_bugs": 1,
+      "num_reported_bugs": 2,
+      "true_positives": 1,
+      "false_positives": 1,
+      "false_negatives": 0
+    },
+    {
+      "case_name": "fastapi_7",
+      "output_file": "ChatGPT_outputs\\ChatGPT_output_fastapi_7.json",
+      "benchmark_file": "benchmarks\\fastapi_bug_7.json",
+      "num_real_bugs": 2,
+      "num_reported_bugs": 1,
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 1
+    },
+    {
+      "case_name": "fastapi_8",
+      "output_file": "ChatGPT_outputs\\ChatGPT_output_fastapi_8.json",
+      "benchmark_file": "benchmarks\\fastapi_bug_8.json",
+      "num_real_bugs": 2,
+      "num_reported_bugs": 2,
+      "true_positives": 2,
+      "false_positives": 0,
+      "false_negatives": 0
+    },
+    {
+      "case_name": "fastapi_9",
+      "output_file": "ChatGPT_outputs\\ChatGPT_output_fastapi_9.json",
+      "benchmark_file": "benchmarks\\fastapi_bug_9.json",
+      "num_real_bugs": 3,
+      "num_reported_bugs": 1,
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 2
+    },
+    {
+      "case_name": "httpie_1",
+      "output_file": "ChatGPT_outputs\\ChatGPT_output_httpie_1.json",
+      "benchmark_file": "benchmarks\\httpie_bug_1.json",
+      "num_real_bugs": 2,
+      "num_reported_bugs": 2,
+      "true_positives": 0,
+      "false_positives": 2,
+      "false_negatives": 2
+    },
+    {
+      "case_name": "httpie_2",
+      "output_file": "ChatGPT_outputs\\ChatGPT_output_httpie_2.json",
+      "benchmark_file": "benchmarks\\httpie_bug_2.json",
+      "num_real_bugs": 2,
+      "num_reported_bugs": 3,
+      "true_positives": 1,
+      "false_positives": 2,
+      "false_negatives": 1
+    },
+    {
+      "case_name": "httpie_3",
+      "output_file": "ChatGPT_outputs\\ChatGPT_output_httpie_3.json",
+      "benchmark_file": "benchmarks\\httpie_bug_3.json",
+      "num_real_bugs": 1,
+      "num_reported_bugs": 2,
+      "true_positives": 1,
+      "false_positives": 1,
+      "false_negatives": 0
+    },
+    {
+      "case_name": "httpie_4",
+      "output_file": "ChatGPT_outputs\\ChatGPT_output_httpie_4.json",
+      "benchmark_file": "benchmarks\\httpie_bug_4.json",
+      "num_real_bugs": 1,
+      "num_reported_bugs": 1,
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0
+    },
+    {
+      "case_name": "httpie_5",
+      "output_file": "ChatGPT_outputs\\ChatGPT_output_httpie_5.json",
+      "benchmark_file": "benchmarks\\httpie_bug_5.json",
+      "num_real_bugs": 1,
+      "num_reported_bugs": 2,
+      "true_positives": 1,
+      "false_positives": 1,
+      "false_negatives": 0
+    },
+    {
+      "case_name": "sanic_1",
+      "output_file": "ChatGPT_outputs\\ChatGPT_output_sanic_1.json",
+      "benchmark_file": "benchmarks\\sanic_bug_1.json",
+      "num_real_bugs": 1,
+      "num_reported_bugs": 2,
+      "true_positives": 0,
+      "false_positives": 2,
+      "false_negatives": 1
+    },
+    {
+      "case_name": "sanic_2",
+      "output_file": "ChatGPT_outputs\\ChatGPT_output_sanic_2.json",
+      "benchmark_file": "benchmarks\\sanic_bug_2.json",
+      "num_real_bugs": 1,
+      "num_reported_bugs": 2,
+      "true_positives": 1,
+      "false_positives": 1,
+      "false_negatives": 0
+    },
+    {
+      "case_name": "sanic_3",
+      "output_file": "ChatGPT_outputs\\ChatGPT_output_sanic_3.json",
+      "benchmark_file": "benchmarks\\sanic_bug_3.json",
+      "num_real_bugs": 2,
+      "num_reported_bugs": 2,
+      "true_positives": 1,
+      "false_positives": 1,
+      "false_negatives": 1
+    },
+    {
+      "case_name": "sanic_4",
+      "output_file": "ChatGPT_outputs\\ChatGPT_output_sanic_4.json",
+      "benchmark_file": "benchmarks\\sanic_bug_4.json",
+      "num_real_bugs": 1,
+      "num_reported_bugs": 2,
+      "true_positives": 0,
+      "false_positives": 2,
+      "false_negatives": 1
+    },
+    {
+      "case_name": "sanic_5",
+      "output_file": "ChatGPT_outputs\\ChatGPT_output_sanic_5.json",
+      "benchmark_file": "benchmarks\\sanic_bug_5.json",
+      "num_real_bugs": 1,
+      "num_reported_bugs": 2,
+      "true_positives": 1,
+      "false_positives": 1,
+      "false_negatives": 0
+    },
+    {
+      "case_name": "scrapy_1",
+      "output_file": "ChatGPT_outputs\\ChatGPT_output_scrapy_1.json",
+      "benchmark_file": "benchmarks\\scrapy_bug_1.json",
+      "num_real_bugs": 1,
+      "num_reported_bugs": 1,
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0
+    },
+    {
+      "case_name": "scrapy_2",
+      "output_file": "ChatGPT_outputs\\ChatGPT_output_scrapy_2.json",
+      "benchmark_file": "benchmarks\\scrapy_bug_2.json",
+      "num_real_bugs": 1,
+      "num_reported_bugs": 1,
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0
+    },
+    {
+      "case_name": "scrapy_3",
+      "output_file": "ChatGPT_outputs\\ChatGPT_output_scrapy_3.json",
+      "benchmark_file": "benchmarks\\scrapy_bug_3.json",
+      "num_real_bugs": 2,
+      "num_reported_bugs": 1,
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 1
+    },
+    {
+      "case_name": "scrapy_4",
+      "output_file": "ChatGPT_outputs\\ChatGPT_output_scrapy_4.json",
+      "benchmark_file": "benchmarks\\scrapy_bug_4.json",
+      "num_real_bugs": 1,
+      "num_reported_bugs": 2,
+      "true_positives": 0,
+      "false_positives": 2,
+      "false_negatives": 1
+    },
+    {
+      "case_name": "scrapy_5",
+      "output_file": "ChatGPT_outputs\\ChatGPT_output_scrapy_5.json",
+      "benchmark_file": "benchmarks\\scrapy_bug_5.json",
+      "num_real_bugs": 1,
+      "num_reported_bugs": 2,
+      "true_positives": 0,
+      "false_positives": 2,
+      "false_negatives": 1
+    },
+    {
+      "case_name": "scrapy_6",
+      "output_file": "ChatGPT_outputs\\ChatGPT_output_scrapy_6.json",
+      "benchmark_file": "benchmarks\\scrapy_bug_6.json",
+      "num_real_bugs": 1,
+      "num_reported_bugs": 1,
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0
+    },
+    {
+      "case_name": "scrapy_8",
+      "output_file": "ChatGPT_outputs\\ChatGPT_output_scrapy_8.json",
+      "benchmark_file": "benchmarks\\scrapy_bug_8.json",
+      "num_real_bugs": 2,
+      "num_reported_bugs": 2,
+      "true_positives": 0,
+      "false_positives": 2,
+      "false_negatives": 2
+    },
+    {
+      "case_name": "tornado_1",
+      "output_file": "ChatGPT_outputs\\ChatGPT_output_tornado_1.json",
+      "benchmark_file": "benchmarks\\tornado_bug_1.json",
+      "num_real_bugs": 3,
+      "num_reported_bugs": 3,
+      "true_positives": 0,
+      "false_positives": 3,
+      "false_negatives": 3
+    },
+    {
+      "case_name": "tornado_10",
+      "output_file": "ChatGPT_outputs\\ChatGPT_output_tornado_10.json",
+      "benchmark_file": "benchmarks\\tornado_bug_10.json",
+      "num_real_bugs": 2,
+      "num_reported_bugs": 2,
+      "true_positives": 0,
+      "false_positives": 2,
+      "false_negatives": 2
+    },
+    {
+      "case_name": "tornado_11",
+      "output_file": "ChatGPT_outputs\\ChatGPT_output_tornado_11.json",
+      "benchmark_file": "benchmarks\\tornado_bug_11.json",
+      "num_real_bugs": 1,
+      "num_reported_bugs": 1,
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0
+    },
+    {
+      "case_name": "tornado_12",
+      "output_file": "ChatGPT_outputs\\ChatGPT_output_tornado_12.json",
+      "benchmark_file": "benchmarks\\tornado_bug_12.json",
+      "num_real_bugs": 3,
+      "num_reported_bugs": 1,
+      "true_positives": 0,
+      "false_positives": 1,
+      "false_negatives": 3
+    },
+    {
+      "case_name": "tornado_13",
+      "output_file": "ChatGPT_outputs\\ChatGPT_output_tornado_13.json",
+      "benchmark_file": "benchmarks\\tornado_bug_13.json",
+      "num_real_bugs": 2,
+      "num_reported_bugs": 1,
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 1
+    },
+    {
+      "case_name": "tornado_14",
+      "output_file": "ChatGPT_outputs\\ChatGPT_output_tornado_14.json",
+      "benchmark_file": "benchmarks\\tornado_bug_14.json",
+      "num_real_bugs": 1,
+      "num_reported_bugs": 1,
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0
+    },
+    {
+      "case_name": "tornado_15",
+      "output_file": "ChatGPT_outputs\\ChatGPT_output_tornado_15.json",
+      "benchmark_file": "benchmarks\\tornado_bug_15.json",
+      "num_real_bugs": 2,
+      "num_reported_bugs": 2,
+      "true_positives": 0,
+      "false_positives": 2,
+      "false_negatives": 2
+    },
+    {
+      "case_name": "tornado_16",
+      "output_file": "ChatGPT_outputs\\ChatGPT_output_tornado_16.json",
+      "benchmark_file": "benchmarks\\tornado_bug_16.json",
+      "num_real_bugs": 2,
+      "num_reported_bugs": 2,
+      "true_positives": 0,
+      "false_positives": 2,
+      "false_negatives": 2
+    },
+    {
+      "case_name": "tornado_2",
+      "output_file": "ChatGPT_outputs\\ChatGPT_output_tornado_2.json",
+      "benchmark_file": "benchmarks\\tornado_bug_2.json",
+      "num_real_bugs": 1,
+      "num_reported_bugs": 1,
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0
+    },
+    {
+      "case_name": "tornado_3",
+      "output_file": "ChatGPT_outputs\\ChatGPT_output_tornado_3.json",
+      "benchmark_file": "benchmarks\\tornado_bug_3.json",
+      "num_real_bugs": 1,
+      "num_reported_bugs": 3,
+      "true_positives": 0,
+      "false_positives": 3,
+      "false_negatives": 1
+    },
+    {
+      "case_name": "tornado_4",
+      "output_file": "ChatGPT_outputs\\ChatGPT_output_tornado_4.json",
+      "benchmark_file": "benchmarks\\tornado_bug_4.json",
+      "num_real_bugs": 1,
+      "num_reported_bugs": 3,
+      "true_positives": 0,
+      "false_positives": 3,
+      "false_negatives": 1
+    },
+    {
+      "case_name": "tornado_5",
+      "output_file": "ChatGPT_outputs\\ChatGPT_output_tornado_5.json",
+      "benchmark_file": "benchmarks\\tornado_bug_5.json",
+      "num_real_bugs": 1,
+      "num_reported_bugs": 2,
+      "true_positives": 0,
+      "false_positives": 2,
+      "false_negatives": 1
+    },
+    {
+      "case_name": "tornado_6",
+      "output_file": "ChatGPT_outputs\\ChatGPT_output_tornado_6.json",
+      "benchmark_file": "benchmarks\\tornado_bug_6.json",
+      "num_real_bugs": 4,
+      "num_reported_bugs": 3,
+      "true_positives": 0,
+      "false_positives": 3,
+      "false_negatives": 4
+    },
+    {
+      "case_name": "tornado_7",
+      "output_file": "ChatGPT_outputs\\ChatGPT_output_tornado_7.json",
+      "benchmark_file": "benchmarks\\tornado_bug_7.json",
+      "num_real_bugs": 2,
+      "num_reported_bugs": 2,
+      "true_positives": 0,
+      "false_positives": 2,
+      "false_negatives": 2
+    },
+    {
+      "case_name": "tornado_8",
+      "output_file": "ChatGPT_outputs\\ChatGPT_output_tornado_8.json",
+      "benchmark_file": "benchmarks\\tornado_bug_8.json",
+      "num_real_bugs": 1,
+      "num_reported_bugs": 2,
+      "true_positives": 0,
+      "false_positives": 2,
+      "false_negatives": 1
+    },
+    {
+      "case_name": "tornado_9",
+      "output_file": "ChatGPT_outputs\\ChatGPT_output_tornado_9.json",
+      "benchmark_file": "benchmarks\\tornado_bug_9.json",
+      "num_real_bugs": 1,
+      "num_reported_bugs": 1,
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0
+    }
+  ],
+  "totals": {
+    "num_cases": 50,
+    "num_real_bugs": 135,
+    "num_reported_bugs": 88,
+    "true_positives": 35,
+    "false_positives": 53,
+    "false_negatives": 100
+  },
+  "missing_benchmarks": [
+    "ChatGPT_outputs\\ChatGPT_result_fastapi_1.json"
+  ],
+  "invalid_outputs": [
+    {
+      "output_file": "ChatGPT_outputs\\ChatGPT_output_scrapy_7.json",
+      "error": "Invalid JSON in ChatGPT_outputs\\ChatGPT_output_scrapy_7.json: Expecting value: line 1 column 1 (char 0)"
+    }
+  ]
+}

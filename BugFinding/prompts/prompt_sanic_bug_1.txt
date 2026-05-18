@@ -1,0 +1,2245 @@
+You are given buggy source files and failing test files.
+
+Your task is BUG LOCALIZATION ONLY.
+
+Return only valid JSON using this exact format:
+
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "relative/path.py",
+      "line_start": 1,
+      "line_end": 1,
+      "confidence": "low|medium|high",
+      "reason": "Max 2 sentences."
+    }
+  ]
+}
+
+Rules:
+- Do not propose fixes.
+- Do not rewrite code.
+- Do not explain outside JSON.
+- Line numbers must refer to the numbered buggy source file.
+- Include at most the number of suspected locations you think there are.
+- Prefer the smallest line range that identifies the origin of the bug.
+
+
+SOURCE FILES:
+
+[file_1] BugsInPy/workspace/sanic/sanic/app.py
+```python
+   1 | import logging
+   2 | import logging.config
+   3 | import os
+   4 | import re
+   5 | import warnings
+   6 | 
+   7 | from asyncio import CancelledError, Protocol, ensure_future, get_event_loop
+   8 | from collections import defaultdict, deque
+   9 | from functools import partial
+  10 | from inspect import getmodulename, isawaitable, signature, stack
+  11 | from socket import socket
+  12 | from ssl import Purpose, SSLContext, create_default_context
+  13 | from traceback import format_exc
+  14 | from typing import Any, Dict, Optional, Type, Union
+  15 | from urllib.parse import urlencode, urlunparse
+  16 | 
+  17 | from sanic import reloader_helpers
+  18 | from sanic.asgi import ASGIApp
+  19 | from sanic.blueprint_group import BlueprintGroup
+  20 | from sanic.config import BASE_LOGO, Config
+  21 | from sanic.constants import HTTP_METHODS
+  22 | from sanic.exceptions import SanicException, ServerError, URLBuildError
+  23 | from sanic.handlers import ErrorHandler
+  24 | from sanic.log import LOGGING_CONFIG_DEFAULTS, error_logger, logger
+  25 | from sanic.response import HTTPResponse, StreamingHTTPResponse
+  26 | from sanic.router import Router
+  27 | from sanic.server import (
+  28 |     AsyncioServer,
+  29 |     HttpProtocol,
+  30 |     Signal,
+  31 |     serve,
+  32 |     serve_multiple,
+  33 | )
+  34 | from sanic.static import register as static_register
+  35 | from sanic.testing import SanicASGITestClient, SanicTestClient
+  36 | from sanic.views import CompositionView
+  37 | from sanic.websocket import ConnectionClosed, WebSocketProtocol
+  38 | 
+  39 | 
+  40 | class Sanic:
+  41 |     def __init__(
+  42 |         self,
+  43 |         name=None,
+  44 |         router=None,
+  45 |         error_handler=None,
+  46 |         load_env=True,
+  47 |         request_class=None,
+  48 |         strict_slashes=False,
+  49 |         log_config=None,
+  50 |         configure_logging=True,
+  51 |     ):
+  52 | 
+  53 |         # Get name from previous stack frame
+  54 |         if name is None:
+  55 |             warnings.warn(
+  56 |                 "Sanic(name=None) is deprecated and None value support "
+  57 |                 "for `name` will be removed in the next release. "
+  58 |                 "Please use Sanic(name='your_application_name') instead.",
+  59 |                 DeprecationWarning,
+  60 |                 stacklevel=2,
+  61 |             )
+  62 |             frame_records = stack()[1]
+  63 |             name = getmodulename(frame_records[1])
+  64 | 
+  65 |         # logging
+  66 |         if configure_logging:
+  67 |             logging.config.dictConfig(log_config or LOGGING_CONFIG_DEFAULTS)
+  68 | 
+  69 |         self.name = name
+  70 |         self.asgi = False
+  71 |         self.router = router or Router()
+  72 |         self.request_class = request_class
+  73 |         self.error_handler = error_handler or ErrorHandler()
+  74 |         self.config = Config(load_env=load_env)
+  75 |         self.request_middleware = deque()
+  76 |         self.response_middleware = deque()
+  77 |         self.blueprints = {}
+  78 |         self._blueprint_order = []
+  79 |         self.configure_logging = configure_logging
+  80 |         self.debug = None
+  81 |         self.sock = None
+  82 |         self.strict_slashes = strict_slashes
+  83 |         self.listeners = defaultdict(list)
+  84 |         self.is_stopping = False
+  85 |         self.is_running = False
+  86 |         self.is_request_stream = False
+  87 |         self.websocket_enabled = False
+  88 |         self.websocket_tasks = set()
+  89 |         self.named_request_middleware = {}
+  90 |         self.named_response_middleware = {}
+  91 |         # Register alternative method names
+  92 |         self.go_fast = self.run
+  93 | 
+  94 |     @property
+  95 |     def loop(self):
+  96 |         """Synonymous with asyncio.get_event_loop().
+  97 | 
+  98 |         Only supported when using the `app.run` method.
+  99 |         """
+ 100 |         if not self.is_running and self.asgi is False:
+ 101 |             raise SanicException(
+ 102 |                 "Loop can only be retrieved after the app has started "
+ 103 |                 "running. Not supported with `create_server` function"
+ 104 |             )
+ 105 |         return get_event_loop()
+ 106 | 
+ 107 |     # -------------------------------------------------------------------- #
+ 108 |     # Registration
+ 109 |     # -------------------------------------------------------------------- #
+ 110 | 
+ 111 |     def add_task(self, task):
+ 112 |         """Schedule a task to run later, after the loop has started.
+ 113 |         Different from asyncio.ensure_future in that it does not
+ 114 |         also return a future, and the actual ensure_future call
+ 115 |         is delayed until before server start.
+ 116 | 
+ 117 |         :param task: future, couroutine or awaitable
+ 118 |         """
+ 119 |         try:
+ 120 |             if callable(task):
+ 121 |                 try:
+ 122 |                     self.loop.create_task(task(self))
+ 123 |                 except TypeError:
+ 124 |                     self.loop.create_task(task())
+ 125 |             else:
+ 126 |                 self.loop.create_task(task)
+ 127 |         except SanicException:
+ 128 | 
+ 129 |             @self.listener("before_server_start")
+ 130 |             def run(app, loop):
+ 131 |                 if callable(task):
+ 132 |                     try:
+ 133 |                         loop.create_task(task(self))
+ 134 |                     except TypeError:
+ 135 |                         loop.create_task(task())
+ 136 |                 else:
+ 137 |                     loop.create_task(task)
+ 138 | 
+ 139 |     # Decorator
+ 140 |     def listener(self, event):
+ 141 |         """Create a listener from a decorated function.
+ 142 | 
+ 143 |         :param event: event to listen to
+ 144 |         """
+ 145 | 
+ 146 |         def decorator(listener):
+ 147 |             self.listeners[event].append(listener)
+ 148 |             return listener
+ 149 | 
+ 150 |         return decorator
+ 151 | 
+ 152 |     def register_listener(self, listener, event):
+ 153 |         """
+ 154 |         Register the listener for a given event.
+ 155 | 
+ 156 |         :param listener: callable i.e. setup_db(app, loop)
+ 157 |         :param event: when to register listener i.e. 'before_server_start'
+ 158 |         :return: listener
+ 159 |         """
+ 160 | 
+ 161 |         return self.listener(event)(listener)
+ 162 | 
+ 163 |     # Decorator
+ 164 |     def route(
+ 165 |         self,
+ 166 |         uri,
+ 167 |         methods=frozenset({"GET"}),
+ 168 |         host=None,
+ 169 |         strict_slashes=None,
+ 170 |         stream=False,
+ 171 |         version=None,
+ 172 |         name=None,
+ 173 |     ):
+ 174 |         """Decorate a function to be registered as a route
+ 175 | 
+ 176 |         :param uri: path of the URL
+ 177 |         :param methods: list or tuple of methods allowed
+ 178 |         :param host:
+ 179 |         :param strict_slashes:
+ 180 |         :param stream:
+ 181 |         :param version:
+ 182 |         :param name: user defined route name for url_for
+ 183 |         :return: tuple of routes, decorated function
+ 184 |         """
+ 185 | 
+ 186 |         # Fix case where the user did not prefix the URL with a /
+ 187 |         # and will probably get confused as to why it's not working
+ 188 |         if not uri.startswith("/"):
+ 189 |             uri = "/" + uri
+ 190 | 
+ 191 |         if stream:
+ 192 |             self.is_request_stream = True
+ 193 | 
+ 194 |         if strict_slashes is None:
+ 195 |             strict_slashes = self.strict_slashes
+ 196 | 
+ 197 |         def response(handler):
+ 198 |             if isinstance(handler, tuple):
+ 199 |                 # if a handler fn is already wrapped in a route, the handler
+ 200 |                 # variable will be a tuple of (existing routes, handler fn)
+ 201 |                 routes, handler = handler
+ 202 |             else:
+ 203 |                 routes = []
+ 204 |             args = list(signature(handler).parameters.keys())
+ 205 | 
+ 206 |             if not args:
+ 207 |                 handler_name = handler.__name__
+ 208 | 
+ 209 |                 raise ValueError(
+ 210 |                     f"Required parameter `request` missing "
+ 211 |                     f"in the {handler_name}() route?"
+ 212 |                 )
+ 213 | 
+ 214 |             if stream:
+ 215 |                 handler.is_stream = stream
+ 216 | 
+ 217 |             routes.extend(
+ 218 |                 self.router.add(
+ 219 |                     uri=uri,
+ 220 |                     methods=methods,
+ 221 |                     handler=handler,
+ 222 |                     host=host,
+ 223 |                     strict_slashes=strict_slashes,
+ 224 |                     version=version,
+ 225 |                     name=name,
+ 226 |                 )
+ 227 |             )
+ 228 |             return routes, handler
+ 229 | 
+ 230 |         return response
+ 231 | 
+ 232 |     # Shorthand method decorators
+ 233 |     def get(
+ 234 |         self, uri, host=None, strict_slashes=None, version=None, name=None
+ 235 |     ):
+ 236 |         """
+ 237 |         Add an API URL under the **GET** *HTTP* method
+ 238 | 
+ 239 |         :param uri: URL to be tagged to **GET** method of *HTTP*
+ 240 |         :param host: Host IP or FQDN for the service to use
+ 241 |         :param strict_slashes: Instruct :class:`Sanic` to check if the request
+ 242 |             URLs need to terminate with a */*
+ 243 |         :param version: API Version
+ 244 |         :param name: Unique name that can be used to identify the Route
+ 245 |         :return: Object decorated with :func:`route` method
+ 246 |         """
+ 247 |         return self.route(
+ 248 |             uri,
+ 249 |             methods=frozenset({"GET"}),
+ 250 |             host=host,
+ 251 |             strict_slashes=strict_slashes,
+ 252 |             version=version,
+ 253 |             name=name,
+ 254 |         )
+ 255 | 
+ 256 |     def post(
+ 257 |         self,
+ 258 |         uri,
+ 259 |         host=None,
+ 260 |         strict_slashes=None,
+ 261 |         stream=False,
+ 262 |         version=None,
+ 263 |         name=None,
+ 264 |     ):
+ 265 |         """
+ 266 |         Add an API URL under the **POST** *HTTP* method
+ 267 | 
+ 268 |         :param uri: URL to be tagged to **POST** method of *HTTP*
+ 269 |         :param host: Host IP or FQDN for the service to use
+ 270 |         :param strict_slashes: Instruct :class:`Sanic` to check if the request
+ 271 |             URLs need to terminate with a */*
+ 272 |         :param version: API Version
+ 273 |         :param name: Unique name that can be used to identify the Route
+ 274 |         :return: Object decorated with :func:`route` method
+ 275 |         """
+ 276 |         return self.route(
+ 277 |             uri,
+ 278 |             methods=frozenset({"POST"}),
+ 279 |             host=host,
+ 280 |             strict_slashes=strict_slashes,
+ 281 |             stream=stream,
+ 282 |             version=version,
+ 283 |             name=name,
+ 284 |         )
+ 285 | 
+ 286 |     def put(
+ 287 |         self,
+ 288 |         uri,
+ 289 |         host=None,
+ 290 |         strict_slashes=None,
+ 291 |         stream=False,
+ 292 |         version=None,
+ 293 |         name=None,
+ 294 |     ):
+ 295 |         """
+ 296 |         Add an API URL under the **PUT** *HTTP* method
+ 297 | 
+ 298 |         :param uri: URL to be tagged to **PUT** method of *HTTP*
+ 299 |         :param host: Host IP or FQDN for the service to use
+ 300 |         :param strict_slashes: Instruct :class:`Sanic` to check if the request
+ 301 |             URLs need to terminate with a */*
+ 302 |         :param version: API Version
+ 303 |         :param name: Unique name that can be used to identify the Route
+ 304 |         :return: Object decorated with :func:`route` method
+ 305 |         """
+ 306 |         return self.route(
+ 307 |             uri,
+ 308 |             methods=frozenset({"PUT"}),
+ 309 |             host=host,
+ 310 |             strict_slashes=strict_slashes,
+ 311 |             stream=stream,
+ 312 |             version=version,
+ 313 |             name=name,
+ 314 |         )
+ 315 | 
+ 316 |     def head(
+ 317 |         self, uri, host=None, strict_slashes=None, version=None, name=None
+ 318 |     ):
+ 319 |         return self.route(
+ 320 |             uri,
+ 321 |             methods=frozenset({"HEAD"}),
+ 322 |             host=host,
+ 323 |             strict_slashes=strict_slashes,
+ 324 |             version=version,
+ 325 |             name=name,
+ 326 |         )
+ 327 | 
+ 328 |     def options(
+ 329 |         self, uri, host=None, strict_slashes=None, version=None, name=None
+ 330 |     ):
+ 331 |         """
+ 332 |         Add an API URL under the **OPTIONS** *HTTP* method
+ 333 | 
+ 334 |         :param uri: URL to be tagged to **OPTIONS** method of *HTTP*
+ 335 |         :param host: Host IP or FQDN for the service to use
+ 336 |         :param strict_slashes: Instruct :class:`Sanic` to check if the request
+ 337 |             URLs need to terminate with a */*
+ 338 |         :param version: API Version
+ 339 |         :param name: Unique name that can be used to identify the Route
+ 340 |         :return: Object decorated with :func:`route` method
+ 341 |         """
+ 342 |         return self.route(
+ 343 |             uri,
+ 344 |             methods=frozenset({"OPTIONS"}),
+ 345 |             host=host,
+ 346 |             strict_slashes=strict_slashes,
+ 347 |             version=version,
+ 348 |             name=name,
+ 349 |         )
+ 350 | 
+ 351 |     def patch(
+ 352 |         self,
+ 353 |         uri,
+ 354 |         host=None,
+ 355 |         strict_slashes=None,
+ 356 |         stream=False,
+ 357 |         version=None,
+ 358 |         name=None,
+ 359 |     ):
+ 360 |         """
+ 361 |         Add an API URL under the **PATCH** *HTTP* method
+ 362 | 
+ 363 |         :param uri: URL to be tagged to **PATCH** method of *HTTP*
+ 364 |         :param host: Host IP or FQDN for the service to use
+ 365 |         :param strict_slashes: Instruct :class:`Sanic` to check if the request
+ 366 |             URLs need to terminate with a */*
+ 367 |         :param version: API Version
+ 368 |         :param name: Unique name that can be used to identify the Route
+ 369 |         :return: Object decorated with :func:`route` method
+ 370 |         """
+ 371 |         return self.route(
+ 372 |             uri,
+ 373 |             methods=frozenset({"PATCH"}),
+ 374 |             host=host,
+ 375 |             strict_slashes=strict_slashes,
+ 376 |             stream=stream,
+ 377 |             version=version,
+ 378 |             name=name,
+ 379 |         )
+ 380 | 
+ 381 |     def delete(
+ 382 |         self, uri, host=None, strict_slashes=None, version=None, name=None
+ 383 |     ):
+ 384 |         """
+ 385 |         Add an API URL under the **DELETE** *HTTP* method
+ 386 | 
+ 387 |         :param uri: URL to be tagged to **DELETE** method of *HTTP*
+ 388 |         :param host: Host IP or FQDN for the service to use
+ 389 |         :param strict_slashes: Instruct :class:`Sanic` to check if the request
+ 390 |             URLs need to terminate with a */*
+ 391 |         :param version: API Version
+ 392 |         :param name: Unique name that can be used to identify the Route
+ 393 |         :return: Object decorated with :func:`route` method
+ 394 |         """
+ 395 |         return self.route(
+ 396 |             uri,
+ 397 |             methods=frozenset({"DELETE"}),
+ 398 |             host=host,
+ 399 |             strict_slashes=strict_slashes,
+ 400 |             version=version,
+ 401 |             name=name,
+ 402 |         )
+ 403 | 
+ 404 |     def add_route(
+ 405 |         self,
+ 406 |         handler,
+ 407 |         uri,
+ 408 |         methods=frozenset({"GET"}),
+ 409 |         host=None,
+ 410 |         strict_slashes=None,
+ 411 |         version=None,
+ 412 |         name=None,
+ 413 |         stream=False,
+ 414 |     ):
+ 415 |         """A helper method to register class instance or
+ 416 |         functions as a handler to the application url
+ 417 |         routes.
+ 418 | 
+ 419 |         :param handler: function or class instance
+ 420 |         :param uri: path of the URL
+ 421 |         :param methods: list or tuple of methods allowed, these are overridden
+ 422 |                         if using a HTTPMethodView
+ 423 |         :param host:
+ 424 |         :param strict_slashes:
+ 425 |         :param version:
+ 426 |         :param name: user defined route name for url_for
+ 427 |         :param stream: boolean specifying if the handler is a stream handler
+ 428 |         :return: function or class instance
+ 429 |         """
+ 430 |         # Handle HTTPMethodView differently
+ 431 |         if hasattr(handler, "view_class"):
+ 432 |             methods = set()
+ 433 | 
+ 434 |             for method in HTTP_METHODS:
+ 435 |                 _handler = getattr(handler.view_class, method.lower(), None)
+ 436 |                 if _handler:
+ 437 |                     methods.add(method)
+ 438 |                     if hasattr(_handler, "is_stream"):
+ 439 |                         stream = True
+ 440 | 
+ 441 |         # handle composition view differently
+ 442 |         if isinstance(handler, CompositionView):
+ 443 |             methods = handler.handlers.keys()
+ 444 |             for _handler in handler.handlers.values():
+ 445 |                 if hasattr(_handler, "is_stream"):
+ 446 |                     stream = True
+ 447 |                     break
+ 448 | 
+ 449 |         if strict_slashes is None:
+ 450 |             strict_slashes = self.strict_slashes
+ 451 | 
+ 452 |         self.route(
+ 453 |             uri=uri,
+ 454 |             methods=methods,
+ 455 |             host=host,
+ 456 |             strict_slashes=strict_slashes,
+ 457 |             stream=stream,
+ 458 |             version=version,
+ 459 |             name=name,
+ 460 |         )(handler)
+ 461 |         return handler
+ 462 | 
+ 463 |     # Decorator
+ 464 |     def websocket(
+ 465 |         self, uri, host=None, strict_slashes=None, subprotocols=None, name=None
+ 466 |     ):
+ 467 |         """
+ 468 |         Decorate a function to be registered as a websocket route
+ 469 | 
+ 470 |         :param uri: path of the URL
+ 471 |         :param host: Host IP or FQDN details
+ 472 |         :param strict_slashes: If the API endpoint needs to terminate
+ 473 |                                with a "/" or not
+ 474 |         :param subprotocols: optional list of str with supported subprotocols
+ 475 |         :param name: A unique name assigned to the URL so that it can
+ 476 |                      be used with :func:`url_for`
+ 477 |         :return: tuple of routes, decorated function
+ 478 |         """
+ 479 |         self.enable_websocket()
+ 480 | 
+ 481 |         # Fix case where the user did not prefix the URL with a /
+ 482 |         # and will probably get confused as to why it's not working
+ 483 |         if not uri.startswith("/"):
+ 484 |             uri = "/" + uri
+ 485 | 
+ 486 |         if strict_slashes is None:
+ 487 |             strict_slashes = self.strict_slashes
+ 488 | 
+ 489 |         def response(handler):
+ 490 |             if isinstance(handler, tuple):
+ 491 |                 # if a handler fn is already wrapped in a route, the handler
+ 492 |                 # variable will be a tuple of (existing routes, handler fn)
+ 493 |                 routes, handler = handler
+ 494 |             else:
+ 495 |                 routes = []
+ 496 | 
+ 497 |             async def websocket_handler(request, *args, **kwargs):
+ 498 |                 request.app = self
+ 499 |                 if not getattr(handler, "__blueprintname__", False):
+ 500 |                     request.endpoint = handler.__name__
+ 501 |                 else:
+ 502 |                     request.endpoint = (
+ 503 |                         getattr(handler, "__blueprintname__", "")
+ 504 |                         + handler.__name__
+ 505 |                     )
+ 506 | 
+ 507 |                     pass
+ 508 | 
+ 509 |                 if self.asgi:
+ 510 |                     ws = request.transport.get_websocket_connection()
+ 511 |                 else:
+ 512 |                     protocol = request.transport.get_protocol()
+ 513 |                     protocol.app = self
+ 514 | 
+ 515 |                     ws = await protocol.websocket_handshake(
+ 516 |                         request, subprotocols
+ 517 |                     )
+ 518 | 
+ 519 |                 # schedule the application handler
+ 520 |                 # its future is kept in self.websocket_tasks in case it
+ 521 |                 # needs to be cancelled due to the server being stopped
+ 522 |                 fut = ensure_future(handler(request, ws, *args, **kwargs))
+ 523 |                 self.websocket_tasks.add(fut)
+ 524 |                 try:
+ 525 |                     await fut
+ 526 |                 except (CancelledError, ConnectionClosed):
+ 527 |                     pass
+ 528 |                 finally:
+ 529 |                     self.websocket_tasks.remove(fut)
+ 530 |                 await ws.close()
+ 531 | 
+ 532 |             routes.extend(
+ 533 |                 self.router.add(
+ 534 |                     uri=uri,
+ 535 |                     handler=websocket_handler,
+ 536 |                     methods=frozenset({"GET"}),
+ 537 |                     host=host,
+ 538 |                     strict_slashes=strict_slashes,
+ 539 |                     name=name,
+ 540 |                 )
+ 541 |             )
+ 542 |             return routes, handler
+ 543 | 
+ 544 |         return response
+ 545 | 
+ 546 |     def add_websocket_route(
+ 547 |         self,
+ 548 |         handler,
+ 549 |         uri,
+ 550 |         host=None,
+ 551 |         strict_slashes=None,
+ 552 |         subprotocols=None,
+ 553 |         name=None,
+ 554 |     ):
+ 555 |         """
+ 556 |         A helper method to register a function as a websocket route.
+ 557 | 
+ 558 |         :param handler: a callable function or instance of a class
+ 559 |                         that can handle the websocket request
+ 560 |         :param host: Host IP or FQDN details
+ 561 |         :param uri: URL path that will be mapped to the websocket
+ 562 |                     handler
+ 563 |                     handler
+ 564 |         :param strict_slashes: If the API endpoint needs to terminate
+ 565 |                 with a "/" or not
+ 566 |         :param subprotocols: Subprotocols to be used with websocket
+ 567 |                 handshake
+ 568 |         :param name: A unique name assigned to the URL so that it can
+ 569 |                 be used with :func:`url_for`
+ 570 |         :return: Objected decorated by :func:`websocket`
+ 571 |         """
+ 572 |         if strict_slashes is None:
+ 573 |             strict_slashes = self.strict_slashes
+ 574 | 
+ 575 |         return self.websocket(
+ 576 |             uri,
+ 577 |             host=host,
+ 578 |             strict_slashes=strict_slashes,
+ 579 |             subprotocols=subprotocols,
+ 580 |             name=name,
+ 581 |         )(handler)
+ 582 | 
+ 583 |     def enable_websocket(self, enable=True):
+ 584 |         """Enable or disable the support for websocket.
+ 585 | 
+ 586 |         Websocket is enabled automatically if websocket routes are
+ 587 |         added to the application.
+ 588 |         """
+ 589 |         if not self.websocket_enabled:
+ 590 |             # if the server is stopped, we want to cancel any ongoing
+ 591 |             # websocket tasks, to allow the server to exit promptly
+ 592 |             @self.listener("before_server_stop")
+ 593 |             def cancel_websocket_tasks(app, loop):
+ 594 |                 for task in self.websocket_tasks:
+ 595 |                     task.cancel()
+ 596 | 
+ 597 |         self.websocket_enabled = enable
+ 598 | 
+ 599 |     # Decorator
+ 600 |     def exception(self, *exceptions):
+ 601 |         """Decorate a function to be registered as a handler for exceptions
+ 602 | 
+ 603 |         :param exceptions: exceptions
+ 604 |         :return: decorated function
+ 605 |         """
+ 606 | 
+ 607 |         def response(handler):
+ 608 |             for exception in exceptions:
+ 609 |                 if isinstance(exception, (tuple, list)):
+ 610 |                     for e in exception:
+ 611 |                         self.error_handler.add(e, handler)
+ 612 |                 else:
+ 613 |                     self.error_handler.add(exception, handler)
+ 614 |             return handler
+ 615 | 
+ 616 |         return response
+ 617 | 
+ 618 |     def register_middleware(self, middleware, attach_to="request"):
+ 619 |         """
+ 620 |         Register an application level middleware that will be attached
+ 621 |         to all the API URLs registered under this application.
+ 622 | 
+ 623 |         This method is internally invoked by the :func:`middleware`
+ 624 |         decorator provided at the app level.
+ 625 | 
+ 626 |         :param middleware: Callback method to be attached to the
+ 627 |             middleware
+ 628 |         :param attach_to: The state at which the middleware needs to be
+ 629 |             invoked in the lifecycle of an *HTTP Request*.
+ 630 |             **request** - Invoke before the request is processed
+ 631 |             **response** - Invoke before the response is returned back
+ 632 |         :return: decorated method
+ 633 |         """
+ 634 |         if attach_to == "request":
+ 635 |             if middleware not in self.request_middleware:
+ 636 |                 self.request_middleware.append(middleware)
+ 637 |         if attach_to == "response":
+ 638 |             if middleware not in self.response_middleware:
+ 639 |                 self.response_middleware.appendleft(middleware)
+ 640 |         return middleware
+ 641 | 
+ 642 |     def register_named_middleware(
+ 643 |         self, middleware, route_names, attach_to="request"
+ 644 |     ):
+ 645 |         if attach_to == "request":
+ 646 |             for _rn in route_names:
+ 647 |                 if _rn not in self.named_request_middleware:
+ 648 |                     self.named_request_middleware[_rn] = deque()
+ 649 |                 if middleware not in self.named_request_middleware[_rn]:
+ 650 |                     self.named_request_middleware[_rn].append(middleware)
+ 651 |         if attach_to == "response":
+ 652 |             for _rn in route_names:
+ 653 |                 if _rn not in self.named_response_middleware:
+ 654 |                     self.named_response_middleware[_rn] = deque()
+ 655 |                 if middleware not in self.named_response_middleware[_rn]:
+ 656 |                     self.named_response_middleware[_rn].append(middleware)
+ 657 | 
+ 658 |     # Decorator
+ 659 |     def middleware(self, middleware_or_request):
+ 660 |         """
+ 661 |         Decorate and register middleware to be called before a request.
+ 662 |         Can either be called as *@app.middleware* or
+ 663 |         *@app.middleware('request')*
+ 664 | 
+ 665 |         :param: middleware_or_request: Optional parameter to use for
+ 666 |             identifying which type of middleware is being registered.
+ 667 |         """
+ 668 |         # Detect which way this was called, @middleware or @middleware('AT')
+ 669 |         if callable(middleware_or_request):
+ 670 |             return self.register_middleware(middleware_or_request)
+ 671 | 
+ 672 |         else:
+ 673 |             return partial(
+ 674 |                 self.register_middleware, attach_to=middleware_or_request
+ 675 |             )
+ 676 | 
+ 677 |     # Static Files
+ 678 |     def static(
+ 679 |         self,
+ 680 |         uri,
+ 681 |         file_or_directory,
+ 682 |         pattern=r"/?.+",
+ 683 |         use_modified_since=True,
+ 684 |         use_content_range=False,
+ 685 |         stream_large_files=False,
+ 686 |         name="static",
+ 687 |         host=None,
+ 688 |         strict_slashes=None,
+ 689 |         content_type=None,
+ 690 |     ):
+ 691 |         """
+ 692 |         Register a root to serve files from. The input can either be a
+ 693 |         file or a directory. This method will enable an easy and simple way
+ 694 |         to setup the :class:`Route` necessary to serve the static files.
+ 695 | 
+ 696 |         :param uri: URL path to be used for serving static content
+ 697 |         :param file_or_directory: Path for the Static file/directory with
+ 698 |             static files
+ 699 |         :param pattern: Regex Pattern identifying the valid static files
+ 700 |         :param use_modified_since: If true, send file modified time, and return
+ 701 |             not modified if the browser's matches the server's
+ 702 |         :param use_content_range: If true, process header for range requests
+ 703 |             and sends the file part that is requested
+ 704 |         :param stream_large_files: If true, use the
+ 705 |             :func:`StreamingHTTPResponse.file_stream` handler rather
+ 706 |             than the :func:`HTTPResponse.file` handler to send the file.
+ 707 |             If this is an integer, this represents the threshold size to
+ 708 |             switch to :func:`StreamingHTTPResponse.file_stream`
+ 709 |         :param name: user defined name used for url_for
+ 710 |         :param host: Host IP or FQDN for the service to use
+ 711 |         :param strict_slashes: Instruct :class:`Sanic` to check if the request
+ 712 |             URLs need to terminate with a */*
+ 713 |         :param content_type: user defined content type for header
+ 714 |         :return: None
+ 715 |         """
+ 716 |         static_register(
+ 717 |             self,
+ 718 |             uri,
+ 719 |             file_or_directory,
+ 720 |             pattern,
+ 721 |             use_modified_since,
+ 722 |             use_content_range,
+ 723 |             stream_large_files,
+ 724 |             name,
+ 725 |             host,
+ 726 |             strict_slashes,
+ 727 |             content_type,
+ 728 |         )
+ 729 | 
+ 730 |     def blueprint(self, blueprint, **options):
+ 731 |         """Register a blueprint on the application.
+ 732 | 
+ 733 |         :param blueprint: Blueprint object or (list, tuple) thereof
+ 734 |         :param options: option dictionary with blueprint defaults
+ 735 |         :return: Nothing
+ 736 |         """
+ 737 |         if isinstance(blueprint, (list, tuple, BlueprintGroup)):
+ 738 |             for item in blueprint:
+ 739 |                 self.blueprint(item, **options)
+ 740 |             return
+ 741 |         if blueprint.name in self.blueprints:
+ 742 |             assert self.blueprints[blueprint.name] is blueprint, (
+ 743 |                 'A blueprint with the name "%s" is already registered.  '
+ 744 |                 "Blueprint names must be unique." % (blueprint.name,)
+ 745 |             )
+ 746 |         else:
+ 747 |             self.blueprints[blueprint.name] = blueprint
+ 748 |             self._blueprint_order.append(blueprint)
+ 749 |         blueprint.register(self, options)
+ 750 | 
+ 751 |     def register_blueprint(self, *args, **kwargs):
+ 752 |         """
+ 753 |         Proxy method provided for invoking the :func:`blueprint` method
+ 754 | 
+ 755 |         .. note::
+ 756 |             To be deprecated in 1.0. Use :func:`blueprint` instead.
+ 757 | 
+ 758 |         :param args: Blueprint object or (list, tuple) thereof
+ 759 |         :param kwargs: option dictionary with blueprint defaults
+ 760 |         :return: None
+ 761 |         """
+ 762 | 
+ 763 |         if self.debug:
+ 764 |             warnings.simplefilter("default")
+ 765 |         warnings.warn(
+ 766 |             "Use of register_blueprint will be deprecated in "
+ 767 |             "version 1.0.  Please use the blueprint method"
+ 768 |             " instead",
+ 769 |             DeprecationWarning,
+ 770 |         )
+ 771 |         return self.blueprint(*args, **kwargs)
+ 772 | 
+ 773 |     def url_for(self, view_name: str, **kwargs):
+ 774 |         r"""Build a URL based on a view name and the values provided.
+ 775 | 
+ 776 |         In order to build a URL, all request parameters must be supplied as
+ 777 |         keyword arguments, and each parameter must pass the test for the
+ 778 |         specified parameter type. If these conditions are not met, a
+ 779 |         `URLBuildError` will be thrown.
+ 780 | 
+ 781 |         Keyword arguments that are not request parameters will be included in
+ 782 |         the output URL's query string.
+ 783 | 
+ 784 |         :param view_name: string referencing the view name
+ 785 |         :param \**kwargs: keys and values that are used to build request
+ 786 |             parameters and query string arguments.
+ 787 | 
+ 788 |         :return: the built URL
+ 789 | 
+ 790 |         Raises:
+ 791 |             URLBuildError
+ 792 |         """
+ 793 |         # find the route by the supplied view name
+ 794 |         kw: Dict[str, str] = {}
+ 795 |         # special static files url_for
+ 796 |         if view_name == "static":
+ 797 |             kw.update(name=kwargs.pop("name", "static"))
+ 798 |         elif view_name.endswith(".static"):  # blueprint.static
+ 799 |             kwargs.pop("name", None)
+ 800 |             kw.update(name=view_name)
+ 801 | 
+ 802 |         uri, route = self.router.find_route_by_view_name(view_name, **kw)
+ 803 |         if not (uri and route):
+ 804 |             raise URLBuildError(
+ 805 |                 f"Endpoint with name `{view_name}` was not found"
+ 806 |             )
+ 807 | 
+ 808 |         # If the route has host defined, split that off
+ 809 |         # TODO: Retain netloc and path separately in Route objects
+ 810 |         host = uri.find("/")
+ 811 |         if host > 0:
+ 812 |             host, uri = uri[:host], uri[host:]
+ 813 |         else:
+ 814 |             host = None
+ 815 | 
+ 816 |         if view_name == "static" or view_name.endswith(".static"):
+ 817 |             filename = kwargs.pop("filename", None)
+ 818 |             # it's static folder
+ 819 |             if "<file_uri:" in uri:
+ 820 |                 folder_ = uri.split("<file_uri:", 1)[0]
+ 821 |                 if folder_.endswith("/"):
+ 822 |                     folder_ = folder_[:-1]
+ 823 | 
+ 824 |                 if filename.startswith("/"):
+ 825 |                     filename = filename[1:]
+ 826 | 
+ 827 |                 uri = f"{folder_}/{filename}"
+ 828 | 
+ 829 |         if uri != "/" and uri.endswith("/"):
+ 830 |             uri = uri[:-1]
+ 831 | 
+ 832 |         out = uri
+ 833 | 
+ 834 |         # find all the parameters we will need to build in the URL
+ 835 |         matched_params = re.findall(self.router.parameter_pattern, uri)
+ 836 | 
+ 837 |         # _method is only a placeholder now, don't know how to support it
+ 838 |         kwargs.pop("_method", None)
+ 839 |         anchor = kwargs.pop("_anchor", "")
+ 840 |         # _external need SERVER_NAME in config or pass _server arg
+ 841 |         external = kwargs.pop("_external", False)
+ 842 |         scheme = kwargs.pop("_scheme", "")
+ 843 |         if scheme and not external:
+ 844 |             raise ValueError("When specifying _scheme, _external must be True")
+ 845 | 
+ 846 |         netloc = kwargs.pop("_server", None)
+ 847 |         if netloc is None and external:
+ 848 |             netloc = host or self.config.get("SERVER_NAME", "")
+ 849 | 
+ 850 |         if external:
+ 851 |             if not scheme:
+ 852 |                 if ":" in netloc[:8]:
+ 853 |                     scheme = netloc[:8].split(":", 1)[0]
+ 854 |                 else:
+ 855 |                     scheme = "http"
+ 856 | 
+ 857 |             if "://" in netloc[:8]:
+ 858 |                 netloc = netloc.split("://", 1)[-1]
+ 859 | 
+ 860 |         for match in matched_params:
+ 861 |             name, _type, pattern = self.router.parse_parameter_string(match)
+ 862 |             # we only want to match against each individual parameter
+ 863 |             specific_pattern = f"^{pattern}$"
+ 864 |             supplied_param = None
+ 865 | 
+ 866 |             if name in kwargs:
+ 867 |                 supplied_param = kwargs.get(name)
+ 868 |                 del kwargs[name]
+ 869 |             else:
+ 870 |                 raise URLBuildError(
+ 871 |                     f"Required parameter `{name}` was not passed to url_for"
+ 872 |                 )
+ 873 | 
+ 874 |             supplied_param = str(supplied_param)
+ 875 |             # determine if the parameter supplied by the caller passes the test
+ 876 |             # in the URL
+ 877 |             passes_pattern = re.match(specific_pattern, supplied_param)
+ 878 | 
+ 879 |             if not passes_pattern:
+ 880 |                 if _type != str:
+ 881 |                     type_name = _type.__name__
+ 882 | 
+ 883 |                     msg = (
+ 884 |                         f'Value "{supplied_param}" '
+ 885 |                         f"for parameter `{name}` does not "
+ 886 |                         f"match pattern for type `{type_name}`: {pattern}"
+ 887 |                     )
+ 888 |                 else:
+ 889 |                     msg = (
+ 890 |                         f'Value "{supplied_param}" for parameter `{name}` '
+ 891 |                         f"does not satisfy pattern {pattern}"
+ 892 |                     )
+ 893 |                 raise URLBuildError(msg)
+ 894 | 
+ 895 |             # replace the parameter in the URL with the supplied value
+ 896 |             replacement_regex = f"(<{name}.*?>)"
+ 897 | 
+ 898 |             out = re.sub(replacement_regex, supplied_param, out)
+ 899 | 
+ 900 |         # parse the remainder of the keyword arguments into a querystring
+ 901 |         query_string = urlencode(kwargs, doseq=True) if kwargs else ""
+ 902 |         # scheme://netloc/path;parameters?query#fragment
+ 903 |         out = urlunparse((scheme, netloc, out, "", query_string, anchor))
+ 904 | 
+ 905 |         return out
+ 906 | 
+ 907 |     # -------------------------------------------------------------------- #
+ 908 |     # Request Handling
+ 909 |     # -------------------------------------------------------------------- #
+ 910 | 
+ 911 |     def converted_response_type(self, response):
+ 912 |         """
+ 913 |         No implementation provided.
+ 914 |         """
+ 915 |         pass
+ 916 | 
+ 917 |     async def handle_request(self, request, write_callback, stream_callback):
+ 918 |         """Take a request from the HTTP Server and return a response object
+ 919 |         to be sent back The HTTP Server only expects a response object, so
+ 920 |         exception handling must be done here
+ 921 | 
+ 922 |         :param request: HTTP Request object
+ 923 |         :param write_callback: Synchronous response function to be
+ 924 |             called with the response as the only argument
+ 925 |         :param stream_callback: Coroutine that handles streaming a
+ 926 |             StreamingHTTPResponse if produced by the handler.
+ 927 | 
+ 928 |         :return: Nothing
+ 929 |         """
+ 930 |         # Define `response` var here to remove warnings about
+ 931 |         # allocation before assignment below.
+ 932 |         response = None
+ 933 |         cancelled = False
+ 934 |         name = None
+ 935 |         try:
+ 936 |             # Fetch handler from router
+ 937 |             handler, args, kwargs, uri, name = self.router.get(request)
+ 938 | 
+ 939 |             # -------------------------------------------- #
+ 940 |             # Request Middleware
+ 941 |             # -------------------------------------------- #
+ 942 |             response = await self._run_request_middleware(
+ 943 |                 request, request_name=name
+ 944 |             )
+ 945 |             # No middleware results
+ 946 |             if not response:
+ 947 |                 # -------------------------------------------- #
+ 948 |                 # Execute Handler
+ 949 |                 # -------------------------------------------- #
+ 950 | 
+ 951 |                 request.uri_template = uri
+ 952 |                 if handler is None:
+ 953 |                     raise ServerError(
+ 954 |                         (
+ 955 |                             "'None' was returned while requesting a "
+ 956 |                             "handler from the router"
+ 957 |                         )
+ 958 |                     )
+ 959 |                 else:
+ 960 |                     if not getattr(handler, "__blueprintname__", False):
+ 961 |                         request.endpoint = self._build_endpoint_name(
+ 962 |                             handler.__name__
+ 963 |                         )
+ 964 |                     else:
+ 965 |                         request.endpoint = self._build_endpoint_name(
+ 966 |                             getattr(handler, "__blueprintname__", ""),
+ 967 |                             handler.__name__,
+ 968 |                         )
+ 969 | 
+ 970 |                 # Run response handler
+ 971 |                 response = handler(request, *args, **kwargs)
+ 972 |                 if isawaitable(response):
+ 973 |                     response = await response
+ 974 |         except CancelledError:
+ 975 |             # If response handler times out, the server handles the error
+ 976 |             # and cancels the handle_request job.
+ 977 |             # In this case, the transport is already closed and we cannot
+ 978 |             # issue a response.
+ 979 |             response = None
+ 980 |             cancelled = True
+ 981 |         except Exception as e:
+ 982 |             # -------------------------------------------- #
+ 983 |             # Response Generation Failed
+ 984 |             # -------------------------------------------- #
+ 985 | 
+ 986 |             try:
+ 987 |                 response = self.error_handler.response(request, e)
+ 988 |                 if isawaitable(response):
+ 989 |                     response = await response
+ 990 |             except Exception as e:
+ 991 |                 if isinstance(e, SanicException):
+ 992 |                     response = self.error_handler.default(
+ 993 |                         request=request, exception=e
+ 994 |                     )
+ 995 |                 elif self.debug:
+ 996 |                     response = HTTPResponse(
+ 997 |                         f"Error while "
+ 998 |                         f"handling error: {e}\nStack: {format_exc()}",
+ 999 |                         status=500,
+1000 |                     )
+1001 |                 else:
+1002 |                     response = HTTPResponse(
+1003 |                         "An error occurred while handling an error", status=500
+1004 |                     )
+1005 |         finally:
+1006 |             # -------------------------------------------- #
+1007 |             # Response Middleware
+1008 |             # -------------------------------------------- #
+1009 |             # Don't run response middleware if response is None
+1010 |             if response is not None:
+1011 |                 try:
+1012 |                     response = await self._run_response_middleware(
+1013 |                         request, response, request_name=name
+1014 |                     )
+1015 |                 except CancelledError:
+1016 |                     # Response middleware can timeout too, as above.
+1017 |                     response = None
+1018 |                     cancelled = True
+1019 |                 except BaseException:
+1020 |                     error_logger.exception(
+1021 |                         "Exception occurred in one of response "
+1022 |                         "middleware handlers"
+1023 |                     )
+1024 |             if cancelled:
+1025 |                 raise CancelledError()
+1026 | 
+1027 |         # pass the response to the correct callback
+1028 |         if write_callback is None or isinstance(
+1029 |             response, StreamingHTTPResponse
+1030 |         ):
+1031 |             if stream_callback:
+1032 |                 await stream_callback(response)
+1033 |             else:
+1034 |                 # Should only end here IF it is an ASGI websocket.
+1035 |                 # TODO:
+1036 |                 # - Add exception handling
+1037 |                 pass
+1038 |         else:
+1039 |             write_callback(response)
+1040 | 
+1041 |     # -------------------------------------------------------------------- #
+1042 |     # Testing
+1043 |     # -------------------------------------------------------------------- #
+1044 | 
+1045 |     @property
+1046 |     def test_client(self):
+1047 |         return SanicTestClient(self)
+1048 | 
+1049 |     @property
+1050 |     def asgi_client(self):
+1051 |         return SanicASGITestClient(self)
+1052 | 
+1053 |     # -------------------------------------------------------------------- #
+1054 |     # Execution
+1055 |     # -------------------------------------------------------------------- #
+1056 | 
+1057 |     def run(
+1058 |         self,
+1059 |         host: Optional[str] = None,
+1060 |         port: Optional[int] = None,
+1061 |         debug: bool = False,
+1062 |         ssl: Union[dict, SSLContext, None] = None,
+1063 |         sock: Optional[socket] = None,
+1064 |         workers: int = 1,
+1065 |         protocol: Type[Protocol] = None,
+1066 |         backlog: int = 100,
+1067 |         stop_event: Any = None,
+1068 |         register_sys_signals: bool = True,
+1069 |         access_log: Optional[bool] = None,
+1070 |         **kwargs: Any,
+1071 |     ) -> None:
+1072 |         """Run the HTTP Server and listen until keyboard interrupt or term
+1073 |         signal. On termination, drain connections before closing.
+1074 | 
+1075 |         :param host: Address to host on
+1076 |         :type host: str
+1077 |         :param port: Port to host on
+1078 |         :type port: int
+1079 |         :param debug: Enables debug output (slows server)
+1080 |         :type debug: bool
+1081 |         :param ssl: SSLContext, or location of certificate and key
+1082 |                     for SSL encryption of worker(s)
+1083 |         :type ssl: SSLContext or dict
+1084 |         :param sock: Socket for the server to accept connections from
+1085 |         :type sock: socket
+1086 |         :param workers: Number of processes received before it is respected
+1087 |         :type workers: int
+1088 |         :param protocol: Subclass of asyncio Protocol class
+1089 |         :type protocol: type[Protocol]
+1090 |         :param backlog: a number of unaccepted connections that the system
+1091 |                         will allow before refusing new connections
+1092 |         :type backlog: int
+1093 |         :param stop_event: event to be triggered
+1094 |                            before stopping the app - deprecated
+1095 |         :type stop_event: None
+1096 |         :param register_sys_signals: Register SIG* events
+1097 |         :type register_sys_signals: bool
+1098 |         :param access_log: Enables writing access logs (slows server)
+1099 |         :type access_log: bool
+1100 |         :return: Nothing
+1101 |         """
+1102 |         if "loop" in kwargs:
+1103 |             raise TypeError(
+1104 |                 "loop is not a valid argument. To use an existing loop, "
+1105 |                 "change to create_server().\nSee more: "
+1106 |                 "https://sanic.readthedocs.io/en/latest/sanic/deploying.html"
+1107 |                 "#asynchronous-support"
+1108 |             )
+1109 | 
+1110 |         # Default auto_reload to false
+1111 |         auto_reload = False
+1112 |         # If debug is set, default it to true (unless on windows)
+1113 |         if debug and os.name == "posix":
+1114 |             auto_reload = True
+1115 |         # Allow for overriding either of the defaults
+1116 |         auto_reload = kwargs.get("auto_reload", auto_reload)
+1117 | 
+1118 |         if sock is None:
+1119 |             host, port = host or "127.0.0.1", port or 8000
+1120 | 
+1121 |         if protocol is None:
+1122 |             protocol = (
+1123 |                 WebSocketProtocol if self.websocket_enabled else HttpProtocol
+1124 |             )
+1125 |         if stop_event is not None:
+1126 |             if debug:
+1127 |                 warnings.simplefilter("default")
+1128 |             warnings.warn(
+1129 |                 "stop_event will be removed from future versions.",
+1130 |                 DeprecationWarning,
+1131 |             )
+1132 |         # if access_log is passed explicitly change config.ACCESS_LOG
+1133 |         if access_log is not None:
+1134 |             self.config.ACCESS_LOG = access_log
+1135 | 
+1136 |         server_settings = self._helper(
+1137 |             host=host,
+1138 |             port=port,
+1139 |             debug=debug,
+1140 |             ssl=ssl,
+1141 |             sock=sock,
+1142 |             workers=workers,
+1143 |             protocol=protocol,
+1144 |             backlog=backlog,
+1145 |             register_sys_signals=register_sys_signals,
+1146 |             auto_reload=auto_reload,
+1147 |         )
+1148 | 
+1149 |         try:
+1150 |             self.is_running = True
+1151 |             self.is_stopping = False
+1152 |             if workers > 1 and os.name != "posix":
+1153 |                 logger.warn(
+1154 |                     f"Multiprocessing is currently not supported on {os.name},"
+1155 |                     " using workers=1 instead"
+1156 |                 )
+1157 |                 workers = 1
+1158 |             if workers == 1:
+1159 |                 if auto_reload and os.name != "posix":
+1160 |                     # This condition must be removed after implementing
+1161 |                     # auto reloader for other operating systems.
+1162 |                     raise NotImplementedError
+1163 | 
+1164 |                 if (
+1165 |                     auto_reload
+1166 |                     and os.environ.get("SANIC_SERVER_RUNNING") != "true"
+1167 |                 ):
+1168 |                     reloader_helpers.watchdog(2)
+1169 |                 else:
+1170 |                     serve(**server_settings)
+1171 |             else:
+1172 |                 serve_multiple(server_settings, workers)
+1173 |         except BaseException:
+1174 |             error_logger.exception(
+1175 |                 "Experienced exception while trying to serve"
+1176 |             )
+1177 |             raise
+1178 |         finally:
+1179 |             self.is_running = False
+1180 |         logger.info("Server Stopped")
+1181 | 
+1182 |     def stop(self):
+1183 |         """This kills the Sanic"""
+1184 |         if not self.is_stopping:
+1185 |             self.is_stopping = True
+1186 |             get_event_loop().stop()
+1187 | 
+1188 |     async def create_server(
+1189 |         self,
+1190 |         host: Optional[str] = None,
+1191 |         port: Optional[int] = None,
+1192 |         debug: bool = False,
+1193 |         ssl: Union[dict, SSLContext, None] = None,
+1194 |         sock: Optional[socket] = None,
+1195 |         protocol: Type[Protocol] = None,
+1196 |         backlog: int = 100,
+1197 |         stop_event: Any = None,
+1198 |         access_log: Optional[bool] = None,
+1199 |         return_asyncio_server=False,
+1200 |         asyncio_server_kwargs=None,
+1201 |     ) -> Optional[AsyncioServer]:
+1202 |         """
+1203 |         Asynchronous version of :func:`run`.
+1204 | 
+1205 |         This method will take care of the operations necessary to invoke
+1206 |         the *before_start* events via :func:`trigger_events` method invocation
+1207 |         before starting the *sanic* app in Async mode.
+1208 | 
+1209 |         .. note::
+1210 |             This does not support multiprocessing and is not the preferred
+1211 |             way to run a :class:`Sanic` application.
+1212 | 
+1213 |         :param host: Address to host on
+1214 |         :type host: str
+1215 |         :param port: Port to host on
+1216 |         :type port: int
+1217 |         :param debug: Enables debug output (slows server)
+1218 |         :type debug: bool
+1219 |         :param ssl: SSLContext, or location of certificate and key
+1220 |                     for SSL encryption of worker(s)
+1221 |         :type ssl: SSLContext or dict
+1222 |         :param sock: Socket for the server to accept connections from
+1223 |         :type sock: socket
+1224 |         :param protocol: Subclass of asyncio Protocol class
+1225 |         :type protocol: type[Protocol]
+1226 |         :param backlog: a number of unaccepted connections that the system
+1227 |                         will allow before refusing new connections
+1228 |         :type backlog: int
+1229 |         :param stop_event: event to be triggered
+1230 |                            before stopping the app - deprecated
+1231 |         :type stop_event: None
+1232 |         :param access_log: Enables writing access logs (slows server)
+1233 |         :type access_log: bool
+1234 |         :param return_asyncio_server: flag that defines whether there's a need
+1235 |                                       to return asyncio.Server or
+1236 |                                       start it serving right away
+1237 |         :type return_asyncio_server: bool
+1238 |         :param asyncio_server_kwargs: key-value arguments for
+1239 |                                       asyncio/uvloop create_server method
+1240 |         :type asyncio_server_kwargs: dict
+1241 |         :return: AsyncioServer if return_asyncio_server is true, else Nothing
+1242 |         """
+1243 | 
+1244 |         if sock is None:
+1245 |             host, port = host or "127.0.0.1", port or 8000
+1246 | 
+1247 |         if protocol is None:
+1248 |             protocol = (
+1249 |                 WebSocketProtocol if self.websocket_enabled else HttpProtocol
+1250 |             )
+1251 |         if stop_event is not None:
+1252 |             if debug:
+1253 |                 warnings.simplefilter("default")
+1254 |             warnings.warn(
+1255 |                 "stop_event will be removed from future versions.",
+1256 |                 DeprecationWarning,
+1257 |             )
+1258 |         # if access_log is passed explicitly change config.ACCESS_LOG
+1259 |         if access_log is not None:
+1260 |             self.config.ACCESS_LOG = access_log
+1261 | 
+1262 |         server_settings = self._helper(
+1263 |             host=host,
+1264 |             port=port,
+1265 |             debug=debug,
+1266 |             ssl=ssl,
+1267 |             sock=sock,
+1268 |             loop=get_event_loop(),
+1269 |             protocol=protocol,
+1270 |             backlog=backlog,
+1271 |             run_async=return_asyncio_server,
+1272 |         )
+1273 | 
+1274 |         # Trigger before_start events
+1275 |         await self.trigger_events(
+1276 |             server_settings.get("before_start", []),
+1277 |             server_settings.get("loop"),
+1278 |         )
+1279 | 
+1280 |         return await serve(
+1281 |             asyncio_server_kwargs=asyncio_server_kwargs, **server_settings
+1282 |         )
+1283 | 
+1284 |     async def trigger_events(self, events, loop):
+1285 |         """Trigger events (functions or async)
+1286 |         :param events: one or more sync or async functions to execute
+1287 |         :param loop: event loop
+1288 |         """
+1289 |         for event in events:
+1290 |             result = event(loop)
+1291 |             if isawaitable(result):
+1292 |                 await result
+1293 | 
+1294 |     async def _run_request_middleware(self, request, request_name=None):
+1295 |         # The if improves speed.  I don't know why
+1296 |         named_middleware = self.named_request_middleware.get(
+1297 |             request_name, deque()
+1298 |         )
+1299 |         applicable_middleware = self.request_middleware + named_middleware
+1300 |         if applicable_middleware:
+1301 |             for middleware in applicable_middleware:
+1302 |                 response = middleware(request)
+1303 |                 if isawaitable(response):
+1304 |                     response = await response
+1305 |                 if response:
+1306 |                     return response
+1307 |         return None
+1308 | 
+1309 |     async def _run_response_middleware(
+1310 |         self, request, response, request_name=None
+1311 |     ):
+1312 |         named_middleware = self.named_response_middleware.get(
+1313 |             request_name, deque()
+1314 |         )
+1315 |         applicable_middleware = self.response_middleware + named_middleware
+1316 |         if applicable_middleware:
+1317 |             for middleware in applicable_middleware:
+1318 |                 _response = middleware(request, response)
+1319 |                 if isawaitable(_response):
+1320 |                     _response = await _response
+1321 |                 if _response:
+1322 |                     response = _response
+1323 |                     break
+1324 |         return response
+1325 | 
+1326 |     def _helper(
+1327 |         self,
+1328 |         host=None,
+1329 |         port=None,
+1330 |         debug=False,
+1331 |         ssl=None,
+1332 |         sock=None,
+1333 |         workers=1,
+1334 |         loop=None,
+1335 |         protocol=HttpProtocol,
+1336 |         backlog=100,
+1337 |         stop_event=None,
+1338 |         register_sys_signals=True,
+1339 |         run_async=False,
+1340 |         auto_reload=False,
+1341 |     ):
+1342 |         """Helper function used by `run` and `create_server`."""
+1343 |         if isinstance(ssl, dict):
+1344 |             # try common aliaseses
+1345 |             cert = ssl.get("cert") or ssl.get("certificate")
+1346 |             key = ssl.get("key") or ssl.get("keyfile")
+1347 |             if cert is None or key is None:
+1348 |                 raise ValueError("SSLContext or certificate and key required.")
+1349 |             context = create_default_context(purpose=Purpose.CLIENT_AUTH)
+1350 |             context.load_cert_chain(cert, keyfile=key)
+1351 |             ssl = context
+1352 |         if stop_event is not None:
+1353 |             if debug:
+1354 |                 warnings.simplefilter("default")
+1355 |             warnings.warn(
+1356 |                 "stop_event will be removed from future versions.",
+1357 |                 DeprecationWarning,
+1358 |             )
+1359 |         if self.config.PROXIES_COUNT and self.config.PROXIES_COUNT < 0:
+1360 |             raise ValueError(
+1361 |                 "PROXIES_COUNT cannot be negative. "
+1362 |                 "https://sanic.readthedocs.io/en/latest/sanic/config.html"
+1363 |                 "#proxy-configuration"
+1364 |             )
+1365 | 
+1366 |         self.error_handler.debug = debug
+1367 |         self.debug = debug
+1368 | 
+1369 |         server_settings = {
+1370 |             "protocol": protocol,
+1371 |             "host": host,
+1372 |             "port": port,
+1373 |             "sock": sock,
+1374 |             "ssl": ssl,
+1375 |             "app": self,
+1376 |             "signal": Signal(),
+1377 |             "loop": loop,
+1378 |             "register_sys_signals": register_sys_signals,
+1379 |             "backlog": backlog,
+1380 |         }
+1381 | 
+1382 |         # -------------------------------------------- #
+1383 |         # Register start/stop events
+1384 |         # -------------------------------------------- #
+1385 | 
+1386 |         for event_name, settings_name, reverse in (
+1387 |             ("before_server_start", "before_start", False),
+1388 |             ("after_server_start", "after_start", False),
+1389 |             ("before_server_stop", "before_stop", True),
+1390 |             ("after_server_stop", "after_stop", True),
+1391 |         ):
+1392 |             listeners = self.listeners[event_name].copy()
+1393 |             if reverse:
+1394 |                 listeners.reverse()
+1395 |             # Prepend sanic to the arguments when listeners are triggered
+1396 |             listeners = [partial(listener, self) for listener in listeners]
+1397 |             server_settings[settings_name] = listeners
+1398 | 
+1399 |         if self.configure_logging and debug:
+1400 |             logger.setLevel(logging.DEBUG)
+1401 | 
+1402 |         if (
+1403 |             self.config.LOGO
+1404 |             and os.environ.get("SANIC_SERVER_RUNNING") != "true"
+1405 |         ):
+1406 |             logger.debug(
+1407 |                 self.config.LOGO
+1408 |                 if isinstance(self.config.LOGO, str)
+1409 |                 else BASE_LOGO
+1410 |             )
+1411 | 
+1412 |         if run_async:
+1413 |             server_settings["run_async"] = True
+1414 | 
+1415 |         # Serve
+1416 |         if host and port and os.environ.get("SANIC_SERVER_RUNNING") != "true":
+1417 |             proto = "http"
+1418 |             if ssl is not None:
+1419 |                 proto = "https"
+1420 |             logger.info(f"Goin' Fast @ {proto}://{host}:{port}")
+1421 | 
+1422 |         return server_settings
+1423 | 
+1424 |     def _build_endpoint_name(self, *parts):
+1425 |         parts = [self.name, *parts]
+1426 |         return ".".join(parts)
+1427 | 
+1428 |     # -------------------------------------------------------------------- #
+1429 |     # ASGI
+1430 |     # -------------------------------------------------------------------- #
+1431 | 
+1432 |     async def __call__(self, scope, receive, send):
+1433 |         """To be ASGI compliant, our instance must be a callable that accepts
+1434 |         three arguments: scope, receive, send. See the ASGI reference for more
+1435 |         details: https://asgi.readthedocs.io/en/latest/"""
+1436 |         self.asgi = True
+1437 |         asgi_app = await ASGIApp.create(self, scope, receive, send)
+1438 |         await asgi_app()
+```
+
+
+FAILING TEST FILES:
+
+[test_file_1] BugsInPy/workspace/sanic/tests/test_blueprints.py
+```python
+  1 | import asyncio
+  2 | import inspect
+  3 | import os
+  4 | 
+  5 | import pytest
+  6 | 
+  7 | from sanic.app import Sanic
+  8 | from sanic.blueprints import Blueprint
+  9 | from sanic.constants import HTTP_METHODS
+ 10 | from sanic.exceptions import InvalidUsage, NotFound, ServerError
+ 11 | from sanic.request import Request
+ 12 | from sanic.response import json, text
+ 13 | from sanic.views import CompositionView
+ 14 | 
+ 15 | 
+ 16 | # ------------------------------------------------------------ #
+ 17 | #  GET
+ 18 | # ------------------------------------------------------------ #
+ 19 | 
+ 20 | 
+ 21 | @pytest.fixture(scope="module")
+ 22 | def static_file_directory():
+ 23 |     """The static directory to serve"""
+ 24 |     current_file = inspect.getfile(inspect.currentframe())
+ 25 |     current_directory = os.path.dirname(os.path.abspath(current_file))
+ 26 |     static_directory = os.path.join(current_directory, "static")
+ 27 |     return static_directory
+ 28 | 
+ 29 | 
+ 30 | def get_file_path(static_file_directory, file_name):
+ 31 |     return os.path.join(static_file_directory, file_name)
+ 32 | 
+ 33 | 
+ 34 | def get_file_content(static_file_directory, file_name):
+ 35 |     """The content of the static file to check"""
+ 36 |     with open(get_file_path(static_file_directory, file_name), "rb") as file:
+ 37 |         return file.read()
+ 38 | 
+ 39 | 
+ 40 | @pytest.mark.parametrize("method", HTTP_METHODS)
+ 41 | def test_versioned_routes_get(app, method):
+ 42 |     bp = Blueprint("test_text")
+ 43 | 
+ 44 |     method = method.lower()
+ 45 | 
+ 46 |     func = getattr(bp, method)
+ 47 |     if callable(func):
+ 48 | 
+ 49 |         @func(f"/{method}", version=1)
+ 50 |         def handler(request):
+ 51 |             return text("OK")
+ 52 | 
+ 53 |     else:
+ 54 |         print(func)
+ 55 |         raise Exception(f"{func} is not callable")
+ 56 | 
+ 57 |     app.blueprint(bp)
+ 58 | 
+ 59 |     client_method = getattr(app.test_client, method)
+ 60 | 
+ 61 |     request, response = client_method(f"/v1/{method}")
+ 62 |     assert response.status == 200
+ 63 | 
+ 64 | 
+ 65 | def test_bp(app):
+ 66 |     bp = Blueprint("test_text")
+ 67 | 
+ 68 |     @bp.route("/")
+ 69 |     def handler(request):
+ 70 |         return text("Hello")
+ 71 | 
+ 72 |     app.blueprint(bp)
+ 73 |     request, response = app.test_client.get("/")
+ 74 |     assert app.is_request_stream is False
+ 75 | 
+ 76 |     assert response.text == "Hello"
+ 77 | 
+ 78 | 
+ 79 | def test_bp_strict_slash(app):
+ 80 |     bp = Blueprint("test_text")
+ 81 | 
+ 82 |     @bp.get("/get", strict_slashes=True)
+ 83 |     def get_handler(request):
+ 84 |         return text("OK")
+ 85 | 
+ 86 |     @bp.post("/post/", strict_slashes=True)
+ 87 |     def post_handler(request):
+ 88 |         return text("OK")
+ 89 | 
+ 90 |     app.blueprint(bp)
+ 91 | 
+ 92 |     request, response = app.test_client.get("/get")
+ 93 |     assert response.text == "OK"
+ 94 |     assert response.json is None
+ 95 | 
+ 96 |     request, response = app.test_client.get("/get/")
+ 97 |     assert response.status == 404
+ 98 | 
+ 99 |     request, response = app.test_client.post("/post/")
+100 |     assert response.text == "OK"
+101 | 
+102 |     request, response = app.test_client.post("/post")
+103 |     assert response.status == 404
+104 | 
+105 | 
+106 | def test_bp_strict_slash_default_value(app):
+107 |     bp = Blueprint("test_text", strict_slashes=True)
+108 | 
+109 |     @bp.get("/get")
+110 |     def get_handler(request):
+111 |         return text("OK")
+112 | 
+113 |     @bp.post("/post/")
+114 |     def post_handler(request):
+115 |         return text("OK")
+116 | 
+117 |     app.blueprint(bp)
+118 | 
+119 |     request, response = app.test_client.get("/get/")
+120 |     assert response.status == 404
+121 | 
+122 |     request, response = app.test_client.post("/post")
+123 |     assert response.status == 404
+124 | 
+125 | 
+126 | def test_bp_strict_slash_without_passing_default_value(app):
+127 |     bp = Blueprint("test_text")
+128 | 
+129 |     @bp.get("/get")
+130 |     def get_handler(request):
+131 |         return text("OK")
+132 | 
+133 |     @bp.post("/post/")
+134 |     def post_handler(request):
+135 |         return text("OK")
+136 | 
+137 |     app.blueprint(bp)
+138 | 
+139 |     request, response = app.test_client.get("/get/")
+140 |     assert response.text == "OK"
+141 | 
+142 |     request, response = app.test_client.post("/post")
+143 |     assert response.text == "OK"
+144 | 
+145 | 
+146 | def test_bp_strict_slash_default_value_can_be_overwritten(app):
+147 |     bp = Blueprint("test_text", strict_slashes=True)
+148 | 
+149 |     @bp.get("/get", strict_slashes=False)
+150 |     def get_handler(request):
+151 |         return text("OK")
+152 | 
+153 |     @bp.post("/post/", strict_slashes=False)
+154 |     def post_handler(request):
+155 |         return text("OK")
+156 | 
+157 |     app.blueprint(bp)
+158 | 
+159 |     request, response = app.test_client.get("/get/")
+160 |     assert response.text == "OK"
+161 | 
+162 |     request, response = app.test_client.post("/post")
+163 |     assert response.text == "OK"
+164 | 
+165 | 
+166 | def test_bp_with_url_prefix(app):
+167 |     bp = Blueprint("test_text", url_prefix="/test1")
+168 | 
+169 |     @bp.route("/")
+170 |     def handler(request):
+171 |         return text("Hello")
+172 | 
+173 |     app.blueprint(bp)
+174 |     request, response = app.test_client.get("/test1/")
+175 | 
+176 |     assert response.text == "Hello"
+177 | 
+178 | 
+179 | def test_several_bp_with_url_prefix(app):
+180 |     bp = Blueprint("test_text", url_prefix="/test1")
+181 |     bp2 = Blueprint("test_text2", url_prefix="/test2")
+182 | 
+183 |     @bp.route("/")
+184 |     def handler(request):
+185 |         return text("Hello")
+186 | 
+187 |     @bp2.route("/")
+188 |     def handler2(request):
+189 |         return text("Hello2")
+190 | 
+191 |     app.blueprint(bp)
+192 |     app.blueprint(bp2)
+193 |     request, response = app.test_client.get("/test1/")
+194 |     assert response.text == "Hello"
+195 | 
+196 |     request, response = app.test_client.get("/test2/")
+197 |     assert response.text == "Hello2"
+198 | 
+199 | 
+200 | def test_bp_with_host(app):
+201 |     bp = Blueprint("test_bp_host", url_prefix="/test1", host="example.com")
+202 | 
+203 |     @bp.route("/")
+204 |     def handler1(request):
+205 |         return text("Hello")
+206 | 
+207 |     @bp.route("/", host="sub.example.com")
+208 |     def handler2(request):
+209 |         return text("Hello subdomain!")
+210 | 
+211 |     app.blueprint(bp)
+212 |     headers = {"Host": "example.com"}
+213 |     request, response = app.test_client.get("/test1/", headers=headers)
+214 |     assert response.text == "Hello"
+215 | 
+216 |     headers = {"Host": "sub.example.com"}
+217 |     request, response = app.test_client.get("/test1/", headers=headers)
+218 | 
+219 |     assert response.text == "Hello subdomain!"
+220 | 
+221 | 
+222 | def test_several_bp_with_host(app):
+223 |     bp = Blueprint("test_text", url_prefix="/test", host="example.com")
+224 |     bp2 = Blueprint("test_text2", url_prefix="/test", host="sub.example.com")
+225 | 
+226 |     @bp.route("/")
+227 |     def handler(request):
+228 |         return text("Hello")
+229 | 
+230 |     @bp2.route("/")
+231 |     def handler1(request):
+232 |         return text("Hello2")
+233 | 
+234 |     @bp2.route("/other/")
+235 |     def handler2(request):
+236 |         return text("Hello3")
+237 | 
+238 |     app.blueprint(bp)
+239 |     app.blueprint(bp2)
+240 | 
+241 |     assert bp.host == "example.com"
+242 |     headers = {"Host": "example.com"}
+243 |     request, response = app.test_client.get("/test/", headers=headers)
+244 |     assert response.text == "Hello"
+245 | 
+246 |     assert bp2.host == "sub.example.com"
+247 |     headers = {"Host": "sub.example.com"}
+248 |     request, response = app.test_client.get("/test/", headers=headers)
+249 | 
+250 |     assert response.text == "Hello2"
+251 |     request, response = app.test_client.get("/test/other/", headers=headers)
+252 |     assert response.text == "Hello3"
+253 | 
+254 | 
+255 | def test_bp_middleware(app):
+256 |     blueprint = Blueprint("test_bp_middleware")
+257 | 
+258 |     @blueprint.middleware("response")
+259 |     async def process_response(request, response):
+260 |         return text("OK")
+261 | 
+262 |     @app.route("/")
+263 |     async def handler(request):
+264 |         return text("FAIL")
+265 | 
+266 |     app.blueprint(blueprint)
+267 | 
+268 |     request, response = app.test_client.get("/")
+269 | 
+270 |     assert response.status == 200
+271 |     assert response.text == "FAIL"
+272 | 
+273 | def test_bp_middleware_order(app):
+274 |     blueprint = Blueprint("test_bp_middleware_order")
+275 |     order = list()
+276 |     @blueprint.middleware("request")
+277 |     def mw_1(request):
+278 |         order.append(1)
+279 |     @blueprint.middleware("request")
+280 |     def mw_2(request):
+281 |         order.append(2)
+282 |     @blueprint.middleware("request")
+283 |     def mw_3(request):
+284 |         order.append(3)
+285 |     @blueprint.middleware("response")
+286 |     def mw_4(request, response):
+287 |         order.append(6)
+288 |     @blueprint.middleware("response")
+289 |     def mw_5(request, response):
+290 |         order.append(5)
+291 |     @blueprint.middleware("response")
+292 |     def mw_6(request, response):
+293 |         order.append(4)
+294 | 
+295 |     @blueprint.route("/")
+296 |     def process_response(request):
+297 |         return text("OK")
+298 | 
+299 |     app.blueprint(blueprint)
+300 |     order.clear()
+301 |     request, response = app.test_client.get("/")
+302 | 
+303 |     assert response.status == 200
+304 |     assert order == [1, 2, 3, 4, 5, 6]
+305 | 
+306 | def test_bp_exception_handler(app):
+307 |     blueprint = Blueprint("test_middleware")
+308 | 
+309 |     @blueprint.route("/1")
+310 |     def handler_1(request):
+311 |         raise InvalidUsage("OK")
+312 | 
+313 |     @blueprint.route("/2")
+314 |     def handler_2(request):
+315 |         raise ServerError("OK")
+316 | 
+317 |     @blueprint.route("/3")
+318 |     def handler_3(request):
+319 |         raise NotFound("OK")
+320 | 
+321 |     @blueprint.exception(NotFound, ServerError)
+322 |     def handler_exception(request, exception):
+323 |         return text("OK")
+324 | 
+325 |     app.blueprint(blueprint)
+326 | 
+327 |     request, response = app.test_client.get("/1")
+328 |     assert response.status == 400
+329 | 
+330 |     request, response = app.test_client.get("/2")
+331 |     assert response.status == 200
+332 |     assert response.text == "OK"
+333 | 
+334 |     request, response = app.test_client.get("/3")
+335 |     assert response.status == 200
+336 | 
+337 | 
+338 | def test_bp_listeners(app):
+339 |     blueprint = Blueprint("test_middleware")
+340 | 
+341 |     order = []
+342 | 
+343 |     @blueprint.listener("before_server_start")
+344 |     def handler_1(sanic, loop):
+345 |         order.append(1)
+346 | 
+347 |     @blueprint.listener("after_server_start")
+348 |     def handler_2(sanic, loop):
+349 |         order.append(2)
+350 | 
+351 |     @blueprint.listener("after_server_start")
+352 |     def handler_3(sanic, loop):
+353 |         order.append(3)
+354 | 
+355 |     @blueprint.listener("before_server_stop")
+356 |     def handler_4(sanic, loop):
+357 |         order.append(5)
+358 | 
+359 |     @blueprint.listener("before_server_stop")
+360 |     def handler_5(sanic, loop):
+361 |         order.append(4)
+362 | 
+363 |     @blueprint.listener("after_server_stop")
+364 |     def handler_6(sanic, loop):
+365 |         order.append(6)
+366 | 
+367 |     app.blueprint(blueprint)
+368 | 
+369 |     request, response = app.test_client.get("/")
+370 | 
+371 |     assert order == [1, 2, 3, 4, 5, 6]
+372 | 
+373 | 
+374 | def test_bp_static(app):
+375 |     current_file = inspect.getfile(inspect.currentframe())
+376 |     with open(current_file, "rb") as file:
+377 |         current_file_contents = file.read()
+378 | 
+379 |     blueprint = Blueprint("test_static")
+380 | 
+381 |     blueprint.static("/testing.file", current_file)
+382 | 
+383 |     app.blueprint(blueprint)
+384 | 
+385 |     request, response = app.test_client.get("/testing.file")
+386 |     assert response.status == 200
+387 |     assert response.body == current_file_contents
+388 | 
+389 | 
+390 | @pytest.mark.parametrize("file_name", ["test.html"])
+391 | def test_bp_static_content_type(app, file_name):
+392 |     # This is done here, since no other test loads a file here
+393 |     current_file = inspect.getfile(inspect.currentframe())
+394 |     current_directory = os.path.dirname(os.path.abspath(current_file))
+395 |     static_directory = os.path.join(current_directory, "static")
+396 | 
+397 |     blueprint = Blueprint("test_static")
+398 |     blueprint.static(
+399 |         "/testing.file",
+400 |         get_file_path(static_directory, file_name),
+401 |         content_type="text/html; charset=utf-8",
+402 |     )
+403 | 
+404 |     app.blueprint(blueprint)
+405 | 
+406 |     request, response = app.test_client.get("/testing.file")
+407 |     assert response.status == 200
+408 |     assert response.body == get_file_content(static_directory, file_name)
+409 |     assert response.headers["Content-Type"] == "text/html; charset=utf-8"
+410 | 
+411 | 
+412 | def test_bp_shorthand(app):
+413 |     blueprint = Blueprint("test_shorhand_routes")
+414 |     ev = asyncio.Event()
+415 | 
+416 |     @blueprint.get("/get")
+417 |     def handler(request):
+418 |         assert request.stream is None
+419 |         return text("OK")
+420 | 
+421 |     @blueprint.put("/put")
+422 |     def put_handler(request):
+423 |         assert request.stream is None
+424 |         return text("OK")
+425 | 
+426 |     @blueprint.post("/post")
+427 |     def post_handler(request):
+428 |         assert request.stream is None
+429 |         return text("OK")
+430 | 
+431 |     @blueprint.head("/head")
+432 |     def head_handler(request):
+433 |         assert request.stream is None
+434 |         return text("OK")
+435 | 
+436 |     @blueprint.options("/options")
+437 |     def options_handler(request):
+438 |         assert request.stream is None
+439 |         return text("OK")
+440 | 
+441 |     @blueprint.patch("/patch")
+442 |     def patch_handler(request):
+443 |         assert request.stream is None
+444 |         return text("OK")
+445 | 
+446 |     @blueprint.delete("/delete")
+447 |     def delete_handler(request):
+448 |         assert request.stream is None
+449 |         return text("OK")
+450 | 
+451 |     @blueprint.websocket("/ws/", strict_slashes=True)
+452 |     async def websocket_handler(request, ws):
+453 |         assert request.stream is None
+454 |         ev.set()
+455 | 
+456 |     app.blueprint(blueprint)
+457 | 
+458 |     assert app.is_request_stream is False
+459 | 
+460 |     request, response = app.test_client.get("/get")
+461 |     assert response.text == "OK"
+462 | 
+463 |     request, response = app.test_client.post("/get")
+464 |     assert response.status == 405
+465 | 
+466 |     request, response = app.test_client.put("/put")
+467 |     assert response.text == "OK"
+468 | 
+469 |     request, response = app.test_client.get("/post")
+470 |     assert response.status == 405
+471 | 
+472 |     request, response = app.test_client.post("/post")
+473 |     assert response.text == "OK"
+474 | 
+475 |     request, response = app.test_client.get("/post")
+476 |     assert response.status == 405
+477 | 
+478 |     request, response = app.test_client.head("/head")
+479 |     assert response.status == 200
+480 | 
+481 |     request, response = app.test_client.get("/head")
+482 |     assert response.status == 405
+483 | 
+484 |     request, response = app.test_client.options("/options")
+485 |     assert response.text == "OK"
+486 | 
+487 |     request, response = app.test_client.get("/options")
+488 |     assert response.status == 405
+489 | 
+490 |     request, response = app.test_client.patch("/patch")
+491 |     assert response.text == "OK"
+492 | 
+493 |     request, response = app.test_client.get("/patch")
+494 |     assert response.status == 405
+495 | 
+496 |     request, response = app.test_client.delete("/delete")
+497 |     assert response.text == "OK"
+498 | 
+499 |     request, response = app.test_client.get("/delete")
+500 |     assert response.status == 405
+501 | 
+502 |     request, response = app.test_client.websocket("/ws/")
+503 |     assert response.opened is True
+504 |     assert ev.is_set()
+505 | 
+506 | 
+507 | def test_bp_group(app):
+508 |     deep_0 = Blueprint("deep_0", url_prefix="/deep")
+509 |     deep_1 = Blueprint("deep_1", url_prefix="/deep1")
+510 | 
+511 |     @deep_0.route("/")
+512 |     def handler(request):
+513 |         return text("D0_OK")
+514 | 
+515 |     @deep_1.route("/bottom")
+516 |     def bottom_handler(request):
+517 |         return text("D1B_OK")
+518 | 
+519 |     mid_0 = Blueprint.group(deep_0, deep_1, url_prefix="/mid")
+520 |     mid_1 = Blueprint("mid_tier", url_prefix="/mid1")
+521 | 
+522 |     @mid_1.route("/")
+523 |     def handler1(request):
+524 |         return text("M1_OK")
+525 | 
+526 |     top = Blueprint.group(mid_0, mid_1)
+527 | 
+528 |     app.blueprint(top)
+529 | 
+530 |     @app.route("/")
+531 |     def handler2(request):
+532 |         return text("TOP_OK")
+533 | 
+534 |     request, response = app.test_client.get("/")
+535 |     assert response.text == "TOP_OK"
+536 | 
+537 |     request, response = app.test_client.get("/mid1")
+538 |     assert response.text == "M1_OK"
+539 | 
+540 |     request, response = app.test_client.get("/mid/deep")
+541 |     assert response.text == "D0_OK"
+542 | 
+543 |     request, response = app.test_client.get("/mid/deep1/bottom")
+544 |     assert response.text == "D1B_OK"
+545 | 
+546 | 
+547 | def test_bp_group_with_default_url_prefix(app):
+548 |     from sanic.response import json
+549 | 
+550 |     bp_resources = Blueprint("bp_resources")
+551 | 
+552 |     @bp_resources.get("/")
+553 |     def list_resources_handler(request):
+554 |         resource = {}
+555 |         return json([resource])
+556 | 
+557 |     bp_resource = Blueprint("bp_resource", url_prefix="/<resource_id>")
+558 | 
+559 |     @bp_resource.get("/")
+560 |     def get_resource_hander(request, resource_id):
+561 |         resource = {"resource_id": resource_id}
+562 |         return json(resource)
+563 | 
+564 |     bp_resources_group = Blueprint.group(
+565 |         bp_resources, bp_resource, url_prefix="/resources"
+566 |     )
+567 |     bp_api_v1 = Blueprint("bp_api_v1")
+568 | 
+569 |     @bp_api_v1.get("/info")
+570 |     def api_v1_info(request):
+571 |         return text("api_version: v1")
+572 | 
+573 |     bp_api_v1_group = Blueprint.group(
+574 |         bp_api_v1, bp_resources_group, url_prefix="/v1"
+575 |     )
+576 |     bp_api_group = Blueprint.group(bp_api_v1_group, url_prefix="/api")
+577 |     app.blueprint(bp_api_group)
+578 | 
+579 |     request, response = app.test_client.get("/api/v1/info")
+580 |     assert response.text == "api_version: v1"
+581 | 
+582 |     request, response = app.test_client.get("/api/v1/resources")
+583 |     assert response.json == [{}]
+584 | 
+585 |     from uuid import uuid4
+586 | 
+587 |     resource_id = str(uuid4())
+588 |     request, response = app.test_client.get(
+589 |         f"/api/v1/resources/{resource_id}"
+590 |     )
+591 |     assert response.json == {"resource_id": resource_id}
+592 | 
+593 | 
+594 | def test_blueprint_middleware_with_args(app: Sanic):
+595 |     bp = Blueprint(name="with_args_bp", url_prefix="/wa")
+596 | 
+597 |     @bp.middleware
+598 |     def middleware_with_no_tag(request: Request):
+599 |         if request.headers.get("content-type") == "application/json":
+600 |             request.headers["accepts"] = "plain/text"
+601 |         else:
+602 |             request.headers["accepts"] = "application/json"
+603 | 
+604 |     @bp.route("/")
+605 |     def default_route(request):
+606 |         if request.headers.get("accepts") == "application/json":
+607 |             return json({"test": "value"})
+608 |         else:
+609 |             return text("value")
+610 | 
+611 |     app.blueprint(bp)
+612 | 
+613 |     _, response = app.test_client.get(
+614 |         "/wa", headers={"content-type": "application/json"}
+615 |     )
+616 |     assert response.text == "value"
+617 | 
+618 |     _, response = app.test_client.get(
+619 |         "/wa", headers={"content-type": "plain/text"}
+620 |     )
+621 |     assert response.json.get("test") == "value"
+622 | 
+623 | 
+624 | @pytest.mark.parametrize("file_name", ["test.file"])
+625 | def test_static_blueprint_name(app: Sanic, static_file_directory, file_name):
+626 |     current_file = inspect.getfile(inspect.currentframe())
+627 |     with open(current_file, "rb") as file:
+628 |         file.read()
+629 | 
+630 |     bp = Blueprint(name="static", url_prefix="/static", strict_slashes=False)
+631 | 
+632 |     bp.static(
+633 |         "/test.file/",
+634 |         get_file_path(static_file_directory, file_name),
+635 |         name="static.testing",
+636 |         strict_slashes=True,
+637 |     )
+638 | 
+639 |     app.blueprint(bp)
+640 | 
+641 |     uri = app.url_for("static", name="static.testing")
+642 |     assert uri == "/static/test.file"
+643 | 
+644 |     _, response = app.test_client.get("/static/test.file")
+645 |     assert response.status == 404
+646 | 
+647 |     _, response = app.test_client.get("/static/test.file/")
+648 |     assert response.status == 200
+649 | 
+650 | 
+651 | def test_route_handler_add(app: Sanic):
+652 |     view = CompositionView()
+653 | 
+654 |     async def get_handler(request):
+655 |         return json({"response": "OK"})
+656 | 
+657 |     view.add(["GET"], get_handler, stream=False)
+658 | 
+659 |     async def default_handler(request):
+660 |         return text("OK")
+661 | 
+662 |     bp = Blueprint(name="handler", url_prefix="/handler")
+663 |     bp.add_route(default_handler, uri="/default/", strict_slashes=True)
+664 | 
+665 |     bp.add_route(view, uri="/view", name="test")
+666 | 
+667 |     app.blueprint(bp)
+668 | 
+669 |     _, response = app.test_client.get("/handler/default/")
+670 |     assert response.text == "OK"
+671 | 
+672 |     _, response = app.test_client.get("/handler/view")
+673 |     assert response.json["response"] == "OK"
+674 | 
+675 | 
+676 | def test_websocket_route(app: Sanic):
+677 |     event = asyncio.Event()
+678 | 
+679 |     async def websocket_handler(request, ws):
+680 |         assert ws.subprotocol is None
+681 |         event.set()
+682 | 
+683 |     bp = Blueprint(name="handler", url_prefix="/ws")
+684 |     bp.add_websocket_route(websocket_handler, "/test", name="test")
+685 | 
+686 |     app.blueprint(bp)
+687 | 
+688 |     _, response = app.test_client.websocket("/ws/test")
+689 |     assert response.opened is True
+690 |     assert event.is_set()
+691 | 
+692 | 
+693 | def test_duplicate_blueprint(app):
+694 |     bp_name = "bp"
+695 |     bp = Blueprint(bp_name)
+696 |     bp1 = Blueprint(bp_name)
+697 | 
+698 |     app.blueprint(bp)
+699 | 
+700 |     with pytest.raises(AssertionError) as excinfo:
+701 |         app.blueprint(bp1)
+702 | 
+703 |     assert str(excinfo.value) == (
+704 |         f'A blueprint with the name "{bp_name}" is already registered.  '
+705 |         "Blueprint names must be unique."
+706 |     )
+707 | 
+708 | 
+709 | @pytest.mark.parametrize("debug", [True, False, None])
+710 | def test_register_blueprint(app, debug):
+711 |     bp = Blueprint("bp")
+712 | 
+713 |     app.debug = debug
+714 |     with pytest.warns(DeprecationWarning) as record:
+715 |         app.register_blueprint(bp)
+716 | 
+717 |     assert record[0].message.args[0] == (
+718 |         "Use of register_blueprint will be deprecated in "
+719 |         "version 1.0.  Please use the blueprint method"
+720 |         " instead"
+721 |     )
+722 | 
+723 | 
+724 | def test_strict_slashes_behavior_adoption(app):
+725 |     app.strict_slashes = True
+726 | 
+727 |     @app.get("/test")
+728 |     def handler_test(request):
+729 |         return text("Test")
+730 | 
+731 |     assert app.test_client.get("/test")[1].status == 200
+732 |     assert app.test_client.get("/test/")[1].status == 404
+733 | 
+734 |     bp = Blueprint("bp")
+735 | 
+736 |     @bp.get("/one", strict_slashes=False)
+737 |     def one(request):
+738 |         return text("one")
+739 | 
+740 |     @bp.get("/second")
+741 |     def second(request):
+742 |         return text("second")
+743 | 
+744 |     app.blueprint(bp)
+745 | 
+746 |     assert app.test_client.get("/one")[1].status == 200
+747 |     assert app.test_client.get("/one/")[1].status == 200
+748 | 
+749 |     assert app.test_client.get("/second")[1].status == 200
+750 |     assert app.test_client.get("/second/")[1].status == 404
+751 | 
+752 |     bp2 = Blueprint("bp2", strict_slashes=False)
+753 | 
+754 |     @bp2.get("/third")
+755 |     def third(request):
+756 |         return text("third")
+757 | 
+758 |     app.blueprint(bp2)
+759 |     assert app.test_client.get("/third")[1].status == 200
+760 |     assert app.test_client.get("/third/")[1].status == 200
+761 | 
+762 |     @app.get("/f1", strict_slashes=False)
+763 |     def f1(request):
+764 |         return text("f1")
+765 | 
+766 |     assert app.test_client.get("/f1")[1].status == 200
+767 |     assert app.test_client.get("/f1/")[1].status == 200
+```
