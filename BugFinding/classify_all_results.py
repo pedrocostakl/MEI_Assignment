@@ -1,9 +1,18 @@
 import json
 import argparse
+import re
 from pathlib import Path
 '''
     python classify_all_results.py ChatGPT_results/all_results.json ChatGPT_results/classified_results.json
 '''
+def natural_sort_key(case):
+    """Convert case_name to sort naturally (e.g., fastapi_1, fastapi_2, ..., fastapi_10)"""
+    name = case.get("case_name", "")
+    # Split into alternating non-numeric and numeric parts
+    parts = re.split(r'(\d+)', name)
+    # Convert numeric parts to integers, keep others as strings
+    return [int(part) if part.isdigit() else part for part in parts]
+
 
 def classify_cases(all_results_path):
     all_results_path = Path(all_results_path)
@@ -12,6 +21,8 @@ def classify_cases(all_results_path):
         all_results_path.read_text(encoding="utf-8")
     )
 
+    cases = sorted(cases, key=natural_sort_key)
+    
     classified_cases = []
 
     total_cases = 0

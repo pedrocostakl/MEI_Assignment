@@ -21,16 +21,15 @@ Rules:
 - Do not propose a fix.
 - Do not rewrite code.
 - Do not explain beyond the reason field.
-- If multiple locations are possible, include at most 3.
 - Line numbers must refer to the buggy source file.
 
 You are given the following files:
 
 [file_1] fastapi/routing.py
-<PASTE FILE CONTENT HERE>
+<FILE CONTENT HERE>
 
 [file_2] tests/test_routing.py
-<PASTE FILE CONTENT HERE>
+<FILE CONTENT HERE>
 
 Failing test output:
 <STACK TRACE HERE>

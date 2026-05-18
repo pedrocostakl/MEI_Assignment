@@ -492,12 +492,12 @@
     }
   ],
   "totals": {
-    "num_cases": 49,
-    "num_real_bugs": 133,
-    "num_reported_bugs": 87,
+    "num_cases": 50,
+    "num_real_bugs": 135,
+    "num_reported_bugs": 88,
     "true_positives": 35,
-    "false_positives": 52,
-    "false_negatives": 98
+    "false_positives": 53,
+    "false_negatives": 100
   },
   "missing_benchmarks": [
     "ChatGPT_outputs\\ChatGPT_result_fastapi_1.json"

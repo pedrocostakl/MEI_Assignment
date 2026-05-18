@@ -22,7 +22,7 @@ Rules:
 - Do not rewrite code.
 - Do not explain outside JSON.
 - Line numbers must refer to the numbered buggy source file.
-- Include at most 3 suspected locations.
+- Include at most the number of suspected locations you think there are.
 - Prefer the smallest line range that identifies the origin of the bug.
 
 

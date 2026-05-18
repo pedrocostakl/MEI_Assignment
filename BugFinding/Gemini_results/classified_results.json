@@ -1,86 +1,20 @@
 {
   "summary": {
-    "total_cases": 49,
+    "total_cases": 50,
     "true_cases": 3,
-    "false_cases": 46,
-    "accuracy": 0.061224489795918366
+    "false_cases": 47,
+    "accuracy": 0.06
   },
   "cases": [
     {
-      "case_name": "fastapi_10",
-      "output_file": "Gemini_outputs\\Gemini_output_fastapi_10.json",
-      "benchmark_file": "benchmarks\\fastapi_bug_10.json",
-      "num_real_bugs": 1,
-      "num_reported_bugs": 2,
+      "case_name": "fastapi_1",
+      "output_file": "Gemini_outputs\\Gemini_output_fastapi_1.json",
+      "benchmark_file": "benchmarks\\fastapi_bug_1.json",
+      "num_real_bugs": 60,
+      "num_reported_bugs": 3,
       "true_positives": 0,
-      "false_positives": 2,
-      "false_negatives": 1,
-      "classification": 0
-    },
-    {
-      "case_name": "fastapi_11",
-      "output_file": "Gemini_outputs\\Gemini_output_fastapi_11.json",
-      "benchmark_file": "benchmarks\\fastapi_bug_11.json",
-      "num_real_bugs": 1,
-      "num_reported_bugs": 1,
-      "true_positives": 0,
-      "false_positives": 1,
-      "false_negatives": 1,
-      "classification": 0
-    },
-    {
-      "case_name": "fastapi_12",
-      "output_file": "Gemini_outputs\\Gemini_output_fastapi_12.json",
-      "benchmark_file": "benchmarks\\fastapi_bug_12.json",
-      "num_real_bugs": 1,
-      "num_reported_bugs": 2,
-      "true_positives": 0,
-      "false_positives": 2,
-      "false_negatives": 1,
-      "classification": 0
-    },
-    {
-      "case_name": "fastapi_13",
-      "output_file": "Gemini_outputs\\Gemini_output_fastapi_13.json",
-      "benchmark_file": "benchmarks\\fastapi_bug_13.json",
-      "num_real_bugs": 2,
-      "num_reported_bugs": 1,
-      "true_positives": 0,
-      "false_positives": 1,
-      "false_negatives": 2,
-      "classification": 0
-    },
-    {
-      "case_name": "fastapi_14",
-      "output_file": "Gemini_outputs\\Gemini_output_fastapi_14.json",
-      "benchmark_file": "benchmarks\\fastapi_bug_14.json",
-      "num_real_bugs": 3,
-      "num_reported_bugs": 2,
-      "true_positives": 0,
-      "false_positives": 2,
-      "false_negatives": 3,
-      "classification": 0
-    },
-    {
-      "case_name": "fastapi_15",
-      "output_file": "Gemini_outputs\\Gemini_output_fastapi_15.json",
-      "benchmark_file": "benchmarks\\fastapi_bug_15.json",
-      "num_real_bugs": 1,
-      "num_reported_bugs": 1,
-      "true_positives": 0,
-      "false_positives": 1,
-      "false_negatives": 1,
-      "classification": 0
-    },
-    {
-      "case_name": "fastapi_16",
-      "output_file": "Gemini_outputs\\Gemini_output_fastapi_16.json",
-      "benchmark_file": "benchmarks\\fastapi_bug_16.json",
-      "num_real_bugs": 1,
-      "num_reported_bugs": 2,
-      "true_positives": 0,
-      "false_positives": 2,
-      "false_negatives": 1,
+      "false_positives": 3,
+      "false_negatives": 60,
       "classification": 0
     },
     {
@@ -169,6 +103,83 @@
       "true_positives": 0,
       "false_positives": 1,
       "false_negatives": 3,
+      "classification": 0
+    },
+    {
+      "case_name": "fastapi_10",
+      "output_file": "Gemini_outputs\\Gemini_output_fastapi_10.json",
+      "benchmark_file": "benchmarks\\fastapi_bug_10.json",
+      "num_real_bugs": 1,
+      "num_reported_bugs": 2,
+      "true_positives": 0,
+      "false_positives": 2,
+      "false_negatives": 1,
+      "classification": 0
+    },
+    {
+      "case_name": "fastapi_11",
+      "output_file": "Gemini_outputs\\Gemini_output_fastapi_11.json",
+      "benchmark_file": "benchmarks\\fastapi_bug_11.json",
+      "num_real_bugs": 1,
+      "num_reported_bugs": 1,
+      "true_positives": 0,
+      "false_positives": 1,
+      "false_negatives": 1,
+      "classification": 0
+    },
+    {
+      "case_name": "fastapi_12",
+      "output_file": "Gemini_outputs\\Gemini_output_fastapi_12.json",
+      "benchmark_file": "benchmarks\\fastapi_bug_12.json",
+      "num_real_bugs": 1,
+      "num_reported_bugs": 2,
+      "true_positives": 0,
+      "false_positives": 2,
+      "false_negatives": 1,
+      "classification": 0
+    },
+    {
+      "case_name": "fastapi_13",
+      "output_file": "Gemini_outputs\\Gemini_output_fastapi_13.json",
+      "benchmark_file": "benchmarks\\fastapi_bug_13.json",
+      "num_real_bugs": 2,
+      "num_reported_bugs": 1,
+      "true_positives": 0,
+      "false_positives": 1,
+      "false_negatives": 2,
+      "classification": 0
+    },
+    {
+      "case_name": "fastapi_14",
+      "output_file": "Gemini_outputs\\Gemini_output_fastapi_14.json",
+      "benchmark_file": "benchmarks\\fastapi_bug_14.json",
+      "num_real_bugs": 3,
+      "num_reported_bugs": 2,
+      "true_positives": 0,
+      "false_positives": 2,
+      "false_negatives": 3,
+      "classification": 0
+    },
+    {
+      "case_name": "fastapi_15",
+      "output_file": "Gemini_outputs\\Gemini_output_fastapi_15.json",
+      "benchmark_file": "benchmarks\\fastapi_bug_15.json",
+      "num_real_bugs": 1,
+      "num_reported_bugs": 1,
+      "true_positives": 0,
+      "false_positives": 1,
+      "false_negatives": 1,
+      "classification": 0
+    },
+    {
+      "case_name": "fastapi_16",
+      "output_file": "Gemini_outputs\\Gemini_output_fastapi_16.json",
+      "benchmark_file": "benchmarks\\fastapi_bug_16.json",
+      "num_real_bugs": 1,
+      "num_reported_bugs": 2,
+      "true_positives": 0,
+      "false_positives": 2,
+      "false_negatives": 1,
       "classification": 0
     },
     {
@@ -381,83 +392,6 @@
       "classification": 0
     },
     {
-      "case_name": "tornado_10",
-      "output_file": "Gemini_outputs\\Gemini_output_tornado_10.json",
-      "benchmark_file": "benchmarks\\tornado_bug_10.json",
-      "num_real_bugs": 2,
-      "num_reported_bugs": 1,
-      "true_positives": 0,
-      "false_positives": 1,
-      "false_negatives": 2,
-      "classification": 0
-    },
-    {
-      "case_name": "tornado_11",
-      "output_file": "Gemini_outputs\\Gemini_output_tornado_11.json",
-      "benchmark_file": "benchmarks\\tornado_bug_11.json",
-      "num_real_bugs": 1,
-      "num_reported_bugs": 1,
-      "true_positives": 0,
-      "false_positives": 1,
-      "false_negatives": 1,
-      "classification": 0
-    },
-    {
-      "case_name": "tornado_12",
-      "output_file": "Gemini_outputs\\Gemini_output_tornado_12.json",
-      "benchmark_file": "benchmarks\\tornado_bug_12.json",
-      "num_real_bugs": 3,
-      "num_reported_bugs": 2,
-      "true_positives": 0,
-      "false_positives": 2,
-      "false_negatives": 3,
-      "classification": 0
-    },
-    {
-      "case_name": "tornado_13",
-      "output_file": "Gemini_outputs\\Gemini_output_tornado_13.json",
-      "benchmark_file": "benchmarks\\tornado_bug_13.json",
-      "num_real_bugs": 2,
-      "num_reported_bugs": 1,
-      "true_positives": 0,
-      "false_positives": 1,
-      "false_negatives": 2,
-      "classification": 0
-    },
-    {
-      "case_name": "tornado_14",
-      "output_file": "Gemini_outputs\\Gemini_output_tornado_14.json",
-      "benchmark_file": "benchmarks\\tornado_bug_14.json",
-      "num_real_bugs": 1,
-      "num_reported_bugs": 1,
-      "true_positives": 0,
-      "false_positives": 1,
-      "false_negatives": 1,
-      "classification": 0
-    },
-    {
-      "case_name": "tornado_15",
-      "output_file": "Gemini_outputs\\Gemini_output_tornado_15.json",
-      "benchmark_file": "benchmarks\\tornado_bug_15.json",
-      "num_real_bugs": 2,
-      "num_reported_bugs": 1,
-      "true_positives": 0,
-      "false_positives": 1,
-      "false_negatives": 2,
-      "classification": 0
-    },
-    {
-      "case_name": "tornado_16",
-      "output_file": "Gemini_outputs\\Gemini_output_tornado_16.json",
-      "benchmark_file": "benchmarks\\tornado_bug_16.json",
-      "num_real_bugs": 2,
-      "num_reported_bugs": 2,
-      "true_positives": 1,
-      "false_positives": 1,
-      "false_negatives": 1,
-      "classification": 0
-    },
-    {
       "case_name": "tornado_2",
       "output_file": "Gemini_outputs\\Gemini_output_tornado_2.json",
       "benchmark_file": "benchmarks\\tornado_bug_2.json",
@@ -542,6 +476,83 @@
       "num_reported_bugs": 2,
       "true_positives": 0,
       "false_positives": 2,
+      "false_negatives": 1,
+      "classification": 0
+    },
+    {
+      "case_name": "tornado_10",
+      "output_file": "Gemini_outputs\\Gemini_output_tornado_10.json",
+      "benchmark_file": "benchmarks\\tornado_bug_10.json",
+      "num_real_bugs": 2,
+      "num_reported_bugs": 1,
+      "true_positives": 0,
+      "false_positives": 1,
+      "false_negatives": 2,
+      "classification": 0
+    },
+    {
+      "case_name": "tornado_11",
+      "output_file": "Gemini_outputs\\Gemini_output_tornado_11.json",
+      "benchmark_file": "benchmarks\\tornado_bug_11.json",
+      "num_real_bugs": 1,
+      "num_reported_bugs": 1,
+      "true_positives": 0,
+      "false_positives": 1,
+      "false_negatives": 1,
+      "classification": 0
+    },
+    {
+      "case_name": "tornado_12",
+      "output_file": "Gemini_outputs\\Gemini_output_tornado_12.json",
+      "benchmark_file": "benchmarks\\tornado_bug_12.json",
+      "num_real_bugs": 3,
+      "num_reported_bugs": 2,
+      "true_positives": 0,
+      "false_positives": 2,
+      "false_negatives": 3,
+      "classification": 0
+    },
+    {
+      "case_name": "tornado_13",
+      "output_file": "Gemini_outputs\\Gemini_output_tornado_13.json",
+      "benchmark_file": "benchmarks\\tornado_bug_13.json",
+      "num_real_bugs": 2,
+      "num_reported_bugs": 1,
+      "true_positives": 0,
+      "false_positives": 1,
+      "false_negatives": 2,
+      "classification": 0
+    },
+    {
+      "case_name": "tornado_14",
+      "output_file": "Gemini_outputs\\Gemini_output_tornado_14.json",
+      "benchmark_file": "benchmarks\\tornado_bug_14.json",
+      "num_real_bugs": 1,
+      "num_reported_bugs": 1,
+      "true_positives": 0,
+      "false_positives": 1,
+      "false_negatives": 1,
+      "classification": 0
+    },
+    {
+      "case_name": "tornado_15",
+      "output_file": "Gemini_outputs\\Gemini_output_tornado_15.json",
+      "benchmark_file": "benchmarks\\tornado_bug_15.json",
+      "num_real_bugs": 2,
+      "num_reported_bugs": 1,
+      "true_positives": 0,
+      "false_positives": 1,
+      "false_negatives": 2,
+      "classification": 0
+    },
+    {
+      "case_name": "tornado_16",
+      "output_file": "Gemini_outputs\\Gemini_output_tornado_16.json",
+      "benchmark_file": "benchmarks\\tornado_bug_16.json",
+      "num_real_bugs": 2,
+      "num_reported_bugs": 2,
+      "true_positives": 1,
+      "false_positives": 1,
       "false_negatives": 1,
       "classification": 0
     }
