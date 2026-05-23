@@ -57,7 +57,57 @@ Pedro Costa
 \newpage
 
 \section{Introduction}
-This report presents 
+Large Language Models (LLMs) are increasingly being integrated into software development workflow. As their use becomes more widespread, it is important to evaluate the extent to which developers can rely on these tools in practical software engineering contexts.
+
+This report was developed as part of the Experimental Methods in Computer Science curricular unit and addresses the following central problem statement:\\
+
+\textbf{\textit{Can developers rely on LLM-based tools to support software development activities?}}\\
+
+Given the wide scope of this question, the experiment focuses on two specific areas of software development: Code Generation and Code Review (more specifically Bug Finding). These two areas were studied separately, using distinct datasets and statistical analysis methods suited to each task.
+
+Despite these differences, both parts of the experiment share a common setting: they are based on the Python programming language and evaluate the same LLM models. This allows for a structured comparison of model performance across two relevant software development activities, contributing to a broader understanding of the capabilities and limitations of LLM-based tools.
+
+\section{Bug Finding}
+Code Review, and more specifically Bug Finding, refers to the practice of providing an LLM with source code and asking it to inspect the code for potential defects. Depending on the experimental setup, this process may involve supplying only the relevant code files, or it may include additional contextual information such as failing tests, execution outputs, error messages, or brief descriptions of the expected behaviour.
+
+This experiment focuses on the bug detection capabilities of the selected LLMs. In particular, the models are tasked with analysing Python source code and identifying the locations of real bugs. The objective is to evaluate how effectively each model can support developers in detecting defects during code review activities.
+
+\subsection{Experimental Design}
+
+\subsubsection{Research Question}
+The research question for this experiment is:\\
+\textit{How does the choice of Large Language Model affect bug-finding performance in real-world Python bugs?}
 
 
+\subsubsection{Independent Variables}
+The independent variables are:
+\begin{itemize}
+    \item \textbf{LLM Model (2 levels)}:
+    \item \textbf{Language (1 level)} :
+        \begin{itemize}
+            \item Python
+        \end{itemize}
+        Even though there is only one language bing used in the bug, it is still considered an independent variable.
+\end{itemize}
+
+\subsubsection{Dependent Variables}
+The dependent variables used in the statistical comparison are:
+\begin{itemize}
+    \item \textbf{Recall}: Fraction of the real bugs identified. \[
+            Recall = \frac{TP}{TP + FN}
+            \]
+    \item \textbf{F1-Score}: F1-score combines recall and precision into a single metric that penalises both missed 
+bugs and incorrectly reported bugs: \[
+            F1 = \frac{2TP}{2TP + FP + FN}
+            \]
+\end{itemize}
+Precision was excluded, since, due to its formula, when an LLM reports zero bugs, it will generate a division by 0. Since F1-score is the harmonic mean between Recall and Precision we decided to opt for that dependent variable.
+
+\subsubsection{Controlled Variables}
+In order to reduce unnecessary variables and isolate each LLM's performance, we kept the following variable constant:
+\begin{itemize}
+    \item \textbf{Scenarios}: Both LLMs are fed the same bug scenarios
+    \item \textbf{Prompt}: All prompts follow the same format. They just vary from scenario to scenario in the Source Files section, since they include that specific scenario's buggy code.
+    \item \textbf{New chat for each submission}: In order to avoid outputs based on previous context, each submission is made in a new chat.
+\end{itemize}
 \end{document}
