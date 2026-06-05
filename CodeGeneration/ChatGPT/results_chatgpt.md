@@ -14,13 +14,6 @@ Problem 3832 - Hard - Accepted, Runtime: 69 ms
 Problem 3673 - Hard - Accepted, Runtime: 84 ms
 
 
-
-
-Hacker Rank - Interviews Hard - Wrong Answer 
-Hacker Rank - 15 days - Accepted
-
-
-
 ----Medium----
 Problem 176 - Medium - Accepted, Runtime: 82 ms
 Problem 177 - Medium - Accepted, Runtime: 86 ms
