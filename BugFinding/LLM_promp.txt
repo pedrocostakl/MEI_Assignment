@@ -1,53 +1,60 @@
-You are given buggy source code and a failing test.
+You are given buggy source files, failing test files, and failing test output.
 
-Your task is bug localization only.
+Your task is BUG LOCALIZATION ONLY.
 
-Return a JSON object with this exact structure:
+Identify the source-code location(s) most likely responsible for the failing test.
+
+Return only valid JSON using this exact format:
 
 {
   "bug_locations": [
     {
-      "file": "<relative file path>",
-      "function_or_class": "<nearest enclosing function or class>",
-      "line_start": <first suspected buggy line>,
-      "line_end": <last suspected buggy line>,
+      "file_id": "file_1",
+      "file_path": "relative/path.py",
+      "line_start": 1,
+      "line_end": 1,
       "confidence": "low|medium|high",
-      "reason": "<max 2 sentences>"
+      "reason": "Max 2 sentences."
     }
   ]
 }
 
 Rules:
-- Do not propose a fix.
+- Do not propose fixes.
 - Do not rewrite code.
-- Do not explain beyond the reason field.
-- Line numbers must refer to the buggy source file.
-
-You are given the following files:
-
-[file_1] fastapi/routing.py
-<FILE CONTENT HERE>
-
-[file_2] tests/test_routing.py
-<FILE CONTENT HERE>
-
-Failing test output:
-<STACK TRACE HERE>
-
-Task:
-Identify the bug location.
-
-------
-example output:
+- Do not explain anything outside the JSON.
+- Line numbers must refer to the numbered buggy source files, not the test files.
+- Each entry should identify the likely origin of a bug, not every line affected by it.
+- Prefer the smallest line range that is sufficient to identify the bug.
+- Report only locations directly supported by the source code, failing test, and failing test output.
+- Do not include speculative locations.
+- If no source-code location can be identified with reasonable confidence, return:
 {
-  "bug_locations": [
-    {
-      "file": "fastapi/routing.py",
-      "function_or_class": "APIRouter",
-      "line_start": 271,
-      "line_end": 275,
-      "confidence": "high",
-      "reason": "The router includes normal routes but fails to include WebSocketRoute instances when prefixing routes."
-    }
-  ]
+  "bug_locations": []
 }
+
+SOURCE FILES:
+
+[file_1] BugsInPy/workspace/fastapi/fastapi/routing.py
+<FILE CONTENT HERE>
+
+FAILING TEST FILES:
+
+[test_file] BugsInPy/workspace/fastapi/tests/test_ws_router.py
+<FILE CONTENT HERE>
+…
+FAILING TEST  OUTPUT:
+<STACK TRACE HERE>
+=================================== FAILURES ===================================
+_____________________ test_router_ws_depends_with_override _____________________
+
+    def test_router_ws_depends_with_override():
+        client = TestClient(app)
+        app.dependency_overrides[ws_dependency] = lambda: "Override"
+        with client.websocket_connect("/router-ws-depends/") as websocket:
+>           assert websocket.receive_text() == "Override"
+E           AssertionError: assert 'Socket Dependency' == 'Override'
+E             - Override
+E             + Socket Dependency
+
+tests/test_ws_router.py:92: AssertionError

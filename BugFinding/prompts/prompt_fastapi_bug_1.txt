@@ -1,6 +1,8 @@
-You are given buggy source files and failing test files.
+You are given buggy source files, failing test files, and failing test output.
 
 Your task is BUG LOCALIZATION ONLY.
+
+Identify the source-code location(s) most likely responsible for the failing test.
 
 Return only valid JSON using this exact format:
 
@@ -20,10 +22,16 @@ Return only valid JSON using this exact format:
 Rules:
 - Do not propose fixes.
 - Do not rewrite code.
-- Do not explain outside JSON.
-- Line numbers must refer to the numbered buggy source file.
-- Include at most the number of suspected locations you think there are.
-- Prefer the smallest line range that identifies the origin of the bug.
+- Do not explain anything outside the JSON.
+- Line numbers must refer to the numbered buggy source files, not the test files.
+- Each entry should identify the likely origin of a bug, not every line affected by it.
+- Prefer the smallest line range that is sufficient to identify the bug.
+- Report only locations directly supported by the source code, failing test, and failing test output.
+- Do not include speculative locations.
+- If no source-code location can be identified with reasonable confidence, return:
+{
+  "bug_locations": []
+}
 
 
 SOURCE FILES:
@@ -2406,3 +2414,16 @@ FAILING TEST FILES:
 32 |     response = client.get("/")
 33 |     assert response.json() == {"sub": {}}
 ```
+
+FAILING TEST  OUTPUT:
+=================================== FAILURES ===================================
+________________________ test_encode_model_with_default ________________________
+
+    def test_encode_model_with_default():
+        model = ModelWithDefault(foo="foo", bar="bar")
+        assert jsonable_encoder(model) == {"foo": "foo", "bar": "bar", "bla": "bla"}
+        assert jsonable_encoder(model, exclude_unset=True) == {"foo": "foo", "bar": "bar"}
+>       assert jsonable_encoder(model, exclude_defaults=True) == {"foo": "foo"}
+E       TypeError: jsonable_encoder() got an unexpected keyword argument 'exclude_defaults'
+
+tests/test_jsonable_encoder.py:134: TypeError
