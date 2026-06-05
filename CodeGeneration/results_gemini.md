@@ -14,11 +14,6 @@ Problem 3832 - Hard - Runtime Error - didnt respect context restrictions
 Problem 3764 - Hard - Accepted, Runtime: 106 ms
 
 
-Hacker Rank - Interviews Hard - Wrong Answer 
-Hacker Rank - 15 days - Accepted
-
-
-
 ----Medium----
 Problem 176 - Medium - Accepted, Runtime: 90 ms
 Problem 177 - Medium - Accepted, Runtime: 103 ms
