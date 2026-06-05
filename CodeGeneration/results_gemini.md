@@ -8,9 +8,9 @@ Problem 601 - Hard - Accepted, Runtime: 82 ms
 Problem 3451 - Hard - Accepted, Runtime: 84 ms
 Problem 3374 - Hard - Runtime error syntax error, Runtime: 84 ms
 Problem 3482 - Hard - Accepted, Runtime: 94 ms
-Problem 3482 - Hard - Accepted, Runtime: 86 ms
+Problem 3673 - Hard - Accepted, Runtime: 88 ms
 Problem 3617 - Hard - Accepted, Runtime: 120 ms
-Problem 3617 - Hard - Runtime Error - didnt respect context restrictions, Runtime: 120 ms
+Problem 3832 - Hard - Runtime Error - didnt respect context restrictions
 Problem 3764 - Hard - Accepted, Runtime: 106 ms
 
 
