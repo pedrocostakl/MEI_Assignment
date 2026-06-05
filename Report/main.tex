@@ -9,25 +9,13 @@
 \usepackage{lmodern}
 \usepackage{microtype}
 
-\usepackage{longtable,booktabs,array}
-\usepackage{float}
-\usepackage{caption}
+\usepackage{longtable,array}
 
-\usepackage[
-       hidelinks
-]{hyperref}
-\usepackage{bookmark}
-
-
-\usepackage{setspace}
-\onehalfspacing % optional: improves readability
+\linespread{1.25} % approximate one-and-a-half spacing without extra packages
 \renewcommand{\arraystretch}{1.2}
 \setlength{\parskip}{6pt}
 \setlength{\parindent}{0pt}
 
-
-\usepackage{titlesec}
-\titlespacing{\section}{0pt}{12pt}{6pt}
 
 \title{
   \textbf {Experimental Methods in Computer Science}\\
@@ -66,6 +54,10 @@ This report was developed as part of the Experimental Methods in Computer Scienc
 Given the wide scope of this question, the experiment focuses on two specific areas of software development: Code Generation and Code Review (more specifically Bug Finding). These two areas were studied separately, using distinct datasets and statistical analysis methods suited to each task.
 
 Despite these differences, both parts of the experiment share a common setting: they are based on the Python programming language and evaluate the same LLM models. This allows for a structured comparison of model performance across two relevant software development activities, contributing to a broader understanding of the capabilities and limitations of LLM-based tools.
+
+
+\section{Experimental Design}
+\subsection{}
 
 \section{Bug Finding}
 Code Review, and more specifically Bug Finding, refers to the practice of providing an LLM with source code and asking it to inspect the code for potential defects. Depending on the experimental setup, this process may involve supplying only the relevant code files, or it may include additional contextual information such as failing tests, execution outputs, error messages, or brief descriptions of the expected behaviour.
@@ -110,4 +102,82 @@ In order to reduce unnecessary variables and isolate each LLM's performance, we 
     \item \textbf{Prompt}: All prompts follow the same format. They just vary from scenario to scenario in the Source Files section, since they include that specific scenario's buggy code.
     \item \textbf{New chat for each submission}: In order to avoid outputs based on previous context, each submission is made in a new chat.
 \end{itemize}
+
+
+
+
+
+\section{Code Generation}
+\subsection{Context and Procedure Description}
+
+This experiment evaluated the reliability of Large Language Models (LLMs) in generating SQL queries. SQL was selected because SQL programming problems provide a standardized evaluation environment in which generated solutions can be automatically executed and validated against predefined test cases.
+
+A dataset consisting of 30 SQL programming problems was collected from the LeetCode platform. The selected problems were evenly distributed across three difficulty levels (Easy, Medium, and Hard) to enable the assessment of model performance under varying degrees of complexity.
+
+For each problem, both LLMs received the same prompt template and were instructed to generate a single SQL query that solved the task. The generated solutions were subsequently submitted to the LeetCode evaluation platform, which automatically executed each query against a set of hidden test cases and determined whether the solution was accepted or rejected.
+
+The evaluation was based on the acceptance status returned by the platform rather than a direct comparison of query syntax. This approach focuses on functional correctness, ensuring that semantically equivalent queries producing identical results are treated as valid solutions.
+
+In addition to correctness, the execution time reported by the platform was recorded as a secondary metric. This metric is used as a proxy for query efficiency, allowing a comparative analysis of whether the generated solutions differ in computational performance between models. Although execution time is influenced by factors such as query structure and database optimization strategies, it provides a practical indicator of whether one model tends to generate more efficient (i.e., potentially more optimized) SQL solutions than the other.
+
+Query correctness remains the primary measure of reliability, while execution time is treated as an auxiliary performance metric to support a secondary analysis of solution efficiency.
+
+Each model was allowed a single attempt per problem. This decision was made to evaluate first-response reliability and to avoid the introduction of bias associated with iterative prompt refinement or multiple generation attempts.
+
+To ensure experimental consistency, all problems were presented using the same prompt structure, with only the problem statement and associated input/output specifications varying between tasks. Furthermore, each problem was submitted in an independent conversation context, preventing information from previous interactions from influencing subsequent responses. As a result, every generated solution constituted an independent observation.
+
+\subsection{Variables, Research Questions and Hypotheses}
+Is there a statistically significant difference in SQL query correctness between ChatGPT Mini and Gemini Flash?
+
+Does problem difficulty affect the reliability of SQL solutions generated by LLMs?
+
+\subsection{Variables}
+
+The experimental design includes two independent variables and multiple dependent variables used to evaluate the reliability and performance of Large Language Models (LLMs) in SQL code generation.
+
+\subsubsection{Independent Variables}
+
+\textbf{IV1: LLM Model}
+
+This variable represents the Large Language Model used to generate SQL queries. It has two levels:
+\begin{itemize}
+    \item ChatGPT Mini
+    \item Gemini Flash
+\end{itemize}
+
+\textbf{IV2: Problem Difficulty}
+
+This variable represents the difficulty level of the SQL programming problems selected from the dataset. It has three levels:
+\begin{itemize}
+    \item Easy
+    \item Medium
+    \item Hard
+\end{itemize}
+
+\subsubsection{Dependent Variables}
+
+\textbf{DV1: Query Outcome Classification (Primary Outcome)}
+
+This variable classifies the outcome of each generated SQL query based on its execution and correctness. It is defined as a categorical variable with the following levels:
+
+\begin{itemize}
+    \item \textbf{Correct}: the query executes successfully and passes all hidden test cases
+    \item \textbf{Incorrect Logic}: the query executes successfully but fails one or more hidden test cases due to logical or constraint violations
+    \item \textbf{Syntax or Execution Error}: the query fails to execute due to syntax errors or runtime issues
+\end{itemize}
+
+This classification allows a more granular analysis of failure types beyond binary correctness.
+
+\textbf{DV2: Execution Success}
+
+This variable captures whether the generated SQL query is syntactically valid and executable. It is defined as:
+\begin{itemize}
+    \item Executes successfully
+    \item Execution error
+\end{itemize}
+
+\textbf{DV3: Execution Time (Secondary Performance Metric)}
+
+This variable records the execution time reported by the evaluation platform for each query. It is treated as a continuous variable and used as a proxy for query efficiency. It is not used as a measure of correctness, but instead as a secondary performance indicator to compare computational efficiency across models.
+
 \end{document}
