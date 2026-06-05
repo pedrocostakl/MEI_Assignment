@@ -5,6 +5,14 @@ LeetCode
 Problem 185 - Hard - Accepted, Runtime: 128 ms
 Problem 262 - Hard - Accepted, Runtime: 94 ms
 Problem 601 - Hard - Accepted, Runtime: 82 ms
+Problem 3451 - Hard - Accepted, Runtime: 84 ms
+Problem 3374 - Hard - Runtime error syntax error, Runtime: 84 ms
+Problem 3482 - Hard - Accepted, Runtime: 94 ms
+Problem 3482 - Hard - Accepted, Runtime: 86 ms
+Problem 3617 - Hard - Accepted, Runtime: 120 ms
+Problem 3617 - Hard - Runtime Error - didnt respect context restrictions, Runtime: 120 ms
+Problem 3764 - Hard - Accepted, Runtime: 106 ms
+
 
 Hacker Rank - Interviews Hard - Wrong Answer 
 Hacker Rank - 15 days - Accepted
