@@ -23,3 +23,9 @@ Problem 585 - Medium - Accepted, Runtime: 71 ms
 Problem 602 - Medium - Accepted, Runtime: 75 ms
 Problem 608 - Medium - Accepted, Runtime: 83 ms
 Problem 626 - Medium - Accepted, Runtime: 79 ms
+
+--------Easy------
+
+Problem 175 - Medium - Accepted, Runtime: 114ms
+Problem 181 - Medium - Accepted, Runtime: 80ms
+Problem 182 - Medium - Accepted, Runtime: 70ms
