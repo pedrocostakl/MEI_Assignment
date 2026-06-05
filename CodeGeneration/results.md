@@ -26,6 +26,13 @@ Problem 626 - Medium - Accepted, Runtime: 79 ms
 
 --------Easy------
 
-Problem 175 - Medium - Accepted, Runtime: 114ms
-Problem 181 - Medium - Accepted, Runtime: 80ms
-Problem 182 - Medium - Accepted, Runtime: 70ms
+Problem 175 - Easy - Accepted, Runtime: 114ms
+Problem 181 - Easy - Accepted, Runtime: 80ms
+Problem 182 - Easy - Accepted, Runtime: 70ms
+Problem 183 - Easy - Accepted, Runtime: 94ms
+Problem 196 - Easy - Accepted, Runtime: 70ms
+Problem 197 - Easy - Accepted, Runtime: 68ms
+Problem 511 - Easy - Accepted, Runtime: 74ms
+Problem 577 - Easy - Accepted, Runtime: 644ms
+Problem 584 - Easy - Accepted, Runtime: 79ms
+Problem 586 - Easy - Accepted, Runtime: 79ms
