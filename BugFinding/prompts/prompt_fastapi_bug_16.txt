@@ -1,4 +1,4 @@
-You are given buggy source files, failing test files, and failing test output.
+You are given buggy source files, failing test files, and test execution output.
 
 Your task is BUG LOCALIZATION ONLY.
 
@@ -250,3 +250,32 @@ FAILING TEST FILES:
 33 |         response = client.get("/model")
 34 |     assert response.json() == {"dt_field": "2019-01-01T08:00:00+00:00"}
 ```
+
+TEST EXECUTION OUTPUT:
+
+=================================== FAILURES ===================================
+________________________ test_encode_model_with_config _________________________
+
+    def test_encode_model_with_config():
+        model = ModelWithConfig(role=RoleEnum.admin)
+>       assert jsonable_encoder(model) == {"role": "admin"}
+
+tests/test_jsonable_encoder.py:87: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+obj = <ModelWithConfig role='admin'>, include = None, exclude = set()
+by_alias = False, include_none = True, custom_encoder = {}
+
+    def jsonable_encoder(
+        obj: Any,
+        include: Set[str] = None,
+        exclude: Set[str] = set(),
+        by_alias: bool = False,
+        include_none: bool = True,
+        custom_encoder: dict = {},
+    ) -> Any:
+        if isinstance(obj, BaseModel):
+>           if not obj.Config.json_encoders:
+E           AttributeError: type object 'Config' has no attribute 'json_encoders'
+
+fastapi/encoders.py:18: AttributeError

@@ -1,4 +1,4 @@
-You are given buggy source files, failing test files, and failing test output.
+You are given buggy source files, failing test files, and test execution output.
 
 Your task is BUG LOCALIZATION ONLY.
 
@@ -220,3 +220,17 @@ FAILING TEST FILES:
 115 |     assert logging.getLogger('sanic.root').getEffectiveLevel() == logging.DEBUG
 116 | 
 ```
+
+TEST EXECUTION OUTPUT:
+
+=================================== FAILURES ===================================
+___________________ test_logging_modified_root_logger_config ___________________
+
+    def test_logging_modified_root_logger_config():
+        reset_logging()
+    
+        modified_config = LOGGING_CONFIG_DEFAULTS
+>       modified_config['loggers']['sanic.root']['level'] = 'DEBUG'
+E       KeyError: 'sanic.root'
+
+tests/test_logging.py:111: KeyError

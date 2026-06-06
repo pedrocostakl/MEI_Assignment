@@ -1,4 +1,4 @@
-You are given buggy source files, failing test files, and failing test output.
+You are given buggy source files, failing test files, and test execution output.
 
 Your task is BUG LOCALIZATION ONLY.
 
@@ -2415,7 +2415,8 @@ FAILING TEST FILES:
 33 |     assert response.json() == {"sub": {}}
 ```
 
-FAILING TEST  OUTPUT:
+TEST EXECUTION OUTPUT:
+
 =================================== FAILURES ===================================
 ________________________ test_encode_model_with_default ________________________
 

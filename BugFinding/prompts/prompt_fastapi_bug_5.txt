@@ -1,4 +1,4 @@
-You are given buggy source files, failing test files, and failing test output.
+You are given buggy source files, failing test files, and test execution output.
 
 Your task is BUG LOCALIZATION ONLY.
 
@@ -298,3 +298,24 @@ FAILING TEST FILES:
 90 |         "model_b": {"username": "test-user"},
 91 |     }
 ```
+
+TEST EXECUTION OUTPUT:
+
+=================================== FAILURES ===================================
+____________________________ test_filter_sub_model _____________________________
+
+    def test_filter_sub_model():
+        response = client.get("/model")
+        assert response.status_code == 200
+>       assert response.json() == {
+            "name": "model-a-name",
+            "description": "model-a-desc",
+            "model_b": {"username": "test-user"},
+        }
+E       AssertionError: assert {'description...model-a-name'} == {'description...model-a-name'}
+E         Omitting 2 identical items, use -vv to show
+E         Differing items:
+E         {'model_b': {'password': 'test-password', 'username': 'test-user'}} != {'model_b': {'username': 'test-user'}}
+E         Use -v to get the full diff
+
+tests/test_filter_pydantic_sub_model.py:87: AssertionError

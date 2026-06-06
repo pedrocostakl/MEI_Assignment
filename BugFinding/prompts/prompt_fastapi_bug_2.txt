@@ -1,4 +1,4 @@
-You are given buggy source files, failing test files, and failing test output.
+You are given buggy source files, failing test files, and test execution output.
 
 Your task is BUG LOCALIZATION ONLY.
 
@@ -1129,7 +1129,8 @@ FAILING TEST FILES:
 92 |         assert websocket.receive_text() == "Override"
 ```
 
-FAILING TEST  OUTPUT:
+TEST EXECUTION OUTPUT:
+
 =================================== FAILURES ===================================
 _____________________ test_router_ws_depends_with_override _____________________
 

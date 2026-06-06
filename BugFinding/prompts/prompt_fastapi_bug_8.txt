@@ -1,4 +1,4 @@
-You are given buggy source files, failing test files, and failing test output.
+You are given buggy source files, failing test files, and test execution output.
 
 Your task is BUG LOCALIZATION ONLY.
 
@@ -1018,3 +1018,18 @@ FAILING TEST FILES:
 113 |     assert routes["/a/b/"].x_type == "B"
 114 |     assert routes["/a/b/c/"].x_type == "C"
 ```
+
+TEST EXECUTION OUTPUT:
+
+=================================== FAILURES ===================================
+______________________________ test_route_classes ______________________________
+
+    def test_route_classes():
+        routes = {}
+        r: APIRoute
+        for r in app.router.routes:
+            routes[r.path] = r
+>       assert routes["/a/"].x_type == "A"
+E       AttributeError: 'APIRoute' object has no attribute 'x_type'
+
+tests/test_custom_route_class.py:112: AttributeError

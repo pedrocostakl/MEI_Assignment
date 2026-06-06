@@ -1,4 +1,4 @@
-You are given buggy source files, failing test files, and failing test output.
+You are given buggy source files, failing test files, and test execution output.
 
 Your task is BUG LOCALIZATION ONLY.
 
@@ -868,3 +868,18 @@ FAILING TEST FILES:
 45 |     assert response.status_code == 200
 46 |     assert response.json() == ["first", "second", "third"]
 ```
+
+TEST EXECUTION OUTPUT:
+
+=================================== FAILURES ===================================
+________________________ test_python_list_param_as_form ________________________
+
+    def test_python_list_param_as_form():
+        response = client.post(
+            "/form/python-list", data={"items": ["first", "second", "third"]}
+        )
+>       assert response.status_code == 200
+E       assert 422 == 200
+E        +  where 422 = <Response [422]>.status_code
+
+tests/test_forms_from_non_typing_sequences.py:29: AssertionError

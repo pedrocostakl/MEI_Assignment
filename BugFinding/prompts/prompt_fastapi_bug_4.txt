@@ -1,4 +1,4 @@
-You are given buggy source files, failing test files, and failing test output.
+You are given buggy source files, failing test files, and test execution output.
 
 Your task is BUG LOCALIZATION ONLY.
 
@@ -450,3 +450,20 @@ FAILING TEST FILES:
 92 |     response = client.get("/users/42")
 93 |     assert response.status_code == 200
 ```
+
+TEST EXECUTION OUTPUT:
+
+=================================== FAILURES ===================================
+______________________________ test_reused_param _______________________________
+
+    def test_reused_param():
+        response = client.get("/openapi.json")
+        data = response.json()
+>       assert data == openapi_schema
+E       AssertionError: assert {'components'...ead Users'}}}} == {'components'...ead Users'}}}}
+E         Omitting 3 identical items, use -vv to show
+E         Differing items:
+E         {'paths': {'/users/{user_id}': {'get': {'operationId': 'read_users_users__user_id__get', 'parameters': [{'in': 'path',...on': 'Successful Response'}, '422': {'content': {...}, 'description': 'Validation Error'}}, 'summary': 'Read Users'}}}} != {'paths': {'/users/{user_id}': {'get': {'operationId': 'read_users_users__user_id__get', 'parameters': [{'in': 'path',...on': 'Successful Response'}, '422': {'content': {...}, 'description': 'Validation Error'}}, 'summary': 'Read Users'}}}}
+E         Use -v to get the full diff
+
+tests/test_param_in_path_and_dependency.py:88: AssertionError

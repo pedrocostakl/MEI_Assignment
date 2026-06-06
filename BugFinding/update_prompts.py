@@ -5,14 +5,16 @@ import re
 prompts_dir = r"c:\Users\pedro\Documents\MEI\1 Ano\2 Semestre\MEI\Assignment\MEI_Assignment\BugFinding\prompts"
 
 # Old task description section
-old_task = """You are given buggy source files and failing test files.
+old_task = """You are given buggy source files, failing test files, and failing test output.
 
 Your task is BUG LOCALIZATION ONLY.
+
+Identify the source-code location(s) most likely responsible for the failing test.
 
 Return only valid JSON using this exact format:"""
 
 # New task description section
-new_task = """You are given buggy source files, failing test files, and failing test output.
+new_task = """You are given buggy source files, failing test files, and test execution output.
 
 Your task is BUG LOCALIZATION ONLY.
 

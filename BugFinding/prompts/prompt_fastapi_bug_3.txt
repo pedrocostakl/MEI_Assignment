@@ -1,4 +1,4 @@
-You are given buggy source files, failing test files, and failing test output.
+You are given buggy source files, failing test files, and test execution output.
 
 Your task is BUG LOCALIZATION ONLY.
 
@@ -1174,8 +1174,8 @@ FAILING TEST FILES:
 154 |     }
 ```
 
+TEST EXECUTION OUTPUT:
 
-FAILING TEST  OUTPUT:
 =================================== FAILURES ===================================
 __________________________________ test_valid __________________________________
 

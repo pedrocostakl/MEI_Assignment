@@ -1,4 +1,4 @@
-You are given buggy source files, failing test files, and failing test output.
+You are given buggy source files, failing test files, and test execution output.
 
 Your task is BUG LOCALIZATION ONLY.
 
@@ -259,3 +259,16 @@ FAILING TEST FILES:
 67 |     assert response.status_code == 200
 68 |     assert response.json() == {"msg": "Create an account first"}
 ```
+
+TEST EXECUTION OUTPUT:
+
+=================================== FAILURES ===================================
+____________ test_security_http_bearer_incorrect_scheme_credentials ____________
+
+    def test_security_http_bearer_incorrect_scheme_credentials():
+        response = client.get("/users/me", headers={"Authorization": "Basic notreally"})
+>       assert response.status_code == 200
+E       assert 403 == 200
+E        +  where 403 = <Response [403]>.status_code
+
+tests/test_security_http_bearer_optional.py:67: AssertionError
