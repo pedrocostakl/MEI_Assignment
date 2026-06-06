@@ -1531,3 +1531,17 @@ FAILING TEST FILES:
 465 |         # document.cookie parses whitespace.
 466 |         self.assertEqual(parse_cookie('  =  b  ;  ;  =  ;   c  =  ;  '), {'': 'b', 'c': ''})
 ```
+
+TEST EXECUTION OUTPUT:
+
+======================================================================
+ERROR: test_url_concat_none_params (tornado.test.httputil_test.TestUrlConcat)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/user/BugsInPy/temp/projects/tornado/tornado/test/httputil_test.py", line 72, in test_url_concat_none_params
+    None,
+  File "/home/user/BugsInPy/temp/projects/tornado/tornado/httputil.py", line 616, in url_concat
+    raise TypeError(err)
+TypeError: 'args' parameter should be dict, list or tuple. Not <class 'NoneType'>
+
+----------------------------------------------------------------------

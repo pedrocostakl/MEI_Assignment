@@ -200,3 +200,19 @@ FAILING TEST FILES:
 81 |             self.mw.get_host_regex(self.spider)
 82 |             assert issubclass(w[-1].category, URLWarning)
 ```
+
+TEST EXECUTION OUTPUT:
+
+======================================================================
+ERROR: test_process_spider_output (tests.test_spidermiddleware_offsite.TestOffsiteMiddleware4)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/user/BugsInPy/temp/projects/scrapy/tests/test_spidermiddleware_offsite.py", line 17, in setUp
+    self.mw.spider_opened(self.spider)
+  File "/home/user/BugsInPy/temp/projects/scrapy/scrapy/spidermiddlewares/offsite.py", line 67, in spider_opened
+    self.host_regex = self.get_host_regex(spider)
+  File "/home/user/BugsInPy/temp/projects/scrapy/scrapy/spidermiddlewares/offsite.py", line 58, in get_host_regex
+    if url_pattern.match(domain):
+TypeError: expected string or bytes-like object
+
+----------------------------------------------------------------------
