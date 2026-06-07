@@ -1,4 +1,4 @@
-You are given buggy source files, failing test files, and failing test output.
+You are given buggy source files, failing test files, and test execution output.
 
 Your task is BUG LOCALIZATION ONLY.
 
@@ -27,7 +27,7 @@ Rules:
 - Each entry should identify the likely origin of a bug, not every line affected by it.
 - Prefer the smallest line range that is sufficient to identify the bug.
 - Report only locations directly supported by the source code, failing test, and failing test output.
-- Do not include speculative locations.
+- There can be multiple bugs present.
 - If no source-code location can be identified with reasonable confidence, return:
 {
   "bug_locations": []
@@ -193,3 +193,27 @@ FAILING TEST FILES:
 16 |     assert HTTP_OK in r
 17 |     assert r.lower().count('host:') == 1
 ```
+
+TEST EXECUTION OUTPUT:
+
+=================================== FAILURES ===================================
+__________________________ test_Host_header_overwrite __________________________
+
+    def test_Host_header_overwrite():
+        """
+        https://github.com/jakubroztocil/httpie/issues/235
+    
+        """
+        host = 'httpbin.org'
+        url = 'http://{httpbin_ip}/get'.format(
+            httpbin_ip=socket.gethostbyname(host))
+        r = http('--print=hH', url, 'host:{}'.format(host))
+        assert HTTP_OK in r
+>       assert r.lower().count('host:') == 1
+E       assert 2 == 1
+E        +  where 2 = <built-in method count of str object at 0x7f545bfffdb0>('host:')
+E        +    where <built-in method count of str object at 0x7f545bfffdb0> = "get /get http/1.1\r\naccept: */*\r\naccept-encoding: gzip, deflate, compress\r\nhost: 54.211.216.104\r\nuser-agent: b...ength: 311\r\ncontent-type: application/json\r\ndate: sat, 15 jul 2023 13:10:23 gmt\r\nserver: gunicorn/19.9.0\r\n\r\n".count
+E        +      where "get /get http/1.1\r\naccept: */*\r\naccept-encoding: gzip, deflate, compress\r\nhost: 54.211.216.104\r\nuser-agent: b...ength: 311\r\ncontent-type: application/json\r\ndate: sat, 15 jul 2023 13:10:23 gmt\r\nserver: gunicorn/19.9.0\r\n\r\n" = <built-in method lower of StrCLIResponse object at 0x7f545bfd4138>()
+E        +        where <built-in method lower of StrCLIResponse object at 0x7f545bfd4138> = "GET /get HTTP/1.1\r\nAccept: */*\r\nAccept-Encoding: gzip, deflate, compress\r\nHost: 54.211.216.104\r\nUser-Agent: b...ength: 311\r\nContent-Type: application/json\r\nDate: Sat, 15 Jul 2023 13:10:23 GMT\r\nServer: gunicorn/19.9.0\r\n\r\n".lower
+
+tests/test_regressions.py:17: AssertionError

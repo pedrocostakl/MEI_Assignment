@@ -1,4 +1,4 @@
-You are given buggy source files, failing test files, and failing test output.
+You are given buggy source files, failing test files, and test execution output.
 
 Your task is BUG LOCALIZATION ONLY.
 
@@ -27,7 +27,7 @@ Rules:
 - Each entry should identify the likely origin of a bug, not every line affected by it.
 - Prefer the smallest line range that is sufficient to identify the bug.
 - Report only locations directly supported by the source code, failing test, and failing test output.
-- Do not include speculative locations.
+- There can be multiple bugs present.
 - If no source-code location can be identified with reasonable confidence, return:
 {
   "bug_locations": []
@@ -734,3 +734,20 @@ FAILING TEST FILES:
 94 |     assert response.status_code == 200
 95 |     assert response.json() == "c"
 ```
+
+TEST EXECUTION OUTPUT:
+
+=================================== FAILURES ===================================
+_____________________________ test_openapi_schema ______________________________
+
+    def test_openapi_schema():
+        response = client.get("/openapi.json")
+        assert response.status_code == 200
+>       assert response.json() == openapi_schema
+E       AssertionError: assert {'info': {'ti...': 'C Get'}}}} == {'info': {'ti...': 'C Get'}}}}
+E         Omitting 2 identical items, use -vv to show
+E         Differing items:
+E         {'paths': {'/a': {'get': {'operationId': 'a_a_get', 'responses': {'200': {'content': {...}, 'description': 'Successful...: 'Successful Response'}, '501': {'description': 'Error 3'}, '502': {'description': 'Error 2'}}, 'summary': 'C Get'}}}} != {'paths': {'/a': {'get': {'operationId': 'a_a_get', 'responses': {'200': {'content': {...}, 'description': 'Successful...': {'content': {...}, 'description': 'Successful Response'}, '501': {'description': 'Error 3'}}, 'summary': 'C Get'}}}}
+E         Use -v to get the full diff
+
+tests/test_additional_responses_router.py:77: AssertionError

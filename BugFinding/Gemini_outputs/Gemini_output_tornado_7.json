@@ -3,10 +3,10 @@
     {
       "file_id": "file_1",
       "file_path": "tornado/ioloop.py",
-      "line_start": 1125,
-      "line_end": 1126,
+      "line_start": 659,
+      "line_end": 659,
       "confidence": "high",
-      "reason": "The use of true division and math.floor with floating-point representations introduces precision errors, which can cause the periodic callback to inadvertently skip intervals or schedule the next timeout improperly."
+      "reason": "The method run_in_executor returns a concurrent.futures.Future directly instead of wrapping or converting it into a Tornado-compatible or awaitable Future under Python 3."
     }
   ]
 }

@@ -3,10 +3,10 @@
     {
       "file_id": "file_1",
       "file_path": "fastapi/utils.py",
-      "line_start": 96,
-      "line_end": 101,
+      "line_start": 99,
+      "line_end": 100,
       "confidence": "high",
-      "reason": "Creating a dynamic model without specifying `__module__` or `__base__`, and then manually injecting `__fields__` and `__validators__` into the class instead of passing them to `create_model`, results in an improperly initialized Pydantic model. This causes sub-model instances to bypass Pydantic's field filtering during response serialization."
+      "reason": "When cloning a BaseModel field, sub-fields are copied by referencing the existing fields from original_type directly rather than cloning or modifying them properly, preventing sub-models from filtering out subclass attributes like 'password'."
     }
   ]
 }

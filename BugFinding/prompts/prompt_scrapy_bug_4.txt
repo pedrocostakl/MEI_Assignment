@@ -1,4 +1,4 @@
-You are given buggy source files, failing test files, and failing test output.
+You are given buggy source files, failing test files, and test execution output.
 
 Your task is BUG LOCALIZATION ONLY.
 
@@ -27,7 +27,7 @@ Rules:
 - Each entry should identify the likely origin of a bug, not every line affected by it.
 - Prefer the smallest line range that is sufficient to identify the bug.
 - Report only locations directly supported by the source code, failing test, and failing test output.
-- Do not include speculative locations.
+- There can be multiple bugs present.
 - If no source-code location can be identified with reasonable confidence, return:
 {
   "bug_locations": []
@@ -412,3 +412,36 @@ FAILING TEST FILES:
 203 |         self.assertFalse(self.results.failures)
 204 |         self.assertTrue(self.results.errors)
 ```
+
+TEST EXECUTION OUTPUT:
+
+======================================================================
+ERROR: test_errback (tests.test_contracts.ContractsManagerTest)
+test_errback
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/opt/conda/envs/efb64380dc38f78881cf0b6bb8b65677/lib/python3.8/site-packages/twisted/internet/defer.py", line 151, in maybeDeferred
+    result = f(*args, **kw)
+  File "/opt/conda/envs/efb64380dc38f78881cf0b6bb8b65677/lib/python3.8/site-packages/twisted/internet/utils.py", line 221, in runWithWarningsSuppressed
+    reraise(exc_info[1], exc_info[2])
+  File "/opt/conda/envs/efb64380dc38f78881cf0b6bb8b65677/lib/python3.8/site-packages/twisted/python/compat.py", line 464, in reraise
+    raise exception.with_traceback(traceback)
+  File "/opt/conda/envs/efb64380dc38f78881cf0b6bb8b65677/lib/python3.8/site-packages/twisted/internet/utils.py", line 217, in runWithWarningsSuppressed
+    result = f(*a, **kw)
+  File "/home/user/BugsInPy/temp/projects/scrapy/tests/test_contracts.py", line 201, in test_errback
+    request.errback(failure_mock)
+  File "/home/user/BugsInPy/temp/projects/scrapy/scrapy/contracts/__init__.py", line 88, in eb_wrapper
+    results.addError(case, exc_info)
+  File "/opt/conda/envs/efb64380dc38f78881cf0b6bb8b65677/lib/python3.8/unittest/runner.py", line 67, in addError
+    super(TextTestResult, self).addError(test, err)
+  File "/opt/conda/envs/efb64380dc38f78881cf0b6bb8b65677/lib/python3.8/unittest/result.py", line 17, in inner
+    return method(self, *args, **kw)
+  File "/opt/conda/envs/efb64380dc38f78881cf0b6bb8b65677/lib/python3.8/unittest/result.py", line 115, in addError
+    self.errors.append((test, self._exc_info_to_string(err, test)))
+  File "/opt/conda/envs/efb64380dc38f78881cf0b6bb8b65677/lib/python3.8/unittest/result.py", line 185, in _exc_info_to_string
+    tb_e = traceback.TracebackException(
+  File "/opt/conda/envs/efb64380dc38f78881cf0b6bb8b65677/lib/python3.8/traceback.py", line 484, in __init__
+    exc_value.__cause__.__traceback__,
+AttributeError: 'getset_descriptor' object has no attribute '__traceback__'
+
+----------------------------------------------------------------------

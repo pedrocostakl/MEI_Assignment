@@ -3,10 +3,10 @@
     {
       "file_id": "file_1",
       "file_path": "tornado/http1connection.py",
-      "line_start": 722,
-      "line_end": 724,
+      "line_start": 568,
+      "line_end": 568,
       "confidence": "high",
-      "reason": "When an `iostream.UnsatisfiableReadError` is caught (e.g., when headers exceed the maximum size), the connection is not explicitly closed before returning. This leaves the stream open and can cause the client to hang or fail incorrectly instead of properly receiving a dropped connection."
+      "reason": "The 'Transfer-Encoding' header check is case-sensitive, matching only lowercase 'chunked' instead of normalizing it via .lower(). This causes requests with uppercase values (like 'Chunked') to fail to parse as chunked bodies."
     }
   ]
 }

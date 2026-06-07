@@ -1,4 +1,4 @@
-You are given buggy source files, failing test files, and failing test output.
+You are given buggy source files, failing test files, and test execution output.
 
 Your task is BUG LOCALIZATION ONLY.
 
@@ -27,7 +27,7 @@ Rules:
 - Each entry should identify the likely origin of a bug, not every line affected by it.
 - Prefer the smallest line range that is sufficient to identify the bug.
 - Report only locations directly supported by the source code, failing test, and failing test output.
-- Do not include speculative locations.
+- There can be multiple bugs present.
 - If no source-code location can be identified with reasonable confidence, return:
 {
   "bug_locations": []
@@ -1331,3 +1331,19 @@ FAILING TEST FILES:
 1081 | if __name__ == "__main__":
 1082 |     unittest.main()
 ```
+
+TEST EXECUTION OUTPUT:
+
+======================================================================
+FAIL: test_spaces_in_action (tests.test_http_request.FormRequestTest)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/user/BugsInPy/temp/projects/scrapy/tests/test_http_request.py", line 1007, in test_spaces_in_action
+    self.assertEqual(req.url, 'http://example.com/path')
+AssertionError: 'http://example.com/%20path' != 'http://example.com/path'
+- http://example.com/%20path
+?                    ---
++ http://example.com/path
+
+
+----------------------------------------------------------------------

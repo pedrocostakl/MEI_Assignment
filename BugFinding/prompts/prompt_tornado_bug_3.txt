@@ -1,4 +1,4 @@
-You are given buggy source files, failing test files, and failing test output.
+You are given buggy source files, failing test files, and test execution output.
 
 Your task is BUG LOCALIZATION ONLY.
 
@@ -27,7 +27,7 @@ Rules:
 - Each entry should identify the likely origin of a bug, not every line affected by it.
 - Prefer the smallest line range that is sufficient to identify the bug.
 - Report only locations directly supported by the source code, failing test, and failing test output.
-- Do not include speculative locations.
+- There can be multiple bugs present.
 - If no source-code location can be identified with reasonable confidence, return:
 {
   "bug_locations": []
@@ -1579,3 +1579,26 @@ FAILING TEST FILES:
 759 |         self.assertEqual(str(e), "HTTP 403: Forbidden")
 760 |         self.assertEqual(repr(e), "HTTP 403: Forbidden")
 ```
+
+TEST EXECUTION OUTPUT:
+
+======================================================================
+FAIL: test_destructor_log (tornado.test.httpclient_test.SyncHTTPClientSubprocessTest)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/user/BugsInPy/temp/projects/tornado/tornado/test/httpclient_test.py", line 707, in test_destructor_log
+    self.fail("subprocess produced unexpected output")
+AssertionError: subprocess produced unexpected output
+
+----------------------------------------------------------------------
+Ran 1 test in 0.609s
+
+FAILED (failures=1)
+STDOUT:
+Exception ignored in: <function HTTPClient.__del__ at 0x7fcbd9e3f0d0>
+Traceback (most recent call last):
+  File "/home/user/BugsInPy/temp/projects/tornado/tornado/httpclient.py", line 109, in __del__
+  File "/home/user/BugsInPy/temp/projects/tornado/tornado/httpclient.py", line 114, in close
+  File "/home/user/BugsInPy/temp/projects/tornado/tornado/simple_httpclient.py", line 160, in close
+  File "/home/user/BugsInPy/temp/projects/tornado/tornado/httpclient.py", line 237, in close
+RuntimeError: inconsistent AsyncHTTPClient cache

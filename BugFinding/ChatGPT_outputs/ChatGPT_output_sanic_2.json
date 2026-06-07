@@ -1,20 +1,12 @@
 {
-    "bug_locations": [
-        {
-            "file_id": "file_1",
-            "file_path": "BugsInPy/workspace/sanic/sanic/server.py",
-            "line_start": 722,
-            "line_end": 724,
-            "confidence": "high",
-            "reason": "AsyncioServer.is_serving() unconditionally calls self.server.is_serving(), but older asyncio server objects may not implement this method, causing failures in tests that check serving state."
-        },
-        {
-            "file_id": "file_1",
-            "file_path": "BugsInPy/workspace/sanic/sanic/server.py",
-            "line_start": 738,
-            "line_end": 744,
-            "confidence": "medium",
-            "reason": "AsyncioServer.await directly stores the raw server object returned by create_server without wrapping compatibility behavior, which can break later lifecycle APIs expected by tests."
-        }
-    ]
+   "bug_locations":[
+      {
+         "file_id":"file_1",
+         "file_path":"BugsInPy/workspace/sanic/sanic/server.py",
+         "line_start":675,
+         "line_end":744,
+         "confidence":"high",
+         "reason":"AsyncioServer wraps the underlying asyncio server but does not expose methods such as start_serving() that tests expect to call on the returned object. The bug is likely in this wrapper class rather than the protocol logic."
+      }
+   ]
 }

@@ -1,4 +1,4 @@
-You are given buggy source files, failing test files, and failing test output.
+You are given buggy source files, failing test files, and test execution output.
 
 Your task is BUG LOCALIZATION ONLY.
 
@@ -27,7 +27,7 @@ Rules:
 - Each entry should identify the likely origin of a bug, not every line affected by it.
 - Prefer the smallest line range that is sufficient to identify the bug.
 - Report only locations directly supported by the source code, failing test, and failing test output.
-- Do not include speculative locations.
+- There can be multiple bugs present.
 - If no source-code location can be identified with reasonable confidence, return:
 {
   "bug_locations": []
@@ -1531,3 +1531,17 @@ FAILING TEST FILES:
 465 |         # document.cookie parses whitespace.
 466 |         self.assertEqual(parse_cookie('  =  b  ;  ;  =  ;   c  =  ;  '), {'': 'b', 'c': ''})
 ```
+
+TEST EXECUTION OUTPUT:
+
+======================================================================
+ERROR: test_url_concat_none_params (tornado.test.httputil_test.TestUrlConcat)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/user/BugsInPy/temp/projects/tornado/tornado/test/httputil_test.py", line 72, in test_url_concat_none_params
+    None,
+  File "/home/user/BugsInPy/temp/projects/tornado/tornado/httputil.py", line 616, in url_concat
+    raise TypeError(err)
+TypeError: 'args' parameter should be dict, list or tuple. Not <class 'NoneType'>
+
+----------------------------------------------------------------------

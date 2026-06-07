@@ -4,7 +4,7 @@
   "benchmark_file": "benchmarks\\tornado_bug_12.json",
   "num_real_bugs": 3,
   "num_reported_bugs": 1,
-  "true_positives": 0,
-  "false_positives": 1,
-  "false_negatives": 3
+  "true_positives": 1,
+  "false_positives": 0,
+  "false_negatives": 2
 }

@@ -1,20 +1,12 @@
 {
-    "bug_locations": [
-        {
-            "file_id": "file_1",
-            "file_path": "BugsInPy/workspace/httpie/httpie/downloads.py",
-            "line_start": 97,
-            "line_end": 97,
-            "confidence": "high",
-            "reason": "The mailbox.Message constructor is being passed a header string directly, which does not correctly parse quoted Content-Disposition filenames as expected by the failing tests."
-        },
-        {
-            "file_id": "file_1",
-            "file_path": "BugsInPy/workspace/httpie/httpie/downloads.py",
-            "line_start": 129,
-            "line_end": 133,
-            "confidence": "medium",
-            "reason": "The filename trimming logic around os.path.splitext likely mishandles names with long extensions or dotted filenames, matching failures in unique filename generation tests."
-        }
-    ]
+   "bug_locations":[
+      {
+         "file_id":"file_1",
+         "file_path":"BugsInPy/workspace/httpie/httpie/downloads.py",
+         "line_start":137,
+         "line_end":141,
+         "confidence":"high",
+         "reason":"The failing tests patch httpie.downloads.get_filename_max_length, but the runtime module reports that this attribute does not exist. The filename-length helper definition/export around these lines is the most direct location tied to the failure."
+      }
+   ]
 }

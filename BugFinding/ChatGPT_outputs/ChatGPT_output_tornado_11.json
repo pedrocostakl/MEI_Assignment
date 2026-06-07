@@ -1,12 +1,12 @@
 {
-  "bug_locations": [
-    {
-      "file_id": "file_1",
-      "file_path": "BugsInPy/workspace/tornado/tornado/http1connection.py",
-      "line_start": 568,
-      "line_end": 568,
-      "confidence": "high",
-      "reason": "Transfer-Encoding is checked with a case-sensitive equality against \"chunked\". Failing tests include \"Transfer-Encoding: Chunked\", which should be accepted case-insensitively."
-    }
-  ]
+   "bug_locations":[
+      {
+         "file_id":"file_1",
+         "file_path":"BugsInPy/workspace/tornado/tornado/http1connection.py",
+         "line_start":568,
+         "line_end":569,
+         "confidence":"high",
+         "reason":"Transfer-Encoding is compared to the lowercase string 'chunked' using a case-sensitive check. The failing test uses 'Chunked' and expects case-insensitive handling per HTTP rules."
+      }
+   ]
 }

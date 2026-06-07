@@ -1,4 +1,4 @@
-You are given buggy source files, failing test files, and failing test output.
+You are given buggy source files, failing test files, and test execution output.
 
 Your task is BUG LOCALIZATION ONLY.
 
@@ -27,7 +27,7 @@ Rules:
 - Each entry should identify the likely origin of a bug, not every line affected by it.
 - Prefer the smallest line range that is sufficient to identify the bug.
 - Report only locations directly supported by the source code, failing test, and failing test output.
-- Do not include speculative locations.
+- There can be multiple bugs present.
 - If no source-code location can be identified with reasonable confidence, return:
 {
   "bug_locations": []
@@ -628,3 +628,36 @@ FAILING TEST FILES:
 52 |         data = websocket.receive_text()
 53 |         assert data == "Hello, router with prefix!"
 ```
+
+TEST EXECUTION OUTPUT:
+
+=================================== FAILURES ===================================
+_________________________________ test_router __________________________________
+
+    def test_router():
+        client = TestClient(app)
+>       with client.websocket_connect("/router") as websocket:
+
+tests/test_ws_router.py:44: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/opt/conda/envs/235ca55b977721137e676add71d64e98/lib/python3.8/site-packages/starlette/testclient.py:436: in websocket_connect
+    super().request("GET", url, **kwargs)
+/opt/conda/envs/235ca55b977721137e676add71d64e98/lib/python3.8/site-packages/requests/sessions.py:530: in request
+    resp = self.send(prep, **send_kwargs)
+/opt/conda/envs/235ca55b977721137e676add71d64e98/lib/python3.8/site-packages/requests/sessions.py:643: in send
+    r = adapter.send(request, **kwargs)
+/opt/conda/envs/235ca55b977721137e676add71d64e98/lib/python3.8/site-packages/starlette/testclient.py:140: in send
+    session = WebSocketTestSession(self.app, scope)
+/opt/conda/envs/235ca55b977721137e676add71d64e98/lib/python3.8/site-packages/starlette/testclient.py:273: in __init__
+    self._raise_on_close(message)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <starlette.testclient.WebSocketTestSession object at 0x7fdce25e3f40>
+message = {'code': 1000, 'type': 'websocket.close'}
+
+    def _raise_on_close(self, message: Message) -> None:
+        if message["type"] == "websocket.close":
+>           raise WebSocketDisconnect(message.get("code", 1000))
+E           starlette.websockets.WebSocketDisconnect: 1000
+
+/opt/conda/envs/235ca55b977721137e676add71d64e98/lib/python3.8/site-packages/starlette/testclient.py:309: WebSocketDisconnect

@@ -3,18 +3,10 @@
     {
       "file_id": "file_1",
       "file_path": "tornado/websocket.py",
-      "line_start": 833,
-      "line_end": 833,
+      "line_start": 483,
+      "line_end": 483,
       "confidence": "high",
-      "reason": "Directly accessing `self.handler.max_message_size` can raise an `AttributeError` for custom handlers that do not inherit from the base `WebSocketHandler`. Additionally, the `or 10 * 1024 * 1024` fallback incorrectly ignores an explicitly configured `0` (which typically disables limits or sets it to 0), treating it as `None`."
-    },
-    {
-      "file_id": "file_1",
-      "file_path": "tornado/websocket.py",
-      "line_start": 924,
-      "line_end": 926,
-      "confidence": "medium",
-      "reason": "The `max_message_size` limit is only checked on the initial compressed frame length in `_read_frame_data`, but it is not checked again after the data is decompressed in `_handle_message`. This could allow a small, highly compressed payload (zip bomb) to expand far beyond the memory limits."
+      "reason": "During the initial handshake (`get`), `self.stream` hasn't been attached to the `WebSocketHandler` or protocol yet, causing `self.stream` to be `None` and leading to an `AttributeError` instead of a proper error response when `_abort()` is called."
     }
   ]
 }

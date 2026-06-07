@@ -1,4 +1,4 @@
-You are given buggy source files, failing test files, and failing test output.
+You are given buggy source files, failing test files, and test execution output.
 
 Your task is BUG LOCALIZATION ONLY.
 
@@ -27,7 +27,7 @@ Rules:
 - Each entry should identify the likely origin of a bug, not every line affected by it.
 - Prefer the smallest line range that is sufficient to identify the bug.
 - Report only locations directly supported by the source code, failing test, and failing test output.
-- Do not include speculative locations.
+- There can be multiple bugs present.
 - If no source-code location can be identified with reasonable confidence, return:
 {
   "bug_locations": []
@@ -1725,3 +1725,33 @@ FAILING TEST FILES:
 544 |             u('access_token'): u('fake-access-token'),
 545 |         }, json_decode(response.body))
 ```
+
+TEST EXECUTION OUTPUT:
+
+ERROR:tornado.application:Exception in callback functools.partial(<function _auth_future_to_callback at 0x7fcc57baeb70>, <tornado.concurrent.Future object at 0x7fcc56e11160>) for <tornado.concurrent.Future object at 0x7fcc56e11128>
+Traceback (most recent call last):
+  File "/home/user/BugsInPy/temp/projects/tornado/tornado/concurrent.py", line 317, in _set_done
+    cb(self)
+  File "/home/user/BugsInPy/temp/projects/tornado/tornado/auth.py", line 113, in _auth_future_to_callback
+    callback(result)
+TypeError: 'Future' object is not callable
+======================================================================
+FAIL: test_facebook_login (tornado.test.auth_test.AuthTest)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/user/BugsInPy/temp/projects/tornado/tornado/testing.py", line 125, in __call__
+    result = self.orig_method(*args, **kwargs)
+  File "/home/user/BugsInPy/temp/projects/tornado/tornado/test/auth_test.py", line 403, in test_facebook_login
+    response = self.fetch('/facebook/client/login?code=1234', follow_redirects=False)
+  File "/home/user/BugsInPy/temp/projects/tornado/tornado/testing.py", line 395, in fetch
+    return self.wait()
+  File "/home/user/BugsInPy/temp/projects/tornado/tornado/testing.py", line 325, in wait
+    self.__rethrow()
+  File "/home/user/BugsInPy/temp/projects/tornado/tornado/testing.py", line 261, in __rethrow
+    raise_exc_info(failure)
+  File "<string>", line 3, in raise_exc_info
+  File "/home/user/BugsInPy/temp/projects/tornado/tornado/testing.py", line 309, in timeout_func
+    timeout)
+AssertionError: Async operation timed out after 5 seconds
+
+----------------------------------------------------------------------

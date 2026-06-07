@@ -6,15 +6,7 @@
       "line_start": 114,
       "line_end": 118,
       "confidence": "high",
-      "reason": "When the scheme does not match 'bearer', it raises an HTTPException instead of checking self.auto_error and returning None if auto_error is False."
-    },
-    {
-      "file_id": "file_1",
-      "file_path": "fastapi/security/http.py",
-      "line_start": 140,
-      "line_end": 144,
-      "confidence": "high",
-      "reason": "Similar to HTTPBearer, HTTPDigest unconditionally raises an HTTPException instead of respecting the auto_error parameter when the scheme does not match."
+      "reason": "When `auto_error=False`, providing an invalid scheme (e.g., 'Basic' instead of 'Bearer') should return None instead of unconditionally raising an HTTP 403 HTTPException."
     }
   ]
 }

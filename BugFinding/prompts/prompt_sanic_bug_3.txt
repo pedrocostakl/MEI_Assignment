@@ -1,4 +1,4 @@
-You are given buggy source files, failing test files, and failing test output.
+You are given buggy source files, failing test files, and test execution output.
 
 Your task is BUG LOCALIZATION ONLY.
 
@@ -27,7 +27,7 @@ Rules:
 - Each entry should identify the likely origin of a bug, not every line affected by it.
 - Prefer the smallest line range that is sufficient to identify the bug.
 - Report only locations directly supported by the source code, failing test, and failing test output.
-- Do not include speculative locations.
+- There can be multiple bugs present.
 - If no source-code location can be identified with reasonable confidence, return:
 {
   "bug_locations": []
@@ -1526,3 +1526,26 @@ FAILING TEST FILES:
 11 |     assert app.url_for("hostindex", _external=True) == "http://example.com/"
 12 |     assert app.url_for("hostpath", _external=True) == "http://path.example.com/path"
 ```
+
+TEST EXECUTION OUTPUT:
+
+=================================== FAILURES ===================================
+____________________________ test_routes_with_host _____________________________
+
+app = <sanic.app.Sanic object at 0x7f4238202d30>
+
+    def test_routes_with_host(app):
+        @app.route("/")
+        @app.route("/", name="hostindex", host="example.com")
+        @app.route("/path", name="hostpath", host="path.example.com")
+        def index(request):
+            pass
+    
+        assert app.url_for("index") == "/"
+>       assert app.url_for("hostindex") == "/"
+E       AssertionError: assert 'example.com' == '/'
+E         - example.com
+E         + /
+
+tests/test_url_for.py:9: AssertionError
+============================== 1 failed in 0.11s ===============================

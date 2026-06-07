@@ -6,7 +6,7 @@
       "line_start": 266,
       "line_end": 273,
       "confidence": "high",
-      "reason": "The `include_router` method only checks if a route is an instance of `APIRoute` or `routing.Route`. It completely misses handling `routing.WebSocketRoute`, causing included websocket routes to be dropped."
+      "reason": "In `include_router`, when handling `starlette.routing.Route` types (which includes `WebSocketRoute`), it incorrectly adds them via `self.add_route` instead of routing them properly as WebSocket routes or checking if they are instance of `routing.WebSocketRoute`."
     }
   ]
 }

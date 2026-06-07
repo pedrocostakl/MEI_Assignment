@@ -3,10 +3,10 @@
     {
       "file_id": "file_1",
       "file_path": "sanic/server.py",
-      "line_start": 722,
-      "line_end": 737,
+      "line_start": 355,
+      "line_end": 368,
       "confidence": "high",
-      "reason": "The AsyncioServer wrapper class is missing the 'start_serving()' and 'serve_forever()' proxy methods to the underlying asyncio server. This causes the test calling 'srv.start_serving()' to fail with an AttributeError."
+      "reason": "In on_body, the method incorrectly invokes self.stream_append via loop.create_task instead of calling body_append, causing incorrect streaming/body accumulation."
     }
   ]
 }

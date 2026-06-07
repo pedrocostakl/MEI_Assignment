@@ -1,20 +1,12 @@
 {
   "bug_locations": [
     {
-      "file_id": "file_1",
-      "file_path": "tornado/ioloop.py",
-      "line_start": 188,
-      "line_end": 188,
-      "confidence": "high",
-      "reason": "Using a WeakKeyDictionary for `_ioloop_for_asyncio` causes a reference cycle because the IOLoop instances hold strong references to their asyncio loops, preventing garbage collection."
-    },
-    {
       "file_id": "file_2",
       "file_path": "tornado/platform/asyncio.py",
-      "line_start": 41,
-      "line_end": 41,
+      "line_start": 44,
+      "line_end": 51,
       "confidence": "high",
-      "reason": "During new loop creation, stale entries from closed event loops are not being cleared out from the `_ioloop_for_asyncio` map, leading to a memory leak."
+      "reason": "The close() method of BaseAsyncIOLoop fails to remove itself from IOLoop._ioloop_for_asyncio when closed, causing a resource leak tracked in LeakTest."
     }
   ]
 }

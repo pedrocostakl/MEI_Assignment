@@ -1,4 +1,4 @@
-You are given buggy source files, failing test files, and failing test output.
+You are given buggy source files, failing test files, and test execution output.
 
 Your task is BUG LOCALIZATION ONLY.
 
@@ -27,7 +27,7 @@ Rules:
 - Each entry should identify the likely origin of a bug, not every line affected by it.
 - Prefer the smallest line range that is sufficient to identify the bug.
 - Report only locations directly supported by the source code, failing test, and failing test output.
-- Do not include speculative locations.
+- There can be multiple bugs present.
 - If no source-code location can be identified with reasonable confidence, return:
 {
   "bug_locations": []
@@ -470,3 +470,19 @@ FAILING TEST FILES:
 317 | if __name__ == "__main__":
 318 |     unittest.main()
 ```
+
+TEST EXECUTION OUTPUT:
+
+======================================================================
+FAIL: test_redirect_302_relative (tests.test_downloadermiddleware_redirect.RedirectMiddlewareTest)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/user/BugsInPy/temp/projects/scrapy/tests/test_downloadermiddleware_redirect.py", line 118, in test_redirect_302_relative
+    self.assertEqual(req2.url, url3)
+AssertionError: 'http://www.example.com/i8n.example2.com/302' != 'http://i8n.example2.com/302'
+- http://www.example.com/i8n.example2.com/302
+?       ----------------
++ http://i8n.example2.com/302
+
+
+----------------------------------------------------------------------

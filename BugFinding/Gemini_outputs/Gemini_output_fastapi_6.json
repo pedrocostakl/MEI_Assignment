@@ -3,10 +3,10 @@
     {
       "file_id": "file_1",
       "file_path": "fastapi/dependencies/utils.py",
-      "line_start": 632,
-      "line_end": 646,
+      "line_start": 297,
+      "line_end": 300,
       "confidence": "high",
-      "reason": "When extracting form data, the code only checks if `field.shape in sequence_shapes` to determine if it should use `getlist()`. For standard Python sequences (`list`, `set`, `tuple`), `lenient_issubclass(field.type_, sequence_types)` should also be evaluated."
+      "reason": "The conditional check only allows Query or Header parameters to be sequence shapes, rejecting Form/Body parameter sequences and causing a 422 validation error."
     }
   ]
 }

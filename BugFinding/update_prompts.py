@@ -5,14 +5,16 @@ import re
 prompts_dir = r"c:\Users\pedro\Documents\MEI\1 Ano\2 Semestre\MEI\Assignment\MEI_Assignment\BugFinding\prompts"
 
 # Old task description section
-old_task = """You are given buggy source files and failing test files.
+old_task = """You are given buggy source files, failing test files, and failing test output.
 
 Your task is BUG LOCALIZATION ONLY.
+
+Identify the source-code location(s) most likely responsible for the failing test.
 
 Return only valid JSON using this exact format:"""
 
 # New task description section
-new_task = """You are given buggy source files, failing test files, and failing test output.
+new_task = """You are given buggy source files, failing test files, and test execution output.
 
 Your task is BUG LOCALIZATION ONLY.
 
@@ -24,10 +26,16 @@ Return only valid JSON using this exact format:"""
 old_rules = """Rules:
 - Do not propose fixes.
 - Do not rewrite code.
-- Do not explain outside JSON.
-- Line numbers must refer to the numbered buggy source file.
-- Include at most the number of suspected locations you think there are.
-- Prefer the smallest line range that identifies the origin of the bug."""
+- Do not explain anything outside the JSON.
+- Line numbers must refer to the numbered buggy source files, not the test files.
+- Each entry should identify the likely origin of a bug, not every line affected by it.
+- Prefer the smallest line range that is sufficient to identify the bug.
+- Report only locations directly supported by the source code, failing test, and failing test output.
+- Do not include speculative locations.
+- If no source-code location can be identified with reasonable confidence, return:
+{
+  "bug_locations": []
+}"""
 
 # New rules section
 new_rules = """Rules:
@@ -38,7 +46,7 @@ new_rules = """Rules:
 - Each entry should identify the likely origin of a bug, not every line affected by it.
 - Prefer the smallest line range that is sufficient to identify the bug.
 - Report only locations directly supported by the source code, failing test, and failing test output.
-- Do not include speculative locations.
+- There can be multiple bugs present.
 - If no source-code location can be identified with reasonable confidence, return:
 {
   "bug_locations": []

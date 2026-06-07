@@ -1,4 +1,4 @@
-You are given buggy source files, failing test files, and failing test output.
+You are given buggy source files, failing test files, and test execution output.
 
 Your task is BUG LOCALIZATION ONLY.
 
@@ -27,7 +27,7 @@ Rules:
 - Each entry should identify the likely origin of a bug, not every line affected by it.
 - Prefer the smallest line range that is sufficient to identify the bug.
 - Report only locations directly supported by the source code, failing test, and failing test output.
-- Do not include speculative locations.
+- There can be multiple bugs present.
 - If no source-code location can be identified with reasonable confidence, return:
 {
   "bug_locations": []
@@ -2779,3 +2779,78 @@ FAILING TEST FILES:
 2120 |         == f"http://127.0.0.1:{app.test_client.port}/url-for"
 2121 |     )
 ```
+
+TEST EXECUTION OUTPUT:
+
+=================================== FAILURES ===================================
+_______________________ test_url_for_without_server_name _______________________
+
+app = <sanic.app.Sanic object at 0x7fb32eb8cf40>
+
+    def test_url_for_without_server_name(app):
+        @app.route("/sample")
+        def sample(request):
+            return json({"url": request.url_for("url_for")})
+    
+        @app.route("/url-for")
+        def url_for(request):
+            return text("url-for")
+    
+        request, response = app.test_client.get("/sample")
+>       assert (
+            response.json["url"]
+            == f"http://127.0.0.1:{app.test_client.port}/url-for"
+        )
+E       TypeError: 'NoneType' object is not subscriptable
+
+tests/test_requests.py:2118: TypeError
+----------------------------- Captured stdout call -----------------------------
+[2023-07-15 01:48:05 +0000] [7035] [INFO] Goin' Fast @ http://127.0.0.1:42101
+[2023-07-15 01:48:05 +0000] [7035] [INFO] http://127.0.0.1:42101/sample
+[2023-07-15 01:48:05 +0000] [7035] [ERROR] Exception occurred while handling uri: 'http://127.0.0.1:42101/sample'
+Traceback (most recent call last):
+  File "/home/user/BugsInPy/temp/projects/sanic/src/sanic/sanic/config.py", line 52, in __getattr__
+    return self[attr]
+KeyError: 'SERVER_NAME'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/user/BugsInPy/temp/projects/sanic/src/sanic/sanic/app.py", line 947, in handle_request
+    response = handler(request, *args, **kwargs)
+  File "/home/user/BugsInPy/temp/projects/sanic/tests/test_requests.py", line 2111, in sample
+    return json({"url": request.url_for("url_for")})
+  File "/home/user/BugsInPy/temp/projects/sanic/src/sanic/sanic/request.py", line 522, in url_for
+    if "//" in self.app.config.SERVER_NAME:
+  File "/home/user/BugsInPy/temp/projects/sanic/src/sanic/sanic/config.py", line 54, in __getattr__
+    raise AttributeError("Config has no '{}'".format(ke.args[0]))
+AttributeError: Config has no 'SERVER_NAME'
+[2023-07-15 01:48:05 +0000] - (sanic.access)[INFO][127.0.0.1:49754]: GET http://127.0.0.1:42101/sample  500 144
+[2023-07-15 01:48:05 +0000] [7035] [INFO] Starting worker [7035]
+[2023-07-15 01:48:05 +0000] [7035] [INFO] Stopping worker [7035]
+[2023-07-15 01:48:05 +0000] [7035] [INFO] Server Stopped
+------------------------------ Captured log call -------------------------------
+INFO     sanic.root:app.py:1396 Goin' Fast @ http://127.0.0.1:42101
+INFO     sanic.root:testing.py:34 http://127.0.0.1:42101/sample
+ERROR    sanic.root:handlers.py:176 Exception occurred while handling uri: 'http://127.0.0.1:42101/sample'
+Traceback (most recent call last):
+  File "/home/user/BugsInPy/temp/projects/sanic/src/sanic/sanic/config.py", line 52, in __getattr__
+    return self[attr]
+KeyError: 'SERVER_NAME'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/user/BugsInPy/temp/projects/sanic/src/sanic/sanic/app.py", line 947, in handle_request
+    response = handler(request, *args, **kwargs)
+  File "/home/user/BugsInPy/temp/projects/sanic/tests/test_requests.py", line 2111, in sample
+    return json({"url": request.url_for("url_for")})
+  File "/home/user/BugsInPy/temp/projects/sanic/src/sanic/sanic/request.py", line 522, in url_for
+    if "//" in self.app.config.SERVER_NAME:
+  File "/home/user/BugsInPy/temp/projects/sanic/src/sanic/sanic/config.py", line 54, in __getattr__
+    raise AttributeError("Config has no '{}'".format(ke.args[0]))
+AttributeError: Config has no 'SERVER_NAME'
+INFO     sanic.access:server.py:431 
+INFO     sanic.root:server.py:884 Starting worker [7035]
+INFO     sanic.root:server.py:887 Stopping worker [7035]
+INFO     sanic.root:app.py:1150 Server Stopped

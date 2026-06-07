@@ -1,12 +1,12 @@
 {
-    "bug_locations": [
-        {
-            "file_id": "file_1",
-            "file_path": "BugsInPy/workspace/httpie/httpie/models.py",
-            "line_start": 106,
-            "line_end": 107,
-            "confidence": "high",
-            "reason": "The logic only checks for an exact 'Host' key and ignores case-insensitive variants like 'host', causing duplicate Host headers to be added."
-        }
-    ]
+   "bug_locations":[
+      {
+         "file_id":"file_1",
+         "file_path":"BugsInPy/workspace/httpie/httpie/models.py",
+         "line_start":106,
+         "line_end":107,
+         "confidence":"high",
+         "reason":"The Host header presence check is case-sensitive. A user-supplied 'host' header is not recognized, so an additional 'Host' header is added, producing duplicates."
+      }
+   ]
 }

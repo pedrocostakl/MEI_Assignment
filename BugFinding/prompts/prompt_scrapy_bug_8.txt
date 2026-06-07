@@ -1,4 +1,4 @@
-You are given buggy source files, failing test files, and failing test output.
+You are given buggy source files, failing test files, and test execution output.
 
 Your task is BUG LOCALIZATION ONLY.
 
@@ -27,7 +27,7 @@ Rules:
 - Each entry should identify the likely origin of a bug, not every line affected by it.
 - Prefer the smallest line range that is sufficient to identify the bug.
 - Report only locations directly supported by the source code, failing test, and failing test output.
-- Do not include speculative locations.
+- There can be multiple bugs present.
 - If no source-code location can be identified with reasonable confidence, return:
 {
   "bug_locations": []
@@ -443,3 +443,31 @@ FAILING TEST FILES:
 297 | if __name__ == "__main__":
 298 |     unittest.main()
 ```
+
+TEST EXECUTION OUTPUT:
+
+======================================================================
+ERROR: test_new_method_propagates_classcell (tests.test_item.ItemMetaTest)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/user/BugsInPy/temp/projects/scrapy/tests/test_item.py", line 261, in test_new_method_propagates_classcell
+    class MyItem(Item):
+TypeError: __class__ set to <class 'tests.test_item.ItemMetaTest.test_new_method_propagates_classcell.<locals>.MyItem'> defining 'MyItem' as <class 'tests.test_item.MyItem'>
+
+----------------------------------------------------------------------
+Ran 1 test in 0.000s
+
+FAILED (errors=1)
+RUN EVERY COMMAND
+1
+python -m unittest -q tests.test_item.ItemMetaTest.test_new_method_propagates_classcell
+
+======================================================================
+ERROR: test_item_meta_classcell_regression (tests.test_item.ItemMetaClassCellRegression)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/user/BugsInPy/temp/projects/scrapy/tests/test_item.py", line 288, in test_item_meta_classcell_regression
+    class MyItem(six.with_metaclass(ItemMeta, Item)):
+TypeError: __class__ set to <class 'tests.test_item.ItemMetaClassCellRegression.test_item_meta_classcell_regression.<locals>.MyItem'> defining 'MyItem' as <class 'tests.test_item.MyItem'>
+
+----------------------------------------------------------------------

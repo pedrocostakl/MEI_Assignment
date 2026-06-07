@@ -1,20 +1,12 @@
 {
-    "bug_locations": [
-        {
-            "file_id": "file_1",
-            "file_path": "BugsInPy/workspace/fastapi/fastapi/utils.py",
-            "line_start": 99,
-            "line_end": 101,
-            "confidence": "high",
-            "reason": "The cloned model reuses original field objects directly, which can preserve subclass fields and break response filtering for nested sub-models."
-        },
-        {
-            "file_id": "file_1",
-            "file_path": "BugsInPy/workspace/fastapi/fastapi/utils.py",
-            "line_start": 89,
-            "line_end": 154,
-            "confidence": "medium",
-            "reason": "The recursive field cloning logic may incompletely isolate Pydantic sub-model schemas, causing inherited fields like passwords to leak into serialized responses."
-        }
-    ]
+   "bug_locations":[
+      {
+         "file_id":"file_1",
+         "file_path":"BugsInPy/workspace/fastapi/fastapi/utils.py",
+         "line_start":99,
+         "line_end":100,
+         "confidence":"high",
+         "reason":"When cloning a BaseModel type, the new model reuses the original model's field objects instead of creating isolated/cloned fields. This can preserve subclass field behavior and allow extra fields from a derived model to appear in response serialization."
+      }
+   ]
 }

@@ -3,18 +3,10 @@
       {
          "file_id":"file_1",
          "file_path":"BugsInPy/workspace/tornado/tornado/ioloop.py",
-         "line_start":1020,
-         "line_end":1022,
+         "line_start":659,
+         "line_end":659,
          "confidence":"high",
-         "reason":"add_callback silently returns when the IOLoop is closing, but the tests expect a RuntimeError with message 'IOLoop is closing' during shutdown races."
-      },
-      {
-         "file_id":"file_1",
-         "file_path":"BugsInPy/workspace/tornado/tornado/ioloop.py",
-         "line_start":797,
-         "line_end":805,
-         "confidence":"medium",
-         "reason":"close() sets _closing before teardown, interacting with concurrent add_callback calls; the shutdown path likely relies on add_callback raising instead of silently ignoring callbacks."
+         "reason":"run_in_executor returns the raw concurrent.futures.Future from executor.submit(). The failing native-await test indicates the returned object is not awaitable in the expected Tornado/async context ('object Future can't be used in await expression')."
       }
    ]
 }

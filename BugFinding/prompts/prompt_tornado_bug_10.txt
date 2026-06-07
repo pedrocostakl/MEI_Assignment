@@ -1,4 +1,4 @@
-You are given buggy source files, failing test files, and failing test output.
+You are given buggy source files, failing test files, and test execution output.
 
 Your task is BUG LOCALIZATION ONLY.
 
@@ -27,7 +27,7 @@ Rules:
 - Each entry should identify the likely origin of a bug, not every line affected by it.
 - Prefer the smallest line range that is sufficient to identify the bug.
 - Report only locations directly supported by the source code, failing test, and failing test output.
-- Do not include speculative locations.
+- There can be multiple bugs present.
 - If no source-code location can be identified with reasonable confidence, return:
 {
   "bug_locations": []
@@ -5189,3 +5189,39 @@ FAILING TEST FILES:
 630 |         # TODO: Needs tests of messages split over multiple
 631 |         # continuation frames.
 ```
+
+TEST EXECUTION OUTPUT:
+
+ERROR:tornado.application:Uncaught exception in /render
+Traceback (most recent call last):
+  File "/home/user/BugsInPy/temp/projects/tornado/tornado/websocket.py", line 484, in _run_callback
+    result = callback(*args, **kwargs)
+  File "/home/user/BugsInPy/temp/projects/tornado/tornado/test/websocket_test.py", line 136, in on_message
+    self.write_message(self.render_string('message.html', message=message))
+  File "/home/user/BugsInPy/temp/projects/tornado/tornado/web.py", line 863, in render_string
+    namespace = self.get_template_namespace()
+  File "/home/user/BugsInPy/temp/projects/tornado/tornado/web.py", line 887, in get_template_namespace
+    namespace.update(self.ui)
+TypeError: 'NoneType' object is not iterable
+======================================================================
+FAIL: test_render_message (tornado.test.websocket_test.WebSocketTest)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/user/BugsInPy/temp/projects/tornado/tornado/testing.py", line 136, in __call__
+    result = self.orig_method(*args, **kwargs)
+  File "/home/user/BugsInPy/temp/projects/tornado/tornado/testing.py", line 529, in post_coroutine
+    timeout=timeout)
+  File "/home/user/BugsInPy/temp/projects/tornado/tornado/ioloop.py", line 458, in run_sync
+    return future_cell[0].result()
+  File "/home/user/BugsInPy/temp/projects/tornado/tornado/concurrent.py", line 238, in result
+    raise_exc_info(self._exc_info)
+  File "<string>", line 4, in raise_exc_info
+  File "/home/user/BugsInPy/temp/projects/tornado/tornado/gen.py", line 1069, in run
+    yielded = self.gen.send(value)
+  File "/opt/conda/envs/ce4643cfe50c63d63380c1ef67ea5299/lib/python3.7/types.py", line 208, in send
+    return self.__wrapped.send(val)
+  File "/home/user/BugsInPy/temp/projects/tornado/tornado/test/websocket_test.py", line 241, in test_render_message
+    self.assertEqual(response, '<b>hello</b>')
+AssertionError: None != '<b>hello</b>'
+
+----------------------------------------------------------------------

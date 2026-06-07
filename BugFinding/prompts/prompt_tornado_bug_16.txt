@@ -1,4 +1,4 @@
-You are given buggy source files, failing test files, and failing test output.
+You are given buggy source files, failing test files, and test execution output.
 
 Your task is BUG LOCALIZATION ONLY.
 
@@ -27,7 +27,7 @@ Rules:
 - Each entry should identify the likely origin of a bug, not every line affected by it.
 - Prefer the smallest line range that is sufficient to identify the bug.
 - Report only locations directly supported by the source code, failing test, and failing test output.
-- Do not include speculative locations.
+- There can be multiple bugs present.
 - If no source-code location can be identified with reasonable confidence, return:
 {
   "bug_locations": []
@@ -2343,3 +2343,30 @@ FAILING TEST FILES:
 1262 | if __name__ == '__main__':
 1263 |     unittest.main()
 ```
+
+======================================================================
+ERROR: test_no_ref (tornado.test.gen_test.WaitIteratorTest)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/user/BugsInPy/temp/projects/tornado/tornado/testing.py", line 120, in __call__
+    result = self.orig_method(*args, **kwargs)
+  File "/home/user/BugsInPy/temp/projects/tornado/tornado/testing.py", line 501, in post_coroutine
+    timeout=timeout)
+  File "/home/user/BugsInPy/temp/projects/tornado/tornado/ioloop.py", line 445, in run_sync
+    return future_cell[0].result()
+  File "/home/user/BugsInPy/temp/projects/tornado/tornado/concurrent.py", line 211, in result
+    raise_exc_info(self._exc_info)
+  File "<string>", line 3, in raise_exc_info
+  File "/home/user/BugsInPy/temp/projects/tornado/tornado/gen.py", line 881, in run
+    yielded = self.gen.throw(*exc_info)
+  File "/home/user/BugsInPy/temp/projects/tornado/tornado/test/gen_test.py", line 1259, in test_no_ref
+    gen.WaitIterator(gen.sleep(0)).next())
+  File "/home/user/BugsInPy/temp/projects/tornado/tornado/gen.py", line 875, in run
+    value = future.result()
+  File "/home/user/BugsInPy/temp/projects/tornado/tornado/concurrent.py", line 211, in result
+    raise_exc_info(self._exc_info)
+  File "<string>", line 3, in raise_exc_info
+tornado.gen.TimeoutError: Timeout
+
+----------------------------------------------------------------------
+

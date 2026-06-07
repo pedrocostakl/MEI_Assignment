@@ -1,12 +1,12 @@
 {
-    "bug_locations": [
-        {
-            "file_id": "file_1",
-            "file_path": "BugsInPy/workspace/fastapi/fastapi/routing.py",
-            "line_start": 248,
-            "line_end": 273,
-            "confidence": "high",
-            "reason": "include_router() only handles APIRoute and routing.Route instances, but does not include websocket routes. The failing tests exercise websocket routes added through routers and prefixed routers."
-        }
-    ]
+   "bug_locations":[
+      {
+         "file_id":"file_1",
+         "file_path":"BugsInPy/workspace/fastapi/fastapi/routing.py",
+         "line_start":248,
+         "line_end":273,
+         "confidence":"high",
+         "reason":"include_router() only copies APIRoute and routing.Route instances. WebSocket routes are not handled, so websocket_route entries from a router are not included in the application."
+      }
+   ]
 }

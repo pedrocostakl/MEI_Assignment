@@ -1,28 +1,12 @@
 {
-    "bug_locations": [
-        {
-            "file_id": "file_1",
-            "file_path": "BugsInPy/workspace/fastapi/fastapi/dependencies/utils.py",
-            "line_start": 267,
-            "line_end": 268,
-            "confidence": "high",
-            "reason": "Union body parameters are likely being misclassified as non-body/scalar fields. The fallback conversion to Body(...) depends on is_scalar_field(), which does not appear to correctly handle Union model annotations."
-        },
-        {
-            "file_id": "file_1",
-            "file_path": "BugsInPy/workspace/fastapi/fastapi/dependencies/utils.py",
-            "line_start": 133,
-            "line_end": 139,
-            "confidence": "high",
-            "reason": "The scalar field detection logic relies on lenient_issubclass(field.type_, BaseModel), which can fail for typing.Union annotations like Union[Item, OtherItem]. This directly affects request body schema generation."
-        },
-        {
-            "file_id": "file_1",
-            "file_path": "BugsInPy/workspace/fastapi/fastapi/dependencies/utils.py",
-            "line_start": 193,
-            "line_end": 203,
-            "confidence": "medium",
-            "reason": "The routing between query/body parameter handling depends on is_scalar_field(). Union model types may incorrectly enter the scalar/query branch instead of being treated as body parameters."
-        }
-    ]
+   "bug_locations":[
+      {
+         "file_id":"file_1",
+         "file_path":"BugsInPy/workspace/fastapi/fastapi/dependencies/utils.py",
+         "line_start":133,
+         "line_end":139,
+         "confidence":"high",
+         "reason":"The scalar-field check only inspects field.type_ and does not account for Union types whose sub-fields are Pydantic models. As a result, Union[BaseModel, BaseModel] parameters are incorrectly classified as non-body scalar parameters, leading to OpenAPI schema generation failures."
+      }
+   ]
 }

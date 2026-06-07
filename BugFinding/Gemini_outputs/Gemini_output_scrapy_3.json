@@ -4,9 +4,9 @@
       "file_id": "file_1",
       "file_path": "scrapy/downloadermiddlewares/redirect.py",
       "line_start": 73,
-      "line_end": 75,
+      "line_end": 73,
       "confidence": "high",
-      "reason": "The `safe_url_string` function decodes bytes using UTF-8 by default, which corrupts `latin1` encoded `Location` headers. This causes URL malformation for non-UTF8 locations, failing `test_latin1_location`."
+      "reason": "safe_url_string modifies the relative URL prefix '///' into something that urljoin fails to parse properly as a network path reference (protocol-relative URL)."
     }
   ]
 }
