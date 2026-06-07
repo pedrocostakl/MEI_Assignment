@@ -6,15 +6,7 @@
       "line_start": 102,
       "line_end": 102,
       "confidence": "high",
-      "reason": "The 'additionalProperties' field uses 'Union[bool, Any]' which can cause schema dictionaries to be incorrectly evaluated or coerced to booleans due to Pydantic's left-to-right Union evaluation order."
-    },
-    {
-      "file_id": "file_1",
-      "file_path": "fastapi/openapi/models.py",
-      "line_start": 123,
-      "line_end": 123,
-      "confidence": "high",
-      "reason": "The 'additionalProperties' field uses 'Union[bool, SchemaBase]'. Placing 'bool' first can lead to improper coercion of schema definitions into booleans, dropping nested constraints."
+      "reason": "The additionalProperties field should support Union[bool, Schema, Reference] instead of Union[bool, Any] or Union[bool, SchemaBase] to properly validate and include referenced schemas in the generated OpenAPI documentation."
     }
   ]
 }

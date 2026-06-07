@@ -3,10 +3,10 @@
     {
       "file_id": "file_1",
       "file_path": "sanic/app.py",
-      "line_start": 863,
-      "line_end": 865,
+      "line_start": 923,
+      "line_end": 923,
       "confidence": "high",
-      "reason": "When building external URLs, `netloc` defaults to the configured `SERVER_NAME`. It ignores the `host` associated with the matched `route`."
+      "reason": "When building a URL using urlunparse without setting the external flag, netloc defaults to an empty string, but here netloc could still hold a value (e.g., from routing metadata or previous logic), causing a relative URL to mistakenly include the host/netloc component."
     }
   ]
 }

@@ -2,11 +2,11 @@
   "bug_locations": [
     {
       "file_id": "file_1",
-      "file_path": "fastapi/routing.py",
-      "line_start": 498,
-      "line_end": 502,
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/routing.py",
+      "line_start": 228,
+      "line_end": 228,
       "confidence": "high",
-      "reason": "The 'add_api_websocket_route' method fails to pass 'self.dependency_overrides_provider' to the 'APIWebSocketRoute' constructor. This prevents websocket dependency overrides from working correctly."
+      "reason": "When creating an APIWebSocketRoute, the dependency_overrides_provider is not passed into get_websocket_app, meaning dependency overrides do not work for WebSockets."
     }
   ]
 }

@@ -3,10 +3,18 @@
     {
       "file_id": "file_1",
       "file_path": "tornado/web.py",
-      "line_start": 2484,
-      "line_end": 2489,
+      "line_start": 2603,
+      "line_end": 2603,
       "confidence": "high",
-      "reason": "The query arguments from `self.request.query_arguments` contain `bytes` values. Passing them through `qs_to_qsl` to `url_concat` without decoding causes `b'...'` string representations in the redirect URL instead of the properly encoded values."
+      "reason": "When a range is unsatisfiable or has an end less than start, the code does not fully validate or properly reject/normalize it before calculating offsets."
+    },
+    {
+      "file_id": "file_1",
+      "file_path": "tornado/web.py",
+      "line_start": 2629,
+      "line_end": 2636,
+      "confidence": "high",
+      "reason": "The calculation of start, end, and content_length does not account for negative start values after normalization or situations where end is less than start, resulting in negative read lengths or negative file seek arguments."
     }
   ]
 }

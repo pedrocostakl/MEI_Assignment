@@ -3,10 +3,10 @@
     {
       "file_id": "file_1",
       "file_path": "fastapi/dependencies/utils.py",
-      "line_start": 569,
-      "line_end": 578,
+      "line_start": 577,
+      "line_end": 577,
       "confidence": "high",
-      "reason": "When combining multiple body parameters or handling an embedded parameter, a new Field is created with `schema=BodySchema(None)`. This discards the `media_type` configured on the original body parameter(s)."
+      "reason": "When creating a single or combined body field model, the custom schema configuration (including properties like custom media_type) from the original fields is lost or overwritten with default values."
     }
   ]
 }

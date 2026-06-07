@@ -1,20 +1,12 @@
 {
   "bug_locations": [
     {
-      "file_id": "file_2",
-      "file_path": "tornado/websocket.py",
-      "line_start": 757,
-      "line_end": 760,
+      "file_id": "file_1",
+      "file_path": "tornado/web.py",
+      "line_start": 998,
+      "line_end": 998,
       "confidence": "high",
-      "reason": "Since stream.write() returns a Future in Tornado 4.0+, the try/except block fails to catch StreamClosedError synchronously. This causes unhandled exceptions to be logged when writing to a closed stream, failing tests."
-    },
-    {
-      "file_id": "file_2",
-      "file_path": "tornado/websocket.py",
-      "line_start": 917,
-      "line_end": 918,
-      "confidence": "high",
-      "reason": "The code decompresses the message payload without enforcing max_message_size on the resulting uncompressed data. This allows an attacker to bypass the size limit using a compression bomb."
+      "reason": "Setting `self.ui = None` at the end of `finish()` causes later calls to `render_string()` or `get_template_namespace()` (such as inside a WebSocket handler's `on_message` loop) to raise a TypeError because `self.ui` is no longer a dictionary."
     }
   ]
 }

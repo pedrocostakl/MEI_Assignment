@@ -6,23 +6,7 @@
       "line_start": 87,
       "line_end": 87,
       "confidence": "high",
-      "reason": "The exc_info tuple is constructed in the wrong order: (value, type, traceback) instead of the standard (type, value, traceback). This causes errors when the test runner attempts to format the traceback."
-    },
-    {
-      "file_id": "file_1",
-      "file_path": "scrapy/contracts/__init__.py",
-      "line_start": 36,
-      "line_end": 36,
-      "confidence": "high",
-      "reason": "Accessing self.contracts[name] without verifying if the name exists raises a KeyError for any unrecognized docstring decorators (e.g., @property or standard Sphinx tags)."
-    },
-    {
-      "file_id": "file_1",
-      "file_path": "scrapy/contracts/__init__.py",
-      "line_start": 34,
-      "line_end": 34,
-      "confidence": "medium",
-      "reason": "If 'args' is empty, re.split(r'\\s+', args) returns [''] rather than an empty list, which erroneously passes an empty string as an argument to the contract's constructor."
+      "reason": "The order of components in the exc_info tuple is incorrect. It should be (type, value, traceback) instead of (value, type, traceback), causing an AttributeError during traceback processing."
     }
   ]
 }

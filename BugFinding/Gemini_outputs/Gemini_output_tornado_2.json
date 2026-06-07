@@ -2,19 +2,11 @@
   "bug_locations": [
     {
       "file_id": "file_1",
-      "file_path": "BugsInPy/workspace/tornado/tornado/http1connection.py",
-      "line_start": 288,
-      "line_end": 293,
+      "file_path": "tornado/http1connection.py",
+      "line_start": 249,
+      "line_end": 250,
       "confidence": "high",
-      "reason": "When the client request is cancelled, `_read_message` does not catch `asyncio.CancelledError` to close the connection. This leaves pending `IOStream` reads active, which then try to resolve the cancelled future when data eventually arrives, causing the logged exception."
-    },
-    {
-      "file_id": "file_1",
-      "file_path": "BugsInPy/workspace/tornado/tornado/http1connection.py",
-      "line_start": 815,
-      "line_end": 820,
-      "confidence": "high",
-      "reason": "Similarly, `_server_request_loop` catches `asyncio.CancelledError` but returns without calling `conn.close()`, leaving the connection open and leaking resources on cancellation."
+      "reason": "When parsing headers, if a client request contains 'Expect: 100-continue', the server responds with a 100 Continue line without awaiting the write operation, which can cause connection handling and synchronization issues if the write hasn't completed before subsequent reads."
     }
   ]
 }

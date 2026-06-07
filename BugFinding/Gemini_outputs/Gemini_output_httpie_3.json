@@ -3,10 +3,10 @@
     {
       "file_id": "file_1",
       "file_path": "httpie/sessions.py",
-      "line_start": 103,
+      "line_start": 104,
       "line_end": 104,
       "confidence": "high",
-      "reason": "When the '--download' flag is used, httpie injects a string literal (e.g., 'identity' for Accept-Encoding) into the request headers. Calling '.decode('utf8')' on a string raises an AttributeError in Python 3."
+      "reason": "The method assumes every header value is a bytes object and attempts to decode it without checking if it is None or already a string."
     }
   ]
 }

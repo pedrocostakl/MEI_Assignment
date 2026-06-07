@@ -4,25 +4,9 @@
       "file_id": "file_2",
       "file_path": "fastapi/encoders.py",
       "line_start": 30,
-      "line_end": 74,
+      "line_end": 40,
       "confidence": "high",
-      "reason": "The jsonable_encoder function is missing exclude_defaults and exclude_none parameters. This prevents these filtering options from being passed down to Pydantic's model.dict() serialization method."
-    },
-    {
-      "file_id": "file_4",
-      "file_path": "fastapi/routing.py",
-      "line_start": 51,
-      "line_end": 108,
-      "confidence": "high",
-      "reason": "The _prepare_response_content and serialize_response functions lack propagation logic for the exclude_defaults and exclude_none parameters, breaking proper response content formatting."
-    },
-    {
-      "file_id": "file_4",
-      "file_path": "fastapi/routing.py",
-      "line_start": 237,
-      "line_end": 262,
-      "confidence": "high",
-      "reason": "The APIRoute constructor is missing the response_model_exclude_defaults and response_model_exclude_none parameters, preventing users from leveraging these configuration options for endpoint responses."
+      "reason": "The `jsonable_encoder` function signature is missing the `exclude_defaults` keyword argument parameter which is expected by the tests."
     }
   ]
 }
