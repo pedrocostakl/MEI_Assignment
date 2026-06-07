@@ -3,10 +3,10 @@
     {
       "file_id": "file_1",
       "file_path": "fastapi/dependencies/utils.py",
-      "line_start": 87,
-      "line_end": 87,
+      "line_start": 542,
+      "line_end": 542,
       "confidence": "high",
-      "reason": "When calling field_schema, the model_name_map argument is incorrectly hardcoded as an empty dictionary instead of using a properly generated model name map or passing an existing one."
+      "reason": "When creating a single body field dynamically for multiple flat body params (such as a Union type), the individual sub-fields are copied using get_schema_compatible_field but they retain any original Union sub-fields or types whose model names are not properly mapped, causing a KeyError in pydantic's schema generation when it receives an empty model_name_map."
     }
   ]
 }

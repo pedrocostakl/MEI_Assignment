@@ -6,7 +6,7 @@
       "line_start": 99,
       "line_end": 100,
       "confidence": "high",
-      "reason": "When cloning a BaseModel field, sub-fields are copied by referencing the existing fields from original_type directly rather than cloning or modifying them properly, preventing sub-models from filtering out subclass attributes like 'password'."
+      "reason": "When cloning fields for a model, it directly reuses the fields of the original model by reference rather than creating proper deep/sub-field copies. This causes nested filtering and sub-model conversions to be bypassed or leaked."
     }
   ]
 }

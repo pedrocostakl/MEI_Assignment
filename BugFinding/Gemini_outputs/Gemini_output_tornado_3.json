@@ -6,7 +6,7 @@
       "line_start": 93,
       "line_end": 93,
       "confidence": "high",
-      "reason": "Setting `self._closed = True` early in `__init__` means that if initialization fails later, `self.close()` will be a no-op instead of attempting cleanup on an uninitialized/partially initialized client, avoiding cache inconsistency errors during destruction."
+      "reason": "Setting self._closed = True at the beginning of __init__ is overridden back to True if an exception occurs or during clean shutdown sequences before it is fully initialized, causing issues. However, if initialization fails mid-way, or during process shutdown when `self._closed = False` has been set but `_async_client` is not fully registered or cache references get mixed, `__del__` calls `close()`, leading to the inconsistent cache error."
     }
   ]
 }

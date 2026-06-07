@@ -6,7 +6,7 @@
       "line_start": 577,
       "line_end": 577,
       "confidence": "high",
-      "reason": "When creating a single or combined body field model, the custom schema configuration (including properties like custom media_type) from the original fields is lost or overwritten with default values."
+      "reason": "When creating a single or multiple body fields into a BodySchema, the media_type attribute from the original parameter schema is omitted or overwritten with a default BodySchema(None), which resets the custom media_type back to 'application/json'."
     }
   ]
 }

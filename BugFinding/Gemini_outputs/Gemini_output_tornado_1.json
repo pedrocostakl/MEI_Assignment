@@ -6,7 +6,7 @@
       "line_start": 948,
       "line_end": 948,
       "confidence": "high",
-      "reason": "The stream attribute `self.stream` of the `WebSocketProtocol13` instance is assigned, but `handler.stream` is never initialized or set before `handler.open` is called, causing `self.stream is not None` to fail in `set_nodelay`."
+      "reason": "The stream detach operation updates and extracts the stream via handler._detach_stream(), but it fails to set the self.stream attribute on the WebSocketHandler instance itself before calling handler.open()."
     }
   ]
 }

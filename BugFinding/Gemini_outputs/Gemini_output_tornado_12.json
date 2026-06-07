@@ -3,10 +3,10 @@
     {
       "file_id": "file_1",
       "file_path": "tornado/auth.py",
-      "line_start": 391,
-      "line_end": 391,
+      "line_start": 937,
+      "line_end": 937,
       "confidence": "high",
-      "reason": "In get_authenticated_user, callback is a Future object because of the @_auth_return_future decorator, but it is incorrectly assigned to future via `future = callback` without handling the legacy callback format properly when calling internal or downstream async methods like _on_access_token."
+      "reason": "The `get_authenticated_user` method definition includes `callback` as an argument, but because it is decorated with `@_auth_return_future`, the internal `future` object replaces it, leading to a `TypeError` when it is treated as a function."
     }
   ]
 }

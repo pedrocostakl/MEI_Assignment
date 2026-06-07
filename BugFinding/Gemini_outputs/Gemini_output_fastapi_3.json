@@ -6,7 +6,7 @@
       "line_start": 70,
       "line_end": 75,
       "confidence": "high",
-      "reason": "The function checks `is_coroutine` to decide whether to call `field.validate` directly or via a thread pool, but it passes `is_coroutine` based on whether the endpoint function is a coroutine rather than checking if `field.validate` itself is a coroutine."
+      "reason": "The `is_coroutine` parameter indicates whether the endpoint function is a coroutine, but it is incorrectly used here to determine whether `field.validate` should be run directly or using `run_in_threadpool`."
     }
   ]
 }

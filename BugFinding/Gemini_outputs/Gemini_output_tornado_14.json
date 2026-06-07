@@ -4,9 +4,9 @@
       "file_id": "file_1",
       "file_path": "tornado/ioloop.py",
       "line_start": 252,
-      "line_end": 252,
+      "line_end": 253,
       "confidence": "high",
-      "reason": "When make_current=True, the method should ensure an IOLoop doesn't already exist by checking if IOLoop.current(instance=False) is not None, but it wrongly checks if it is None."
+      "reason": "The check should verify that an existing current IOLoop is *not* None when make_current is True before raising a RuntimeError stating that it already exists."
     }
   ]
 }

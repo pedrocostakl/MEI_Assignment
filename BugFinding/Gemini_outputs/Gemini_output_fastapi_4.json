@@ -3,10 +3,10 @@
     {
       "file_id": "file_1",
       "file_path": "fastapi/openapi/utils.py",
-      "line_start": 68,
-      "line_end": 68,
+      "line_start": 180,
+      "line_end": 181,
       "confidence": "high",
-      "reason": "`get_flat_dependant` is called with `skip_repeats=True`, which deduplicates parameters across a route and its dependencies, causing route parameters to be erroneously omitted if they share the same name."
+      "reason": "The function get_openapi_operation_parameters doesn't filter out or de-duplicate identical path parameters that are retrieved from both the endpoint function signature and its dependencies via get_openapi_params."
     }
   ]
 }

@@ -3,10 +3,10 @@
     {
       "file_id": "file_1",
       "file_path": "scrapy/downloadermiddlewares/redirect.py",
-      "line_start": 73,
-      "line_end": 73,
+      "line_start": 75,
+      "line_end": 75,
       "confidence": "high",
-      "reason": "safe_url_string modifies the relative URL prefix '///' into something that urljoin fails to parse properly as a network path reference (protocol-relative URL)."
+      "reason": "The middleware uses `urljoin` without ensuring safe absolute or relative URL resolution when headers contain unusual paths like '///'. Using `urljoin` directly leads to an incorrect redirection URL structure."
     }
   ]
 }

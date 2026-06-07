@@ -3,10 +3,10 @@
     {
       "file_id": "file_1",
       "file_path": "fastapi/dependencies/utils.py",
-      "line_start": 297,
-      "line_end": 300,
+      "line_start": 632,
+      "line_end": 635,
       "confidence": "high",
-      "reason": "The conditional check only allows Query or Header parameters to be sequence shapes, rejecting Form/Body parameter sequences and causing a 422 validation error."
+      "reason": "When a Form parameter uses a non-typing sequence type (like python list, set, tuple) instead of typing structures, `field.shape` is not in `sequence_shapes`. Therefore, it fails to use `received_body.getlist(field.alias)` and falls back to `.get()`, resulting in a validation error (422 status code)."
     }
   ]
 }

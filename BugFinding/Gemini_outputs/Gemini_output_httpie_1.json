@@ -6,7 +6,7 @@
       "line_start": 137,
       "line_end": 141,
       "confidence": "high",
-      "reason": "The function 'get_filename_max_length' is missing from 'httpie/downloads.py' in the installed egg module being tested, or it was not correctly exposed/defined at the module level as expected by the test mocks."
+      "reason": "The function `get_filename_max_length` is defined inside `downloads.py` but is not exposed or visible at the module level when mocked in tests, because it is missing or not properly available in the module's scope."
     }
   ]
 }

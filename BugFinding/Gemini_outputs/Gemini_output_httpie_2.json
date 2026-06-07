@@ -6,7 +6,7 @@
       "line_start": 143,
       "line_end": 143,
       "confidence": "high",
-      "reason": "The `max_redirects` parameter is completely omitted from the `kwargs` dictionary passed to `requests_session.request`, causing requests to use its default redirect limit instead of honor the `--max-redirects` argument."
+      "reason": "The 'max_redirects' configuration or arguments are not passed or assigned to requests' kwargs dictionary, causing the max_redirects limit to be ignored."
     }
   ]
 }

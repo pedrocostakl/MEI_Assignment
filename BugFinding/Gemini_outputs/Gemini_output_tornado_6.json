@@ -6,7 +6,7 @@
       "line_start": 44,
       "line_end": 51,
       "confidence": "high",
-      "reason": "The close() method of BaseAsyncIOLoop fails to remove itself from IOLoop._ioloop_for_asyncio when closed, causing a resource leak tracked in LeakTest."
+      "reason": "The close method of BaseAsyncIOLoop does not remove itself from the global IOLoop._ioloop_for_asyncio weak dictionary, which causes a resource / reference leak across loop creations."
     }
   ]
 }

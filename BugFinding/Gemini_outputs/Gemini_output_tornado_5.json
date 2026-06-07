@@ -2,11 +2,19 @@
   "bug_locations": [
     {
       "file_id": "file_1",
-      "file_path": "tornado/ioloop.py",
-      "line_start": 1220,
-      "line_end": 1220,
+      "file_path": "tornado/web.py",
+      "line_start": 2611,
+      "line_end": 2616,
       "confidence": "high",
-      "reason": "The conditional check should prevent updating `_next_timeout` when the clock jumps backward, but it checks if `_next_timeout <= current_time` instead of `_next_timeout > current_time` or lacks a proper check for forward progression."
+      "reason": "When a negative range specifies a suffix length greater than the total file size, start becomes negative, which causes an OSError when calling file.seek(start)."
+    },
+    {
+      "file_id": "file_1",
+      "file_path": "tornado/web.py",
+      "line_start": 2626,
+      "line_end": 2627,
+      "confidence": "high",
+      "reason": "When end is less than start, start and end are not handled correctly or rejected before computing the range, leading to an invalid chunk_size in open().read()."
     }
   ]
 }

@@ -3,10 +3,10 @@
     {
       "file_id": "file_1",
       "file_path": "tornado/gen.py",
-      "line_start": 372,
-      "line_end": 372,
+      "line_start": 352,
+      "line_end": 364,
       "confidence": "high",
-      "reason": "When the WaitIterator is not retained by a strong reference, the weak reference self_ref inside _done_callback resolves to None, causing the completed future to be appended to self._finished on a dead or dying object rather than waking up the pending _running_future."
+      "reason": "The `next` method creates a new `TracebackFuture` and returns it but fails to preserve a strong reference to `self`. Since the future does not keep `WaitIterator` alive and `WaitIterator._done_callback` uses a weak reference to `self`, the iterator gets garbage collected immediately if the caller doesn't retain a hard reference, causing the returned future to time out."
     }
   ]
 }

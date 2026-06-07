@@ -6,7 +6,7 @@
       "line_start": 659,
       "line_end": 659,
       "confidence": "high",
-      "reason": "The method run_in_executor returns a concurrent.futures.Future directly instead of wrapping or converting it into a Tornado-compatible or awaitable Future under Python 3."
+      "reason": "The method run_in_executor returns a concurrent.futures.Future directly instead of wrapping it in a Tornado-compatible future or ensuring it supports the await expression."
     }
   ]
 }

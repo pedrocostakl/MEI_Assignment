@@ -3,18 +3,10 @@
     {
       "file_id": "file_1",
       "file_path": "tornado/web.py",
-      "line_start": 2603,
-      "line_end": 2603,
+      "line_start": 2601,
+      "line_end": 2627,
       "confidence": "high",
-      "reason": "When a range is unsatisfiable or has an end less than start, the code does not fully validate or properly reject/normalize it before calculating offsets."
-    },
-    {
-      "file_id": "file_1",
-      "file_path": "tornado/web.py",
-      "line_start": 2629,
-      "line_end": 2636,
-      "confidence": "high",
-      "reason": "The calculation of start, end, and content_length does not account for negative start values after normalization or situations where end is less than start, resulting in negative read lengths or negative file seek arguments."
+      "reason": "The range processing logic fails to handle negative start offsets correctly when the range value extends past the start of the file or when the end is less than start, passing bad start/end values to get_content."
     }
   ]
 }

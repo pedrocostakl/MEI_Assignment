@@ -3,10 +3,10 @@
     {
       "file_id": "file_1",
       "file_path": "tornado/websocket.py",
-      "line_start": 483,
-      "line_end": 483,
+      "line_start": 194,
+      "line_end": 196,
       "confidence": "high",
-      "reason": "During the initial handshake (`get`), `self.stream` hasn't been attached to the `WebSocketHandler` or protocol yet, causing `self.stream` to be `None` and leading to an `AttributeError` instead of a proper error response when `_abort()` is called."
+      "reason": "The connection stream is attached via self._attach_stream() only inside self.ws_connection.accept_connection(), but if initialization fails during accept_connection(), self._abort() tries to access self.stream before it is set, throwing an AttributeError and a 500 error instead of returning the proper HTTP error code."
     }
   ]
 }

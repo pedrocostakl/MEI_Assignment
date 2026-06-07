@@ -3,10 +3,10 @@
     {
       "file_id": "file_1",
       "file_path": "sanic/app.py",
-      "line_start": 923,
-      "line_end": 923,
+      "line_start": 864,
+      "line_end": 865,
       "confidence": "high",
-      "reason": "When building a URL using urlunparse without setting the external flag, netloc defaults to an empty string, but here netloc could still hold a value (e.g., from routing metadata or previous logic), causing a relative URL to mistakenly include the host/netloc component."
+      "reason": "When _external is False, netloc is None. urlunparse constructs an invalid URL string by using the host name as the path if netloc is not properly separated or empty when external is False."
     }
   ]
 }

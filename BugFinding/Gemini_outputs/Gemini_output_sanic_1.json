@@ -6,7 +6,7 @@
       "line_start": 637,
       "line_end": 639,
       "confidence": "high",
-      "reason": "When attaching a response middleware, the application prepends it using appendleft, whereas it should preserve the order or append depending on how blueprint or global middlewares are combined and executed."
+      "reason": "When registering global response middleware, appendleft is used to preserve the correct reverse execution order. However, app-level middleware missing from blueprint registration doesn't match this behavior because registration or execution ordering reverses it incorrectly."
     }
   ]
 }

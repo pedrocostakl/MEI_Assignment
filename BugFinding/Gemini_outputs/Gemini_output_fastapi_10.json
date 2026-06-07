@@ -6,7 +6,7 @@
       "line_start": 44,
       "line_end": 44,
       "confidence": "high",
-      "reason": "The default value for `skip_defaults` is set to False, which overrides or incorrectly initializes the parameter when it should respect the route configuration or default behavior."
+      "reason": "The parameter skip_defaults has a default value of False instead of None, or is incorrectly initialized/passed, preventing response fields from respecting response_model_skip_defaults."
     }
   ]
 }

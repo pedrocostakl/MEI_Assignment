@@ -6,7 +6,15 @@
       "line_start": 114,
       "line_end": 118,
       "confidence": "high",
-      "reason": "When `auto_error=False`, providing an invalid scheme (e.g., 'Basic' instead of 'Bearer') should return None instead of unconditionally raising an HTTP 403 HTTPException."
+      "reason": "When scheme is not 'bearer' and auto_error is False, an HTTPException is still incorrectly raised instead of returning None."
+    },
+    {
+      "file_id": "file_1",
+      "file_path": "fastapi/security/http.py",
+      "line_start": 140,
+      "line_end": 144,
+      "confidence": "high",
+      "reason": "When scheme is not 'digest' and auto_error is False, an HTTPException is still incorrectly raised instead of returning None."
     }
   ]
 }

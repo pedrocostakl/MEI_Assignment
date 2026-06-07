@@ -6,7 +6,7 @@
       "line_start": 30,
       "line_end": 40,
       "confidence": "high",
-      "reason": "The `jsonable_encoder` function signature is missing the `exclude_defaults` keyword argument parameter which is expected by the tests."
+      "reason": "The `jsonable_encoder` function signature is missing the `exclude_defaults` parameter, causing a TypeError when it is called from tests."
     }
   ]
 }

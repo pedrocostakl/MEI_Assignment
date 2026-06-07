@@ -3,10 +3,10 @@
     {
       "file_id": "file_1",
       "file_path": "scrapy/http/request/form.py",
-      "line_start": 54,
+      "line_start": 52,
       "line_end": 55,
       "confidence": "high",
-      "reason": "The form action attribute isn't being stripped of whitespace before being joined with the base URL in _get_form_url, causing leading/trailing spaces (like '\\n' or spaces) to be percent-encoded as '%20' instead of ignored."
+      "reason": "The form action attribute is not stripped of leading or trailing whitespace before passing it to urljoin, which leads to incorrectly url-encoded spaces (e.g., %20) in the request URL."
     }
   ]
 }

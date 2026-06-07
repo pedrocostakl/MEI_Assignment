@@ -1,12 +1,12 @@
 {
   "bug_locations": [
     {
-      "file_id": "file_1",
-      "file_path": "tornado/web.py",
-      "line_start": 998,
-      "line_end": 998,
+      "file_id": "file_2",
+      "file_path": "tornado/websocket.py",
+      "line_start": 458,
+      "line_end": 460,
       "confidence": "high",
-      "reason": "Setting `self.ui = None` at the end of `finish()` causes later calls to `render_string()` or `get_template_namespace()` (such as inside a WebSocket handler's `on_message` loop) to raise a TypeError because `self.ui` is no longer a dictionary."
+      "reason": "The `_attach_stream` method dynamically replaces `finish` with a function that sets `self.ui = None`. This breaks `render_string` if it is called during message handling since it accesses `self.ui` to build the template namespace."
     }
   ]
 }

@@ -6,7 +6,7 @@
       "line_start": 2382,
       "line_end": 2384,
       "confidence": "high",
-      "reason": "The path traversal validation compares string prefixes but strips trailing slashes incorrectly, passing the wrong context to the format string. The string format requires three arguments but only two are provided, causing an uncaught TypeError instead of a 403 HTTPError."
+      "reason": "The validate_absolute_path method raises HTTPError with too many arguments or an incorrect format string for the % operator, which throws a TypeError during formatting and prevents the proper log message from being written."
     }
   ]
 }

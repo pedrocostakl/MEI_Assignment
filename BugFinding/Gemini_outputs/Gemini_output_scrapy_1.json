@@ -6,7 +6,7 @@
       "line_start": 57,
       "line_end": 58,
       "confidence": "high",
-      "reason": "The code iterates over `allowed_domains` and performs a regex match without checking if `domain` is `None`, causing a TypeError when `None` is encountered."
+      "reason": "The method attempts to perform regex matching using `url_pattern.match(domain)` without verifying if `domain` is a string, causing a TypeError if it is None or another non-string type."
     }
   ]
 }

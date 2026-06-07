@@ -6,7 +6,15 @@
       "line_start": 102,
       "line_end": 102,
       "confidence": "high",
-      "reason": "The additionalProperties field should support Union[bool, Schema, Reference] instead of Union[bool, Any] or Union[bool, SchemaBase] to properly validate and include referenced schemas in the generated OpenAPI documentation."
+      "reason": "The `additionalProperties` field in SchemaBase is typed with Any instead of SchemaBase, preventing proper validation/parsing of nested OpenAPI schemas for dictionary values."
+    },
+    {
+      "file_id": "file_1",
+      "file_path": "fastapi/openapi/models.py",
+      "line_start": 123,
+      "line_end": 123,
+      "confidence": "high",
+      "reason": "The `additionalProperties` field in Schema overrides SchemaBase but uses SchemaBase, which may cause a mismatch when an unexpected schema object is supplied or generated."
     }
   ]
 }

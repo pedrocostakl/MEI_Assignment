@@ -6,7 +6,7 @@
       "line_start": 18,
       "line_end": 18,
       "confidence": "high",
-      "reason": "The code assumes obj.Config always has a 'json_encoders' attribute, which causes an AttributeError when a BaseModel has a Config without it."
+      "reason": "Accessing obj.Config.json_encoders directly causes an AttributeError if the custom Pydantic Config class does not define a json_encoders attribute."
     }
   ]
 }

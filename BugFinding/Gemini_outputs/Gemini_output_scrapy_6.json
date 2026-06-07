@@ -4,9 +4,9 @@
       "file_id": "file_1",
       "file_path": "scrapy/pipelines/images.py",
       "line_start": 131,
-      "line_end": 131,
+      "line_end": 136,
       "confidence": "high",
-      "reason": "The check `image.format == 'PNG'` fails when the image has been converted or loaded dynamically without setting the format attribute. Checking only `image.mode == 'RGBA'` (or considering palettes like 'P') would properly handle all transparent images."
+      "reason": "The pipeline fails to properly detect and convert palette-based 'P' images with transparency/alpha channels, which leads to incorrect background blending compared to handling 'RGBA' images directly."
     }
   ]
 }

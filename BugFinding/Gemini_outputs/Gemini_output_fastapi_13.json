@@ -6,7 +6,7 @@
       "line_start": 290,
       "line_end": 292,
       "confidence": "high",
-      "reason": "In `include_router`, the `responses` dictionary passed as an argument is mutated and shared/overwritten across multiple routes because `responses = {**responses, **route.responses}` is executed within the route loop without creating a fresh copy or isolating it per route."
+      "reason": "When including a router, the responses dictionary parameter is mutated and combined with each route's responses, carrying over responses from previously processed routes onto subsequent routes."
     }
   ]
 }

@@ -6,7 +6,7 @@
       "line_start": 266,
       "line_end": 273,
       "confidence": "high",
-      "reason": "In `include_router`, when handling `starlette.routing.Route` types (which includes `WebSocketRoute`), it incorrectly adds them via `self.add_route` instead of routing them properly as WebSocket routes or checking if they are instance of `routing.WebSocketRoute`."
+      "reason": "In `include_router`, when handling `routing.Route`, it defaults to adding via `self.add_route`, but WebSocket routes are instances of `routing.WebSocketRoute` and are completely ignored or misclassified here."
     }
   ]
 }

@@ -6,7 +6,7 @@
       "line_start": 522,
       "line_end": 522,
       "confidence": "high",
-      "reason": "The request method uses self.app.config.SERVER_NAME directly, which can cause a KeyError or AttributeError if SERVER_NAME is missing from the configuration instead of safely falling back or using .get()."
+      "reason": "The code checks `self.app.config.SERVER_NAME` directly using the attribute syntax without verifying if it is set or using `.get()`, causing an AttributeError if `SERVER_NAME` is missing from the configuration."
     }
   ]
 }

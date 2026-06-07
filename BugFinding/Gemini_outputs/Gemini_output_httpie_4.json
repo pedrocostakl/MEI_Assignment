@@ -6,7 +6,7 @@
       "line_start": 106,
       "line_end": 107,
       "confidence": "high",
-      "reason": "The 'Host' header check is case-sensitive, failing to detect when 'host' or another casing is present in user headers, which causes duplicate Host headers to be sent."
+      "reason": "The 'Host' header check is case-sensitive, which fails to recognize 'host' when provided in lowercase, resulting in duplicate Host headers."
     }
   ]
 }

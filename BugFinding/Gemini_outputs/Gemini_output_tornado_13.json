@@ -6,7 +6,7 @@
       "line_start": 484,
       "line_end": 484,
       "confidence": "high",
-      "reason": "The method _can_keep_alive checks `start_line.method` for an HTTP/1.0 connection, but when it is a client-side connection reading a response, `start_line` is a `ResponseStartLine` which does not possess a `method` attribute."
+      "reason": "The method _can_keep_alive checks `start_line.method`, which fails with an AttributeError because for an HTTP response, `start_line` is a ResponseStartLine object that does not possess a `method` attribute."
     }
   ]
 }

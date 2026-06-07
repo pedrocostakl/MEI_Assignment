@@ -6,7 +6,7 @@
       "line_start": 318,
       "line_end": 318,
       "confidence": "high",
-      "reason": "The `while len(self) >= self.limit:` comparison fails with a TypeError when `self.limit` is None, which happens if the LocalCache is initialized without a limit specified."
+      "reason": "When LocalCache is initialized without a limit, self.limit is None, causing a TypeError when comparing an integer to None in the while loop condition."
     }
   ]
 }

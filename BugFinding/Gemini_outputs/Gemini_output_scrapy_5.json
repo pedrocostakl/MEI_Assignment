@@ -1,3 +1,12 @@
 {
-  "bug_locations": []
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "scrapy/contracts/__init__.py",
+      "line_start": 87,
+      "line_end": 87,
+      "confidence": "high",
+      "reason": "The order of elements in exc_info passed to results.addError is incorrect. In Python's unittest module, standard exc_info tuple format is (type, value, traceback), but it is incorrectly passed as (value, type, traceback)."
+    }
+  ]
 }

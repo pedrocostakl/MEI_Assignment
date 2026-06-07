@@ -6,7 +6,7 @@
       "line_start": 468,
       "line_end": 468,
       "confidence": "high",
-      "reason": "When including a router using include_router, new routes are always instantiated using self.route_class (which defaults to APIRoute) instead of route.route_class or keeping the custom route class of the included router's routes."
+      "reason": "When including another router via include_router(), the route is cloned/re-created by calling self.add_api_route() instead of using the custom route_class defined on the router itself, causing custom route classes to be ignored and reverted to the default APIRoute."
     }
   ]
 }

@@ -6,7 +6,7 @@
       "line_start": 104,
       "line_end": 104,
       "confidence": "high",
-      "reason": "The method assumes every header value is a bytes object and attempts to decode it without checking if it is None or already a string."
+      "reason": "The method assumes that `value` is a byte string and calls `decode('utf8')` on it, but some request headers (e.g., when downloading) can have a value of `None`, causing an AttributeError."
     }
   ]
 }

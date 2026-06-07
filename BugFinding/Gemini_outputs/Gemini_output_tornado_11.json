@@ -6,7 +6,7 @@
       "line_start": 568,
       "line_end": 568,
       "confidence": "high",
-      "reason": "The 'Transfer-Encoding' header check is case-sensitive, matching only lowercase 'chunked' instead of normalizing it via .lower(). This causes requests with uppercase values (like 'Chunked') to fail to parse as chunked bodies."
+      "reason": "The header value for 'Transfer-Encoding' is not converted to lowercase before comparison, causing case-insensitive checks like 'Chunked' to fail and skip reading the chunked body."
     }
   ]
 }

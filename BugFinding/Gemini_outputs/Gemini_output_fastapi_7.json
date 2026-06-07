@@ -6,7 +6,7 @@
       "line_start": 21,
       "line_end": 23,
       "confidence": "high",
-      "reason": "The request_validation_exception_handler passes raw exception errors (which may contain non-serializable objects like Decimal) directly to JSONResponse instead of encoding them with jsonable_encoder first."
+      "reason": "The request_validation_exception_handler passes raw exception errors directly to JSONResponse, but validation errors from fields like condecimal can contain Decimal objects that are not JSON-serializable. The content needs to be processed with jsonable_encoder before being rendered into a JSON response."
     }
   ]
 }
