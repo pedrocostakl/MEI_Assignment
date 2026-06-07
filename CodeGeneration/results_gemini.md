@@ -12,20 +12,18 @@ Problem 3673 - Hard - Accepted, Runtime: 88 ms
 Problem 3617 - Hard - Accepted, Runtime: 120 ms
 Problem 3832 - Hard - Runtime Error - didnt respect context restrictions
 Problem 3764 - Hard - Accepted, Runtime: 106 ms
+Problem 1581 - Hard - Accepted, Runtime: 80 ms
+Problem 2356 - Hard - Accepted, Runtime: 78 ms
+Problem 1978 - Hard - Accepted, Runtime: 68 ms
+Problem 1965 - Hard - Accepted, Runtime: 71 ms
+Problem 1890 - Hard - Accepted, Runtime: 88 ms
+Problem 1873 - Hard - Accepted, Runtime: 82 ms
+Problem 1789 - Hard - Accepted, Runtime: 102 ms
+Problem 1757 - Hard - Accepted, Runtime: 81 ms
+Problem 1741 - Hard - Accepted, Runtime: 96 ms
 
-Problem 1581 - Hard 
-Problem 2356 - Hard 
-Problem 1978 - Hard 
-Problem 1965 - Hard 
-Problem 1890 - Hard 
-Problem 1873 - Hard 
-Problem 1789 - Hard 
-Problem 1757 - Hard 
-Problem 1741 - Hard 
-
-Hacker Rank
-Interviews Hard - Wrong Answer 
-15 days - Accepted
+HackerRank 1 - Interviews Hard - Wrong Answer 
+HackerRank 2 - 15 days - Accepted
 
 
 ----Medium----
