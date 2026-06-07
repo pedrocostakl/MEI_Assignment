@@ -6,7 +6,15 @@
          "line_start":123,
          "line_end":123,
          "confidence":"high",
-         "reason":"The failing test specifically checks OpenAPI generation for a schema containing 'additionalProperties'. The model definition for additionalProperties is the most direct place where nested schema objects for dictionary value types are represented and can be incorrectly serialized in the generated OpenAPI schema."
+         "reason":"The failing schema assertion involves an object property with nested 'additionalProperties'. The OpenAPI Schema model's typing for 'additionalProperties' is the most direct place where that generated schema can be incorrectly validated, serialized, or omitted."
+      },
+      {
+         "file_id":"file_1",
+         "file_path":"BugsInPy/workspace/fastapi/fastapi/openapi/models.py",
+         "line_start":102,
+         "line_end":102,
+         "confidence":"medium",
+         "reason":"The base schema definition also declares 'additionalProperties'; inconsistency between the base and derived Schema model can affect OpenAPI schema generation for Dict fields and lead to mismatches in the emitted schema."
       }
    ]
 }

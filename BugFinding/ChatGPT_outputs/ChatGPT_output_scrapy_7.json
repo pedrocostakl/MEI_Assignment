@@ -6,7 +6,7 @@
          "line_start":54,
          "line_end":54,
          "confidence":"high",
-         "reason":"Form action URLs are used directly in urljoin(). The failing test shows leading whitespace in the form action becomes '%20' in the generated URL instead of being ignored."
+         "reason":"Form action URLs are joined without normalizing whitespace. The failing test shows an action value containing leading/trailing whitespace becomes '%20path' instead of 'path'."
       }
    ]
 }

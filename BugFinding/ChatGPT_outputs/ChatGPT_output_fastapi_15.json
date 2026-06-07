@@ -6,7 +6,7 @@
          "line_start":248,
          "line_end":273,
          "confidence":"high",
-         "reason":"include_router() only copies APIRoute and routing.Route instances. WebSocket routes are not handled, so websocket_route entries from a router are not included in the application."
+         "reason":"include_router() only copies APIRoute and routing.Route instances. WebSocket routes are not handled, so websocket routes added to a router are not included in the parent app, causing websocket connections like '/router' to fail."
       }
    ]
 }

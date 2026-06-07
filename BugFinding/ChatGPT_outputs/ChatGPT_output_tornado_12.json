@@ -3,10 +3,10 @@
       {
          "file_id":"file_1",
          "file_path":"BugsInPy/workspace/tornado/tornado/auth.py",
-         "line_start":1065,
-         "line_end":1065,
+         "line_start":1064,
+         "line_end":1066,
          "confidence":"high",
-         "reason":"facebook_request is decorated with @_auth_return_future, so its callback parameter is actually a Future inside the function body. Passing that Future as the callback argument to oauth2_request causes _auth_future_to_callback to later attempt to call a Future object, producing the observed TypeError."
+         "reason":"FacebookGraphMixin.facebook_request forwards its callback/future directly into the @_auth_return_future-decorated oauth2_request. During the Facebook login flow this causes a Future to be treated as a callback, leading to the observed TypeError ('Future' object is not callable) and the request timeout."
       }
    ]
 }

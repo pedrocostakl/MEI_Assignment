@@ -6,7 +6,7 @@
          "line_start":613,
          "line_end":616,
          "confidence":"high",
-         "reason":"url_concat raises TypeError for args=None, but the failing test expects None to be accepted and leave the URL unchanged."
+         "reason":"The failing test passes args=None and expects the original URL unchanged, but this branch raises a TypeError for any type other than dict/list/tuple, including None."
       }
    ]
 }

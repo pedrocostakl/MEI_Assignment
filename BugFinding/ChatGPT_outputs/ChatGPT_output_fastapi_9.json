@@ -6,7 +6,7 @@
          "line_start":562,
          "line_end":577,
          "confidence":"high",
-         "reason":"When constructing the synthetic request body field, a new Body/Form/File schema is created with default settings and does not propagate the original body parameter media_type. This causes OpenAPI generation to fall back to application/json instead of the custom media type."
+         "reason":"When constructing the synthetic request body field for embedded or multiple body parameters, a new Body/Form/File schema is created without preserving attributes such as media_type from the original body parameters. This causes OpenAPI requestBody content to fall back to application/json instead of the custom media type."
       }
    ]
 }

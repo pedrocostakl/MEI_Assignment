@@ -6,7 +6,7 @@
          "line_start":58,
          "line_end":58,
          "confidence":"high",
-         "reason":"The code calls url_pattern.match(domain) for every allowed_domains entry. When an entry is None, as exercised by the failing test, re.match raises TypeError because the argument is not a string or bytes object."
+         "reason":"allowed_domains may contain None values, but url_pattern.match(domain) is called unconditionally. The failing test includes a None entry and triggers the reported TypeError."
       }
    ]
 }

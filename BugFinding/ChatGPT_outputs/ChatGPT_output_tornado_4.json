@@ -4,17 +4,17 @@
          "file_id":"file_1",
          "file_path":"BugsInPy/workspace/tornado/tornado/web.py",
          "line_start":2611,
-         "line_end":2613,
+         "line_end":2612,
          "confidence":"high",
-         "reason":"Negative suffix ranges larger than the file size can make start remain negative after adjustment, leading to invalid file.seek(start) and a 500 error instead of a valid range response."
+         "reason":"Negative suffix ranges larger than the file size leave start negative after adding size, leading to file.seek(start) with a negative offset and the observed OSError."
       },
       {
          "file_id":"file_1",
          "file_path":"BugsInPy/workspace/tornado/tornado/web.py",
          "line_start":2629,
-         "line_end":2630,
+         "line_end":2634,
          "confidence":"high",
-         "reason":"Ranges with end less than start are not rejected before computing content_length, producing a negative length that later causes invalid reads and a 500 error."
+         "reason":"No validation exists for ranges where end < start (e.g. bytes=10-3), producing a negative content length and eventually a negative read size, matching the failing ValueError."
       }
    ]
 }

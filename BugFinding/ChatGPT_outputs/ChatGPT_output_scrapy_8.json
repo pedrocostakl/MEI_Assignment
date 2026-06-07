@@ -6,7 +6,7 @@
          "line_start":32,
          "line_end":42,
          "confidence":"high",
-         "reason":"ItemMeta.**new** rebuilds the class attribute dictionary and returns a new class, but it does not preserve the special **classcell** entry. The failing tests explicitly indicate a **classcell** propagation error during class creation."
+         "reason":"ItemMeta rebuilds the class attributes and returns a new class, but it only copies attributes found through dir(_class)/attrs. The failing tests indicate **classcell** is not propagated during class creation, causing the TypeError."
       }
    ]
 }

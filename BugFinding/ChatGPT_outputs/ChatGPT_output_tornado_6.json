@@ -6,7 +6,7 @@
          "line_start":44,
          "line_end":51,
          "confidence":"high",
-         "reason":"BaseAsyncIOLoop.close() closes the asyncio loop but does not remove the loop-to-IOLoop entry from IOLoop._ioloop_for_asyncio. The failing leak tests show mappings accumulating after repeated close operations."
+         "reason":"Closing an AsyncIOLoop does not remove its entry from IOLoop._ioloop_for_asyncio. The failing leak tests show the mapping retains one entry per closed loop, causing the count to grow by 10."
       }
    ]
 }

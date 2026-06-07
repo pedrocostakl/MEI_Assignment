@@ -6,7 +6,7 @@
          "line_start":632,
          "line_end":637,
          "confidence":"high",
-         "reason":"Form data extraction uses getlist() only when field.shape is a recognized sequence shape. Plain Python annotations like list/set/tuple used with Form(...) may not have a sequence shape, causing only a single value to be retrieved and validation to fail with 422."
+         "reason":"FormData values are only read with getlist() when field.shape is a recognized sequence shape. Bare Python annotations like list/set/tuple can have non-sequence shapes, causing only a single value to be fetched and validation to fail with 422."
       }
    ]
 }

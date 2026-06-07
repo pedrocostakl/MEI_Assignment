@@ -6,7 +6,7 @@
          "line_start":290,
          "line_end":292,
          "confidence":"high",
-         "reason":"The router-level 'responses' variable is mutated and reused across routes during include_router(). This causes additional response definitions from one route to leak into subsequent routes, matching the OpenAPI schema failure."
+         "reason":"The shared 'responses' variable is mutated and reused across routes during include_router(), causing additional response definitions from one route to leak into subsequent routes. This matches the OpenAPI output showing response 502 incorrectly appearing on other endpoints."
       }
    ]
 }

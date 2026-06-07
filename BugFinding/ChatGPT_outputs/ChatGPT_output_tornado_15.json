@@ -4,9 +4,9 @@
          "file_id":"file_1",
          "file_path":"BugsInPy/workspace/tornado/tornado/web.py",
          "line_start":2382,
-         "line_end":2383,
+         "line_end":2384,
          "confidence":"high",
-         "reason":"The path traversal check uses startswith(root) on the absolute path, which incorrectly accepts sibling paths sharing the same prefix as the static root (e.g. '/static_foo' vs '/static'). This can bypass the intended 403 path validation and prevent the expected log message."
+         "reason":"The path traversal check uses startswith(root) on the absolute path, which incorrectly treats sibling paths like '/static_foo.txt' as being under '/static'. This causes traversal attempts to bypass the intended 403 path and leads to the failing test."
       }
    ]
 }

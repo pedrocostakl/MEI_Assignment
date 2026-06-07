@@ -6,7 +6,7 @@
          "line_start":114,
          "line_end":118,
          "confidence":"high",
-         "reason":"HTTPBearer raises 403 for non-bearer schemes unconditionally. With auto_error=False, the failing test expects incorrect schemes to be treated like missing credentials and return None instead of raising."
+         "reason":"When the Authorization scheme is not 'bearer', an exception is always raised. With auto_error=False, the failing test expects this case to return None instead of a 403 error."
       }
    ]
 }

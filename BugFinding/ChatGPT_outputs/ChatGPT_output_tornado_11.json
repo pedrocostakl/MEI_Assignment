@@ -6,7 +6,7 @@
          "line_start":568,
          "line_end":569,
          "confidence":"high",
-         "reason":"Transfer-Encoding is compared to the lowercase string 'chunked' using a case-sensitive check. The failing test uses 'Chunked' and expects case-insensitive handling per HTTP rules."
+         "reason":"Transfer-Encoding is compared to the literal string 'chunked' case-sensitively. The failing test uses 'Chunked', which should be accepted per HTTP rules but causes the body not to be parsed as chunked."
       }
    ]
 }

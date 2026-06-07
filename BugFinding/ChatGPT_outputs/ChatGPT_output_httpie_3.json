@@ -6,7 +6,7 @@
          "line_start":104,
          "line_end":104,
          "confidence":"high",
-         "reason":"update_headers unconditionally calls decode('utf8') on every header value. The failing test shows a header value is None during a download request, causing AttributeError on NoneType."
+         "reason":"update_headers unconditionally calls decode() on every header value. The failing test shows a header value is None during a download request, causing AttributeError on None.decode()."
       }
    ]
 }

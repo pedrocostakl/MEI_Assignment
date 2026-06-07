@@ -4,9 +4,9 @@
          "file_id":"file_1",
          "file_path":"BugsInPy/workspace/httpie/httpie/downloads.py",
          "line_start":137,
-         "line_end":141,
+         "line_end":148,
          "confidence":"high",
-         "reason":"The failing tests patch httpie.downloads.get_filename_max_length, but the runtime module reports that this attribute does not exist. The filename-length helper definition/export around these lines is the most direct location tied to the failure."
+         "reason":"The failing tests patch and rely on get_filename_max_length via get_unique_filename. The failure indicates this attribute is missing or not exposed in the module, pointing directly to the filename-length helper region used by unique filename generation."
       }
    ]
 }

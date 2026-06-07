@@ -5,10 +5,10 @@
       "output_file": "ChatGPT_outputs\\ChatGPT_output_fastapi_1.json",
       "benchmark_file": "benchmarks\\fastapi_bug_1.json",
       "num_real_bugs": 60,
-      "num_reported_bugs": 1,
-      "true_positives": 0,
-      "false_positives": 1,
-      "false_negatives": 60
+      "num_reported_bugs": 2,
+      "true_positives": 2,
+      "false_positives": 0,
+      "false_negatives": 58
     },
     {
       "case_name": "fastapi_10",
@@ -26,9 +26,9 @@
       "benchmark_file": "benchmarks\\fastapi_bug_11.json",
       "num_real_bugs": 1,
       "num_reported_bugs": 1,
-      "true_positives": 1,
-      "false_positives": 0,
-      "false_negatives": 0
+      "true_positives": 0,
+      "false_positives": 1,
+      "false_negatives": 1
     },
     {
       "case_name": "fastapi_12",
@@ -55,10 +55,10 @@
       "output_file": "ChatGPT_outputs\\ChatGPT_output_fastapi_14.json",
       "benchmark_file": "benchmarks\\fastapi_bug_14.json",
       "num_real_bugs": 3,
-      "num_reported_bugs": 1,
-      "true_positives": 1,
+      "num_reported_bugs": 2,
+      "true_positives": 2,
       "false_positives": 0,
-      "false_negatives": 2
+      "false_negatives": 1
     },
     {
       "case_name": "fastapi_15",
@@ -85,9 +85,9 @@
       "output_file": "ChatGPT_outputs\\ChatGPT_output_fastapi_2.json",
       "benchmark_file": "benchmarks\\fastapi_bug_2.json",
       "num_real_bugs": 1,
-      "num_reported_bugs": 1,
+      "num_reported_bugs": 2,
       "true_positives": 1,
-      "false_positives": 0,
+      "false_positives": 1,
       "false_negatives": 0
     },
     {
@@ -106,9 +106,9 @@
       "benchmark_file": "benchmarks\\fastapi_bug_4.json",
       "num_real_bugs": 1,
       "num_reported_bugs": 1,
-      "true_positives": 0,
-      "false_positives": 1,
-      "false_negatives": 1
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0
     },
     {
       "case_name": "fastapi_5",
@@ -176,9 +176,9 @@
       "benchmark_file": "benchmarks\\httpie_bug_2.json",
       "num_real_bugs": 2,
       "num_reported_bugs": 1,
-      "true_positives": 1,
-      "false_positives": 0,
-      "false_negatives": 1
+      "true_positives": 0,
+      "false_positives": 1,
+      "false_negatives": 2
     },
     {
       "case_name": "httpie_3",
@@ -216,9 +216,9 @@
       "benchmark_file": "benchmarks\\sanic_bug_1.json",
       "num_real_bugs": 1,
       "num_reported_bugs": 1,
-      "true_positives": 0,
-      "false_positives": 1,
-      "false_negatives": 1
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0
     },
     {
       "case_name": "sanic_2",
@@ -345,10 +345,10 @@
       "output_file": "ChatGPT_outputs\\ChatGPT_output_tornado_1.json",
       "benchmark_file": "benchmarks\\tornado_bug_1.json",
       "num_real_bugs": 3,
-      "num_reported_bugs": 1,
-      "true_positives": 0,
+      "num_reported_bugs": 2,
+      "true_positives": 1,
       "false_positives": 1,
-      "false_negatives": 3
+      "false_negatives": 2
     },
     {
       "case_name": "tornado_10",
@@ -415,10 +415,10 @@
       "output_file": "ChatGPT_outputs\\ChatGPT_output_tornado_16.json",
       "benchmark_file": "benchmarks\\tornado_bug_16.json",
       "num_real_bugs": 2,
-      "num_reported_bugs": 1,
-      "true_positives": 1,
+      "num_reported_bugs": 2,
+      "true_positives": 2,
       "false_positives": 0,
-      "false_negatives": 1
+      "false_negatives": 0
     },
     {
       "case_name": "tornado_2",
@@ -435,10 +435,10 @@
       "output_file": "ChatGPT_outputs\\ChatGPT_output_tornado_3.json",
       "benchmark_file": "benchmarks\\tornado_bug_3.json",
       "num_real_bugs": 1,
-      "num_reported_bugs": 1,
-      "true_positives": 0,
+      "num_reported_bugs": 2,
+      "true_positives": 1,
       "false_positives": 1,
-      "false_negatives": 1
+      "false_negatives": 0
     },
     {
       "case_name": "tornado_4",
@@ -504,10 +504,10 @@
   "totals": {
     "num_cases": 50,
     "num_real_bugs": 135,
-    "num_reported_bugs": 50,
-    "true_positives": 40,
+    "num_reported_bugs": 56,
+    "true_positives": 46,
     "false_positives": 10,
-    "false_negatives": 95
+    "false_negatives": 89
   },
   "missing_benchmarks": [
     "ChatGPT_outputs\\ChatGPT_result_fastapi_1.json"

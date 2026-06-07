@@ -6,7 +6,7 @@
          "line_start":522,
          "line_end":523,
          "confidence":"high",
-         "reason":"request.url_for unconditionally accesses self.app.config.SERVER_NAME. The failing test shows SERVER_NAME is unset, causing AttributeError instead of generating a URL."
+         "reason":"request.url_for() unconditionally accesses self.app.config.SERVER_NAME. When SERVER_NAME is not configured, this raises AttributeError, causing the failing test expecting URL generation without SERVER_NAME."
       }
    ]
 }

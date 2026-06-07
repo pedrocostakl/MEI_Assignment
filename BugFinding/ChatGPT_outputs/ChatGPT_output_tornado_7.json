@@ -6,7 +6,7 @@
          "line_start":659,
          "line_end":659,
          "confidence":"high",
-         "reason":"run_in_executor returns the raw concurrent.futures.Future from executor.submit(). The failing native-await test indicates the returned object is not awaitable in the expected Tornado/async context ('object Future can't be used in await expression')."
+         "reason":"run_in_executor returns the raw concurrent.futures.Future from executor.submit(). The failing native coroutine test awaits this result and raises TypeError because the returned Future is not awaitable in Tornado's coroutine integration."
       }
    ]
 }

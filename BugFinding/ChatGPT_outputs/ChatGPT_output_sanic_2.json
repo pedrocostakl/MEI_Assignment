@@ -6,7 +6,7 @@
          "line_start":675,
          "line_end":744,
          "confidence":"high",
-         "reason":"AsyncioServer wraps the underlying asyncio server but does not expose methods such as start_serving() that tests expect to call on the returned object. The bug is likely in this wrapper class rather than the protocol logic."
+         "reason":"The AsyncioServer wrapper exposes only a subset of asyncio.Server APIs. Hidden tests exercising start_serving() on the returned server object would fail because this wrapper does not provide/delegate that method."
       }
    ]
 }

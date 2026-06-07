@@ -4,9 +4,9 @@
          "file_id":"file_1",
          "file_path":"BugsInPy/workspace/fastapi/fastapi/routing.py",
          "line_start":468,
-         "line_end":490,
+         "line_end":489,
          "confidence":"high",
-         "reason":"include_router recreates included APIRoute instances via self.add_api_route(), which uses the receiving router's route_class and loses the original custom APIRoute subclass. This causes routes from nested routers to become plain APIRoute objects and miss attributes like x_type."
+         "reason":"When including a router, APIRoute instances are recreated via add_api_route(), which uses the parent router's route_class. This loses the original custom route subclass (e.g. APIRouteA/B/C), causing routes to become plain APIRoute objects."
       }
    ]
 }
