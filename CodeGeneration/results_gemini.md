@@ -52,3 +52,9 @@ Problem 596 - Easy - Accepted, Runtime: 67ms
 Problem 607 - Easy - Accepted, Runtime: 121ms
 Problem 610 - Easy - Accepted, Runtime: 80ms
 Problem 619 - Easy - Accepted, Runtime: 118ms
+Problem 620 - Easy - Accepted, Runtime: 75ms
+Problem 627 - Easy - Accepted, Runtime: 90ms
+Problem 1050 - Easy - Accepted, Runtime: 93ms
+Problem 1068 - Easy - Accepted, Runtime: 112ms
+Problem 1075 - Easy - Accepted, Runtime: 136ms
+Problem 1084 - Easy - Accepted, Runtime: 445ms
