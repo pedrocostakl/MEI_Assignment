@@ -26,6 +26,11 @@ Problem 585 - Medium - Accepted, Runtime: 82 ms
 Problem 602 - Medium - Accepted, Runtime: 70 ms
 Problem 608 - Medium - Accepted, Runtime: 102 ms
 Problem 626 - Medium - Accepted, Runtime: 77 ms
+Problem 1045 - Medium - Accepted, Runtime: 93 ms
+Problem 1070 - Medium - Accepted, Runtime: 102 ms
+Problem 1158 - Medium - Accepted, Runtime: 764 ms
+Problem 1164 - Medium - Accepted, Runtime: 85 ms
+Problem 1174 - Medium - Accepted, Runtime: 82 ms
 
 --------Easy------
 
