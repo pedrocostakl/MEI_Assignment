@@ -6,7 +6,7 @@
          "line_start":390,
          "line_end":394,
          "confidence":"high",
-         "reason":"Client requests for PUT/PATCH/POST are unconditionally marked for chunked output when Content-Length/Transfer-Encoding is absent. The failing redirect test uses a PUT request without a body, and this body-framing logic is the most likely cause of the hang/stream-closure behavior."
+         "reason":"Client requests using PUT/PATCH/POST are always marked for chunked transfer when Content-Length is absent, even for bodyless requests. The failing redirect PUT-without-body test and resulting timeout indicate incorrect framing of such requests."
       }
    ]
 }

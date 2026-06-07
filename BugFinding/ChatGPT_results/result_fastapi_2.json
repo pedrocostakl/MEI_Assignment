@@ -3,8 +3,8 @@
   "output_file": "ChatGPT_outputs\\ChatGPT_output_fastapi_2.json",
   "benchmark_file": "benchmarks\\fastapi_bug_2.json",
   "num_real_bugs": 1,
-  "num_reported_bugs": 1,
+  "num_reported_bugs": 2,
   "true_positives": 1,
-  "false_positives": 0,
+  "false_positives": 1,
   "false_negatives": 0
 }

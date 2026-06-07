@@ -26,6 +26,11 @@ Problem 585 - Medium - Accepted, Runtime: 82 ms
 Problem 602 - Medium - Accepted, Runtime: 70 ms
 Problem 608 - Medium - Accepted, Runtime: 102 ms
 Problem 626 - Medium - Accepted, Runtime: 77 ms
+Problem 1045 - Medium - Accepted, Runtime: 93 ms
+Problem 1070 - Medium - Accepted, Runtime: 102 ms
+Problem 1158 - Medium - Accepted, Runtime: 764 ms
+Problem 1164 - Medium - Accepted, Runtime: 85 ms
+Problem 1174 - Medium - Accepted, Runtime: 82 ms
 
 --------Easy------
 
@@ -39,3 +44,14 @@ Problem 511 - Easy - Accepted, Runtime: 79 ms
 Problem 577 - Easy - Accepted, Runtime: 118 ms
 Problem 584 - Easy - Accepted, Runtime: 88 ms
 Problem 586 - Easy - Accepted, Runtime: 88 ms
+Problem 595 - Easy - Accepted, Runtime: 91 ms
+Problem 596 - Easy - Accepted, Runtime: 70 ms
+Problem 607 - Easy - Accepted, Runtime: 151 ms
+Problem 610 - Easy - Accepted, Runtime: 96 ms
+Problem 619 - Easy - Accepted, Runtime: 105 ms
+Problem 620 - Easy - Accepted, Runtime: 79 ms
+Problem 627 - Easy - Accepted, Runtime: 92 ms
+Problem 1050 - Easy - Accepted, Runtime: 68 ms
+Problem 1068 - Easy - Accepted, Runtime: 98 ms
+Problem 1075 - Easy - Accepted, Runtime: 135 ms
+Problem 1084 - Easy - Accepted, Runtime: 84 ms

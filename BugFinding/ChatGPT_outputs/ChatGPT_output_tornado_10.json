@@ -3,10 +3,10 @@
       {
          "file_id":"file_1",
          "file_path":"BugsInPy/workspace/tornado/tornado/web.py",
-         "line_start":996,
+         "line_start":998,
          "line_end":998,
          "confidence":"high",
-         "reason":"finish() unconditionally sets self.ui = None. Later calls to render_string() use get_template_namespace(), which does namespace.update(self.ui) and fail with TypeError when self.ui is None, matching the test failure stack trace."
+         "reason":"finish() unconditionally sets self.ui = None. Later calls to render_string() use get_template_namespace(), which executes namespace.update(self.ui) and crashes with TypeError when self.ui is None, matching the failing traceback."
       }
    ]
 }

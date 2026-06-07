@@ -6,7 +6,7 @@
          "line_start":508,
          "line_end":513,
          "confidence":"high",
-         "reason":"accept_connection() calls _abort() when websocket headers are invalid before any stream is attached. _abort() unconditionally calls self.stream.close(), causing AttributeError on None and turning an expected 400 response into a 500 error."
+         "reason":"_abort() unconditionally calls self.stream.close(). During handshake failures (e.g. missing Sec-WebSocket-Key), no stream has been attached yet, causing AttributeError and a 500 response instead of the expected 400."
       }
    ]
 }

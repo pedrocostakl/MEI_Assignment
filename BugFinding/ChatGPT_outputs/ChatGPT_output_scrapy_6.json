@@ -6,7 +6,7 @@
          "line_start":131,
          "line_end":136,
          "confidence":"high",
-         "reason":"Transparency handling is only applied for PNG images in RGBA mode. PNG images converted to palette mode ('P') with transparency fall through to a direct RGB conversion, losing alpha compositing and producing the incorrect color observed in the failing test."
+         "reason":"Transparency is only handled for PNG images in RGBA mode. Paletted PNG images with transparency (mode 'P') are converted directly to RGB, producing the wrong colors in the failing test."
       }
    ]
 }

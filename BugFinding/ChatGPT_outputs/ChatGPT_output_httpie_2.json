@@ -3,10 +3,10 @@
       {
          "file_id":"file_1",
          "file_path":"BugsInPy/workspace/httpie/httpie/client.py",
-         "line_start":42,
-         "line_end":48,
+         "line_start":128,
+         "line_end":145,
          "confidence":"high",
-         "reason":"The request session is used to follow redirects, but no configuration based on args.max_redirects is applied before issuing the request. This would allow redirects beyond the user-specified limit and prevent TooManyRedirects from being raised."
+         "reason":"The request kwargs built here do not include any handling of args.max_redirects. As a result, redirect limits are never passed/applied, so requests follows all redirects and no TooManyRedirects exception is raised."
       }
    ]
 }

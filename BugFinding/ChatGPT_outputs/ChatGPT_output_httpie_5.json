@@ -6,7 +6,7 @@
          "line_start":42,
          "line_end":55,
          "confidence":"high",
-         "reason":"Separator detection chooses the earliest matching separator position without accounting for overlapping separators like ':=' and '='. For input such as 'bob\\:==foo', '=' is selected instead of the longer ':=' separator, producing the wrong key/value split."
+         "reason":"Separator detection chooses the earliest match without handling overlapping separators like ':=' versus '='. The failing case parses 'bob\\:==foo' using '=' at the shared position, producing key/value splits that contradict the test expectation."
       }
    ]
 }

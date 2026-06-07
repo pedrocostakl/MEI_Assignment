@@ -6,7 +6,7 @@
          "line_start":827,
          "line_end":827,
          "confidence":"high",
-         "reason":"url_for obtains values from router.find_route_by_view_name and appears to treat the returned host-specific route data incorrectly. The failing test shows a host name ('example.com') being returned as the URL path, indicating incorrect unpacking/selection of the route information at this call site."
+         "reason":"url_for relies directly on router.find_route_by_view_name output. The failing test shows a host-qualified route name resolves to 'example.com' instead of '/', indicating host-specific route lookup/URI extraction is mishandled at this lookup point."
       }
    ]
 }

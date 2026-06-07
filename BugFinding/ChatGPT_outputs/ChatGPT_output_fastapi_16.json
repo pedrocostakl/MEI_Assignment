@@ -6,7 +6,7 @@
          "line_start":18,
          "line_end":18,
          "confidence":"high",
-         "reason":"The code assumes every Pydantic Config defines json_encoders. The failing test uses a Config with only use_enum_values, causing the AttributeError at this access."
+         "reason":"The code assumes every Pydantic Config defines json_encoders. The failing test shows Config without that attribute, causing an AttributeError before encoding can proceed."
       }
    ]
 }

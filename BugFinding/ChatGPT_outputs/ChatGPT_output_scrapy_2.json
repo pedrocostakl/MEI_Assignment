@@ -6,7 +6,7 @@
          "line_start":318,
          "line_end":318,
          "confidence":"high",
-         "reason":"When limit is None (default constructor), the comparison len(self) >= self.limit raises TypeError. The failing test exercises LocalCache() without a limit and triggers this line."
+         "reason":"When limit is None (default constructor), the comparison len(self) >= self.limit raises TypeError. The failing test exercises LocalCache() without a limit and crashes at this condition."
       }
    ]
 }

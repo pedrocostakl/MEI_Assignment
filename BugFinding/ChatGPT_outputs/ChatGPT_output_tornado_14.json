@@ -6,7 +6,7 @@
          "line_start":252,
          "line_end":253,
          "confidence":"high",
-         "reason":"The make_current=True logic is inverted: it raises when no current IOLoop exists. This directly causes test_force_current to fail on the first construction with make_current=True."
+         "reason":"The condition for make_current=True is inverted. It raises RuntimeError when no current IOLoop exists, causing test_force_current to fail on the first construction."
       }
    ]
 }

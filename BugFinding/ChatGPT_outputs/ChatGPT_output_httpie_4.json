@@ -6,7 +6,7 @@
          "line_start":106,
          "line_end":107,
          "confidence":"high",
-         "reason":"The Host header presence check is case-sensitive. A user-supplied 'host' header is not recognized, so an additional 'Host' header is added, producing duplicates."
+         "reason":"Host header existence is checked case-sensitively. A user-supplied 'host' header is not recognized, causing an additional 'Host' header to be added and resulting in duplicates."
       }
    ]
 }

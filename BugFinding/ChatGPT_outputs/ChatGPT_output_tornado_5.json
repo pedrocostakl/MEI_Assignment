@@ -6,7 +6,7 @@
          "line_start":1220,
          "line_end":1223,
          "confidence":"high",
-         "reason":"PeriodicCallback scheduling logic in _update_next does not correctly advance the next timeout when the clock moves backwards. The failing test shows repeated scheduling at 1010 instead of progressing to subsequent intervals."
+         "reason":"PeriodicCallback scheduling only updates when _next_timeout <= current_time. When the clock moves backwards, _next_timeout is left unchanged, causing repeated callbacks at the same scheduled timestamp instead of advancing to subsequent periods."
       }
    ]
 }

@@ -6,7 +6,7 @@
          "line_start":21,
          "line_end":22,
          "confidence":"high",
-         "reason":"The validation handler passes exc.errors() directly to JSONResponse. The failing traceback shows a Decimal inside the validation error context is not JSON serializable, causing JSONResponse serialization to fail."
+         "reason":"The validation error payload is passed directly to JSONResponse. exc.errors() can contain non-JSON-serializable values (e.g. Decimal in ctx), causing the serialization failure shown in the traceback."
       }
    ]
 }

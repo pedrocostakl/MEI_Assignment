@@ -3,10 +3,18 @@
       {
          "file_id":"file_1",
          "file_path":"BugsInPy/workspace/tornado/tornado/websocket.py",
-         "line_start":623,
-         "line_end":623,
+         "line_start":948,
+         "line_end":948,
          "confidence":"high",
-         "reason":"After the websocket handshake, set_nodelay() expects handler.stream to be initialized. _detach_stream() returns the detached stream but never stores it on the handler, leading to the AssertionError in set_nodelay during open()."
+         "reason":"The websocket stream is detached into protocol.stream, but the handler's stream attribute is never populated before handler.open() runs. This causes WebSocketHandler.set_nodelay() to fail with an assertion during open()."
+      },
+      {
+         "file_id":"file_1",
+         "file_path":"BugsInPy/workspace/tornado/tornado/websocket.py",
+         "line_start":561,
+         "line_end":562,
+         "confidence":"medium",
+         "reason":"set_nodelay() assumes self.stream is initialized on the handler. The failing test shows this assumption is violated when called from open()."
       }
    ]
 }
