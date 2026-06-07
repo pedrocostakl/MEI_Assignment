@@ -2,9 +2,9 @@
   "case_name": "fastapi_1",
   "output_file": "Gemini_outputs\\Gemini_output_fastapi_1.json",
   "benchmark_file": "benchmarks\\fastapi_bug_1.json",
-  "num_real_bugs": 60,
+  "num_real_bugs": 4,
   "num_reported_bugs": 1,
   "true_positives": 1,
   "false_positives": 0,
-  "false_negatives": 59
+  "false_negatives": 3
 }

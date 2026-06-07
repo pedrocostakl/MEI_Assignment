@@ -3,11 +3,11 @@
     "case_name": "fastapi_1",
     "output_file": "ChatGPT_outputs\\ChatGPT_output_fastapi_1.json",
     "benchmark_file": "benchmarks\\fastapi_bug_1.json",
-    "num_real_bugs": 60,
+    "num_real_bugs": 4,
     "num_reported_bugs": 2,
     "true_positives": 2,
     "false_positives": 0,
-    "false_negatives": 58
+    "false_negatives": 2
   },
   {
     "case_name": "fastapi_10",

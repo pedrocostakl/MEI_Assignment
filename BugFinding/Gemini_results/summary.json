@@ -4,11 +4,11 @@
       "case_name": "fastapi_1",
       "output_file": "Gemini_outputs\\Gemini_output_fastapi_1.json",
       "benchmark_file": "benchmarks\\fastapi_bug_1.json",
-      "num_real_bugs": 60,
+      "num_real_bugs": 4,
       "num_reported_bugs": 1,
       "true_positives": 1,
       "false_positives": 0,
-      "false_negatives": 59
+      "false_negatives": 3
     },
     {
       "case_name": "fastapi_10",
@@ -503,11 +503,11 @@
   ],
   "totals": {
     "num_cases": 50,
-    "num_real_bugs": 135,
+    "num_real_bugs": 79,
     "num_reported_bugs": 53,
     "true_positives": 35,
     "false_positives": 18,
-    "false_negatives": 100
+    "false_negatives": 44
   },
   "missing_benchmarks": [],
   "invalid_outputs": []

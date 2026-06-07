@@ -4,11 +4,11 @@
       "case_name": "fastapi_1",
       "output_file": "ChatGPT_outputs\\ChatGPT_output_fastapi_1.json",
       "benchmark_file": "benchmarks\\fastapi_bug_1.json",
-      "num_real_bugs": 60,
+      "num_real_bugs": 4,
       "num_reported_bugs": 2,
       "true_positives": 2,
       "false_positives": 0,
-      "false_negatives": 58
+      "false_negatives": 2
     },
     {
       "case_name": "fastapi_10",
@@ -503,11 +503,11 @@
   ],
   "totals": {
     "num_cases": 50,
-    "num_real_bugs": 135,
+    "num_real_bugs": 79,
     "num_reported_bugs": 56,
     "true_positives": 46,
     "false_positives": 10,
-    "false_negatives": 89
+    "false_negatives": 33
   },
   "missing_benchmarks": [
     "ChatGPT_outputs\\ChatGPT_result_fastapi_1.json"
