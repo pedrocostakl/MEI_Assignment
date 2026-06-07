@@ -12,6 +12,16 @@ Problem 3617 - Hard - Runtime Error, You have an error in your SQL syntax;
 Problem 3764 - Hard - Accepted, Runtime: 70 ms
 Problem 3832 - Hard - Accepted, Runtime: 69 ms
 Problem 3673 - Hard - Accepted, Runtime: 84 ms
+Problem 1581 - Hard - Accepted, Runtime: 136 ms
+Problem 2356 - Hard - Accepted, Runtime: 83 ms
+Problem 1978 - Hard - Accepted, Runtime: 73 ms
+Problem 1965 - Hard - Accepted, Runtime: 113 ms
+Problem 1890 - Hard - Accepted, Runtime: 229 ms
+Problem 1873 - Hard - Accepted, Runtime: 66 ms
+Problem 1789 - Hard - Accepted, Runtime: 164 ms
+Problem 1757 - Hard - Accepted, Runtime: 73 ms
+Problem 1741 - Hard - Accepted, Runtime: 81 ms
+
 
 
 ----Medium----
@@ -31,6 +41,11 @@ Problem 1070 - Medium - Accepted, Runtime: 102 ms
 Problem 1158 - Medium - Accepted, Runtime: 764 ms
 Problem 1164 - Medium - Accepted, Runtime: 85 ms
 Problem 1174 - Medium - Accepted, Runtime: 82 ms
+Problem 1193 - Medium - Accepted, Runtime: 70 ms
+Problem 1204 - Medium - Accepted, Runtime: 213 ms
+Problem 1321 - Medium - Accepted, Runtime: 78 ms
+Problem 1341 - Medium - Accepted, Runtime: 159 ms
+Problem 1393 - Medium - Accepted, Runtime: 72 ms
 
 --------Easy------
 
