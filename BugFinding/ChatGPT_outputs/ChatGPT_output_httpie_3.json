@@ -1,20 +1,12 @@
 {
-    "bug_locations": [
-        {
-            "file_id": "file_1",
-            "file_path": "BugsInPy/workspace/httpie/httpie/sessions.py",
-            "line_start": 121,
-            "line_end": 123,
-            "confidence": "high",
-            "reason": "The code mutates stored cookie dictionaries using pop('value') while iterating, which can corrupt session cookie state across accesses. Reusing session cookies in tests is likely affected by this destructive read."
-        },
-        {
-            "file_id": "file_1",
-            "file_path": "BugsInPy/workspace/httpie/httpie/sessions.py",
-            "line_start": 104,
-            "line_end": 104,
-            "confidence": "medium",
-            "reason": "Header values are always decoded as bytes, but on Python 3 they may already be str objects. This can break session header persistence and is consistent with unicode/session-related test instability."
-        }
-    ]
+   "bug_locations":[
+      {
+         "file_id":"file_1",
+         "file_path":"BugsInPy/workspace/httpie/httpie/sessions.py",
+         "line_start":104,
+         "line_end":104,
+         "confidence":"high",
+         "reason":"update_headers unconditionally calls decode('utf8') on every header value. The failing test shows a header value is None during a download request, causing AttributeError on NoneType."
+      }
+   ]
 }

@@ -1,20 +1,5 @@
 {
-    "bug_locations": [
-        {
-            "file_id": "file_1",
-            "file_path": "BugsInPy/workspace/scrapy/scrapy/contracts/init.py",
-            "line_start": 80,
-            "line_end": 80,
-            "confidence": "high",
-            "reason": "The callback wrapper consumes spider output into a list but never returns it. This can break response callback behavior expected by tests that rely on yielded requests/items."
-        },
-        {
-            "file_id": "file_1",
-            "file_path": "BugsInPy/workspace/scrapy/scrapy/contracts/init.py",
-            "line_start": 81,
-            "line_end": 83,
-            "confidence": "medium",
-            "reason": "The broad exception handler records errors but suppresses callback execution flow entirely. This may hide failures and alter normal response processing semantics."
-        }
-    ]
+   "bug_locations":[
+      
+   ]
 }

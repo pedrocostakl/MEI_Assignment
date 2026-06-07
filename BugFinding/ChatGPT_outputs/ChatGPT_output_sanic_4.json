@@ -1,20 +1,12 @@
 {
-    "bug_locations": [
-        {
-            "file_id": "file_1",
-            "file_path": "BugsInPy/workspace/sanic/sanic/request.py",
-            "line_start": 187,
-            "line_end": 189,
-            "confidence": "high",
-            "reason": "Authorization token extraction checks whether a prefix occurs anywhere in the header instead of validating the scheme prefix strictly. Tokens containing the substring 'Bearer' or 'Token' can be parsed incorrectly."
-        },
-        {
-            "file_id": "file_1",
-            "file_path": "BugsInPy/workspace/sanic/sanic/request.py",
-            "line_start": 428,
-            "line_end": 435,
-            "confidence": "medium",
-            "reason": "Server port derivation prioritizes forwarded metadata and transport socket details in a way that can return incorrect defaults or ignore malformed forwarded values. Hidden tests around proxy/header handling are likely to exercise this path."
-        }
-    ]
+   "bug_locations":[
+      {
+         "file_id":"file_1",
+         "file_path":"BugsInPy/workspace/sanic/sanic/request.py",
+         "line_start":522,
+         "line_end":523,
+         "confidence":"high",
+         "reason":"request.url_for unconditionally accesses self.app.config.SERVER_NAME. The failing test shows SERVER_NAME is unset, causing AttributeError instead of generating a URL."
+      }
+   ]
 }

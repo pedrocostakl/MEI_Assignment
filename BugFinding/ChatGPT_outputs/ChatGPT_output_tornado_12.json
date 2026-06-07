@@ -1,12 +1,12 @@
 {
-  "bug_locations": [
-    {
-      "file_id": "file_1",
-      "file_path": "BugsInPy/workspace/tornado/tornado/auth.py",
-      "line_start": 657,
-      "line_end": 660,
-      "confidence": "high",
-      "reason": "Query arguments are only added when an access token is present. Requests without an access token incorrectly drop all keyword query parameters."
-    }
-  ]
+   "bug_locations":[
+      {
+         "file_id":"file_1",
+         "file_path":"BugsInPy/workspace/tornado/tornado/auth.py",
+         "line_start":1065,
+         "line_end":1065,
+         "confidence":"high",
+         "reason":"facebook_request is decorated with @_auth_return_future, so its callback parameter is actually a Future inside the function body. Passing that Future as the callback argument to oauth2_request causes _auth_future_to_callback to later attempt to call a Future object, producing the observed TypeError."
+      }
+   ]
 }

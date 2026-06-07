@@ -1,20 +1,12 @@
 {
-    "bug_locations": [
-        {
-            "file_id": "file_1",
-            "file_path": "BugsInPy/workspace/scrapy/scrapy/contracts/init.py",
-            "line_start": 131,
-            "line_end": 131,
-            "confidence": "high",
-            "reason": "The callback output is eagerly converted to a list before post-processing, which can incorrectly flatten or transform dict/item outputs and break contract validation tests."
-        },
-        {
-            "file_id": "file_1",
-            "file_path": "BugsInPy/workspace/scrapy/scrapy/contracts/init.py",
-            "line_start": 119,
-            "line_end": 119,
-            "confidence": "medium",
-            "reason": "The pre-hook wrapper always wraps callback results with list(iterate_spider_output(...)), potentially altering the original callback output semantics before later contract checks."
-        }
-    ]
+   "bug_locations":[
+      {
+         "file_id":"file_1",
+         "file_path":"BugsInPy/workspace/scrapy/scrapy/contracts/**init**.py",
+         "line_start":87,
+         "line_end":87,
+         "confidence":"high",
+         "reason":"The errback builds an exc_info tuple in the wrong order for unittest.TestResult.addError. addError expects (exc_type, exc_value, traceback), but this line passes (value, type, traceback), matching the observed traceback-processing failure."
+      }
+   ]
 }

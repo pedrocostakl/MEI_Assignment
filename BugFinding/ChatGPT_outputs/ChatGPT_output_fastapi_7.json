@@ -1,12 +1,12 @@
 {
-    "bug_locations": [
-        {
-            "file_id": "file_1",
-            "file_path": "BugsInPy/workspace/fastapi/fastapi/exception_handlers.py",
-            "line_start": 21,
-            "line_end": 22,
-            "confidence": "high",
-            "reason": "The validation error response directly returns exc.errors(), which may contain non-JSON-serializable values such as Decimal instances in ctx fields, causing failures in error serialization."
-        }
-    ]
+   "bug_locations":[
+      {
+         "file_id":"file_1",
+         "file_path":"BugsInPy/workspace/fastapi/fastapi/exception_handlers.py",
+         "line_start":21,
+         "line_end":22,
+         "confidence":"high",
+         "reason":"The validation handler passes exc.errors() directly to JSONResponse. The failing traceback shows a Decimal inside the validation error context is not JSON serializable, causing JSONResponse serialization to fail."
+      }
+   ]
 }

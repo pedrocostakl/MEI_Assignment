@@ -1,12 +1,12 @@
 {
-  "bug_locations": [
-    {
-      "file_id": "file_1",
-      "file_path": "BugsInPy/workspace/tornado/tornado/http1connection.py",
-      "line_start": 482,
-      "line_end": 484,
-      "confidence": "high",
-      "reason": "The HTTP/1.0 keep-alive logic incorrectly references start_line.method, which does not exist for response start lines in client mode. This causes crashes when reading HTTP/1.0 responses without Content-Length."
-    }
-  ]
+   "bug_locations":[
+      {
+         "file_id":"file_1",
+         "file_path":"BugsInPy/workspace/tornado/tornado/http1connection.py",
+         "line_start":484,
+         "line_end":484,
+         "confidence":"high",
+         "reason":"_can_keep_alive() accesses start_line.method when handling an HTTP/1.0 response. For client-side responses start_line is a ResponseStartLine, which has no method attribute, causing the observed AttributeError."
+      }
+   ]
 }

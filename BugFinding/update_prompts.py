@@ -26,10 +26,16 @@ Return only valid JSON using this exact format:"""
 old_rules = """Rules:
 - Do not propose fixes.
 - Do not rewrite code.
-- Do not explain outside JSON.
-- Line numbers must refer to the numbered buggy source file.
-- Include at most the number of suspected locations you think there are.
-- Prefer the smallest line range that identifies the origin of the bug."""
+- Do not explain anything outside the JSON.
+- Line numbers must refer to the numbered buggy source files, not the test files.
+- Each entry should identify the likely origin of a bug, not every line affected by it.
+- Prefer the smallest line range that is sufficient to identify the bug.
+- Report only locations directly supported by the source code, failing test, and failing test output.
+- Do not include speculative locations.
+- If no source-code location can be identified with reasonable confidence, return:
+{
+  "bug_locations": []
+}"""
 
 # New rules section
 new_rules = """Rules:
@@ -40,7 +46,7 @@ new_rules = """Rules:
 - Each entry should identify the likely origin of a bug, not every line affected by it.
 - Prefer the smallest line range that is sufficient to identify the bug.
 - Report only locations directly supported by the source code, failing test, and failing test output.
-- Do not include speculative locations.
+- There can be multiple bugs present.
 - If no source-code location can be identified with reasonable confidence, return:
 {
   "bug_locations": []

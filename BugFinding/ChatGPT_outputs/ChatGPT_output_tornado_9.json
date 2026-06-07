@@ -3,10 +3,10 @@
       {
          "file_id":"file_1",
          "file_path":"BugsInPy/workspace/tornado/tornado/httputil.py",
-         "line_start":607,
+         "line_start":613,
          "line_end":616,
          "confidence":"high",
-         "reason":"url_concat does not handle args=None, but the failing tests expect None to behave like an empty parameter list and return the original URL unchanged."
+         "reason":"url_concat raises TypeError for args=None, but the failing test expects None to be accepted and leave the URL unchanged."
       }
    ]
 }

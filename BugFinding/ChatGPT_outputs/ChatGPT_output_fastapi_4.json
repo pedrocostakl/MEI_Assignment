@@ -1,12 +1,12 @@
 {
-    "bug_locations": [
-        {
-            "file_id": "file_1",
-            "file_path": "BugsInPy/workspace/fastapi/fastapi/openapi/utils.py",
-            "line_start": 179,
-            "line_end": 180,
-            "confidence": "high",
-            "reason": "Parameters are collected from route.dependant instead of the flattened dependant, causing duplicated path parameters when dependencies reuse the same parameter name."
-        }
-    ]
+   "bug_locations":[
+      {
+         "file_id":"file_1",
+         "file_path":"BugsInPy/workspace/fastapi/fastapi/openapi/utils.py",
+         "line_start":179,
+         "line_end":179,
+         "confidence":"high",
+         "reason":"OpenAPI parameters are collected from route.dependant instead of the already flattened dependant. This can duplicate parameters that are shared between the path operation and its dependencies, causing the schema mismatch."
+      }
+   ]
 }

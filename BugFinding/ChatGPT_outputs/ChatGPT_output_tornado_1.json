@@ -3,29 +3,10 @@
       {
          "file_id":"file_1",
          "file_path":"BugsInPy/workspace/tornado/tornado/websocket.py",
-         "line_start":1366,
-         "line_end":1366,
+         "line_start":623,
+         "line_end":623,
          "confidence":"high",
-         "reason":"The constructor uses a mutable default list for subprotocols, which can leak state across websocket client instances and affect subprotocol negotiation tests."
-      },
-      {
-         "file_id":"file_1",
-         "file_path":"BugsInPy/workspace/tornado/tornado/websocket.py",
-         "line_start":1338,
-         "line_end":1342,
-         "confidence":"medium",
-         "reason":"The ping timeout logic may close connections prematurely because it compares elapsed pong time against timeout without fully accounting for ping scheduling and delayed callbacks."
-      },
-      {
-         "file_id":"file_1",
-         "file_path":"BugsInPy/workspace/tornado/tornado/websocket.py",
-         "line_start":1212,
-         "line_end":1218,
-         "confidence":"medium",
-         "reason":"Compressed message handling aborts immediately after decompression overflow, which may bypass expected close-handshake behavior and fail size-limit websocket tests."
+         "reason":"After the websocket handshake, set_nodelay() expects handler.stream to be initialized. _detach_stream() returns the detached stream but never stores it on the handler, leading to the AssertionError in set_nodelay during open()."
       }
    ]
 }
-
-
-

@@ -3,8 +3,8 @@
   "output_file": "ChatGPT_outputs\\ChatGPT_output_tornado_6.json",
   "benchmark_file": "benchmarks\\tornado_bug_6.json",
   "num_real_bugs": 4,
-  "num_reported_bugs": 3,
-  "true_positives": 0,
-  "false_positives": 3,
-  "false_negatives": 4
+  "num_reported_bugs": 1,
+  "true_positives": 1,
+  "false_positives": 0,
+  "false_negatives": 3
 }

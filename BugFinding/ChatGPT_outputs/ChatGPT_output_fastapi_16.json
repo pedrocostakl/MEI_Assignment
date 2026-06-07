@@ -1,20 +1,12 @@
 {
-    "bug_locations": [
-        {
-            "file_id": "file_1",
-            "file_path": "BugsInPy/workspace/fastapi/fastapi/encoders.py",
-            "line_start": 20,
-            "line_end": 20,
-            "confidence": "high",
-            "reason": "When encoding BaseModel instances without custom json_encoders, include_none is not forwarded into obj.dict(), so None filtering behavior can be inconsistent and model Config processing may be bypassed."
-        },
-        {
-            "file_id": "file_1",
-            "file_path": "BugsInPy/workspace/fastapi/fastapi/encoders.py",
-            "line_start": 25,
-            "line_end": 27,
-            "confidence": "high",
-            "reason": "Custom encoders from BaseModel.Config are passed, but obj.dict() is called without respecting model serialization config such as use_enum_values, causing Enum values to remain unencoded in nested output."
-        }
-    ]
+   "bug_locations":[
+      {
+         "file_id":"file_1",
+         "file_path":"BugsInPy/workspace/fastapi/fastapi/encoders.py",
+         "line_start":18,
+         "line_end":18,
+         "confidence":"high",
+         "reason":"The code assumes every Pydantic Config defines json_encoders. The failing test uses a Config with only use_enum_values, causing the AttributeError at this access."
+      }
+   ]
 }
