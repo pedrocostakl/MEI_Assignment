@@ -2,7 +2,7 @@
   "bug_locations": [
     {
       "file_id": "file_2",
-      "file_path": "fastapi/encoders.py",
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/encoders.py",
       "line_start": 30,
       "line_end": 40,
       "confidence": "high",

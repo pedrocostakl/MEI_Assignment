@@ -2,7 +2,7 @@
   "bug_locations": [
     {
       "file_id": "file_2",
-      "file_path": "tornado/platform/asyncio.py",
+      "file_path": "BugsInPy/workspace/tornado/tornado/platform/asyncio.py",
       "line_start": 44,
       "line_end": 51,
       "confidence": "high",

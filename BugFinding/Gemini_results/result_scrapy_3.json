@@ -4,7 +4,7 @@
   "benchmark_file": "benchmarks\\scrapy_bug_3.json",
   "num_real_bugs": 2,
   "num_reported_bugs": 1,
-  "true_positives": 0,
-  "false_positives": 1,
-  "false_negatives": 2
+  "true_positives": 1,
+  "false_positives": 0,
+  "false_negatives": 1
 }

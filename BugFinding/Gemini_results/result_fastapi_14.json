@@ -4,7 +4,7 @@
   "benchmark_file": "benchmarks\\fastapi_bug_14.json",
   "num_real_bugs": 3,
   "num_reported_bugs": 2,
-  "true_positives": 0,
-  "false_positives": 2,
-  "false_negatives": 3
+  "true_positives": 2,
+  "false_positives": 0,
+  "false_negatives": 1
 }

@@ -2,7 +2,7 @@
   "bug_locations": [
     {
       "file_id": "file_1",
-      "file_path": "httpie/downloads.py",
+      "file_path": "BugsInPy/workspace/httpie/httpie/downloads.py",
       "line_start": 137,
       "line_end": 141,
       "confidence": "high",

@@ -2,7 +2,7 @@
   "bug_locations": [
     {
       "file_id": "file_2",
-      "file_path": "tornado/websocket.py",
+      "file_path": "BugsInPy/workspace/tornado/tornado/websocket.py",
       "line_start": 458,
       "line_end": 460,
       "confidence": "high",

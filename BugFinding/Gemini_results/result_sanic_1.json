@@ -3,8 +3,8 @@
   "output_file": "Gemini_outputs\\Gemini_output_sanic_1.json",
   "benchmark_file": "benchmarks\\sanic_bug_1.json",
   "num_real_bugs": 1,
-  "num_reported_bugs": 2,
+  "num_reported_bugs": 1,
   "true_positives": 0,
-  "false_positives": 2,
+  "false_positives": 1,
   "false_negatives": 1
 }

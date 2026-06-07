@@ -2,7 +2,7 @@
   "bug_locations": [
     {
       "file_id": "file_1",
-      "file_path": "fastapi/dependencies/utils.py",
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/dependencies/utils.py",
       "line_start": 577,
       "line_end": 577,
       "confidence": "high",

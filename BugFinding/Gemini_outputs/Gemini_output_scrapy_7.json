@@ -2,7 +2,7 @@
   "bug_locations": [
     {
       "file_id": "file_1",
-      "file_path": "scrapy/http/request/form.py",
+      "file_path": "BugsInPy/workspace/scrapy/scrapy/http/request/form.py",
       "line_start": 52,
       "line_end": 55,
       "confidence": "high",

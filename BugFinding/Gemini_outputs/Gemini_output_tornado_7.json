@@ -2,7 +2,7 @@
   "bug_locations": [
     {
       "file_id": "file_1",
-      "file_path": "tornado/ioloop.py",
+      "file_path": "BugsInPy/workspace/tornado/tornado/ioloop.py",
       "line_start": 659,
       "line_end": 659,
       "confidence": "high",

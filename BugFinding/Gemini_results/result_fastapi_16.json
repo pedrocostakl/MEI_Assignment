@@ -3,8 +3,8 @@
   "output_file": "Gemini_outputs\\Gemini_output_fastapi_16.json",
   "benchmark_file": "benchmarks\\fastapi_bug_16.json",
   "num_real_bugs": 1,
-  "num_reported_bugs": 2,
-  "true_positives": 0,
-  "false_positives": 2,
-  "false_negatives": 1
+  "num_reported_bugs": 1,
+  "true_positives": 1,
+  "false_positives": 0,
+  "false_negatives": 0
 }

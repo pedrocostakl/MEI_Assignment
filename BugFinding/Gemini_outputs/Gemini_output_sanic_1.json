@@ -2,7 +2,7 @@
   "bug_locations": [
     {
       "file_id": "file_1",
-      "file_path": "sanic/app.py",
+      "file_path": "BugsInPy/workspace/sanic/sanic/app.py",
       "line_start": 637,
       "line_end": 639,
       "confidence": "high",

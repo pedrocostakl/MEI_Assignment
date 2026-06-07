@@ -2,7 +2,7 @@
   "bug_locations": [
     {
       "file_id": "file_1",
-      "file_path": "httpie/client.py",
+      "file_path": "BugsInPy/workspace/httpie/httpie/client.py",
       "line_start": 143,
       "line_end": 143,
       "confidence": "high",

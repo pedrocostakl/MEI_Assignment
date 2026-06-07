@@ -2,7 +2,7 @@
   "bug_locations": [
     {
       "file_id": "file_1",
-      "file_path": "tornado/web.py",
+      "file_path": "BugsInPy/workspace/tornado/tornado/web.py",
       "line_start": 2601,
       "line_end": 2627,
       "confidence": "high",

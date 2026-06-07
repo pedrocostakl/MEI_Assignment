@@ -2,7 +2,7 @@
   "bug_locations": [
     {
       "file_id": "file_1",
-      "file_path": "scrapy/spidermiddlewares/offsite.py",
+      "file_path": "BugsInPy/workspace/scrapy/scrapy/spidermiddlewares/offsite.py",
       "line_start": 57,
       "line_end": 58,
       "confidence": "high",

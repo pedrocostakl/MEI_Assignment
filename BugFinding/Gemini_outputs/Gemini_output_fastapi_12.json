@@ -2,7 +2,7 @@
   "bug_locations": [
     {
       "file_id": "file_1",
-      "file_path": "fastapi/security/http.py",
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/security/http.py",
       "line_start": 114,
       "line_end": 118,
       "confidence": "high",
@@ -10,7 +10,7 @@
     },
     {
       "file_id": "file_1",
-      "file_path": "fastapi/security/http.py",
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/security/http.py",
       "line_start": 140,
       "line_end": 144,
       "confidence": "high",

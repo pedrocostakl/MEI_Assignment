@@ -2,7 +2,7 @@
   "bug_locations": [
     {
       "file_id": "file_1",
-      "file_path": "scrapy/contracts/__init__.py",
+      "file_path": "BugsInPy/workspace/scrapy/scrapy/contracts/__init__.py",
       "line_start": 87,
       "line_end": 87,
       "confidence": "high",

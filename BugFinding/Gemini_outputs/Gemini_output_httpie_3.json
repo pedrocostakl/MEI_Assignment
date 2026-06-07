@@ -2,7 +2,7 @@
   "bug_locations": [
     {
       "file_id": "file_1",
-      "file_path": "httpie/sessions.py",
+      "file_path": "BugsInPy/workspace/httpie/httpie/sessions.py",
       "line_start": 104,
       "line_end": 104,
       "confidence": "high",

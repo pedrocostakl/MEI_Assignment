@@ -2,7 +2,7 @@
   "bug_locations": [
     {
       "file_id": "file_1",
-      "file_path": "httpie/models.py",
+      "file_path": "BugsInPy/workspace/httpie/httpie/models.py",
       "line_start": 106,
       "line_end": 107,
       "confidence": "high",

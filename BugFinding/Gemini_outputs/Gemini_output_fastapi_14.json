@@ -2,7 +2,7 @@
   "bug_locations": [
     {
       "file_id": "file_1",
-      "file_path": "fastapi/openapi/models.py",
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/openapi/models.py",
       "line_start": 102,
       "line_end": 102,
       "confidence": "high",
@@ -10,7 +10,7 @@
     },
     {
       "file_id": "file_1",
-      "file_path": "fastapi/openapi/models.py",
+      "file_path": "BugsInPy/workspace/fastapi/fastapi/openapi/models.py",
       "line_start": 123,
       "line_end": 123,
       "confidence": "high",
