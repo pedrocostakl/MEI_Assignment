@@ -13,6 +13,16 @@ Problem 3617 - Hard - Accepted, Runtime: 120 ms
 Problem 3832 - Hard - Runtime Error - didnt respect context restrictions
 Problem 3764 - Hard - Accepted, Runtime: 106 ms
 
+Problem 1581 - Hard 
+Problem 2356 - Hard 
+Problem 1978 - Hard 
+Problem 1965 - Hard 
+Problem 1890 - Hard 
+Problem 1873 - Hard 
+Problem 1789 - Hard 
+Problem 1757 - Hard 
+Problem 1741 - Hard 
+
 Hacker Rank
 Interviews Hard - Wrong Answer 
 15 days - Accepted
@@ -35,6 +45,11 @@ Problem 1070 - Medium - Accepted, Runtime: 83 ms
 Problem 1158 - Medium - Accepted, Runtime: 147 ms
 Problem 1164 - Medium - Accepted, Runtime: 62 ms
 Problem 1174 - Medium - Accepted, Runtime: 73 ms
+Problem 1193 - Medium - Accepted, Runtime: 222 ms
+Problem 1204 - Medium - Accepted, Runtime: 65 ms
+Problem 1321 - Medium - Accepted, Runtime: 70 ms
+Problem 1341 - Medium - Accepted, Runtime: 147 ms
+Problem 1393 - Medium - Accepted, Runtime: 76 ms
 
 --------Easy------
 Problem 175 - Easy - Accepted, Runtime: 114ms
