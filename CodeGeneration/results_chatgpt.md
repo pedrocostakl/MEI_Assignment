@@ -20,8 +20,7 @@ Problem 1890 - Hard - Accepted, Runtime: 229 ms
 Problem 1873 - Hard - Accepted, Runtime: 66 ms
 Problem 1789 - Hard - Accepted, Runtime: 164 ms
 Problem 1757 - Hard - Accepted, Runtime: 73 ms
-Problem 1741 - Hard - Accepted, Runtime: 81 ms
-Problem Interviews -  Wrong Answer
+Problem Interviews -  Accepted 
 Problem 15 days interview - Wrong Answer
 
 ----Medium----
@@ -45,7 +44,6 @@ Problem 1193 - Medium - Accepted, Runtime: 70 ms
 Problem 1204 - Medium - Accepted, Runtime: 213 ms
 Problem 1321 - Medium - Accepted, Runtime: 78 ms
 Problem 1341 - Medium - Accepted, Runtime: 159 ms
-Problem 1393 - Medium - Accepted, Runtime: 72 ms
 
 --------Easy------
 
@@ -69,4 +67,3 @@ Problem 627 - Easy - Accepted, Runtime: 92 ms
 Problem 1050 - Easy - Accepted, Runtime: 68 ms
 Problem 1068 - Easy - Accepted, Runtime: 98 ms
 Problem 1075 - Easy - Accepted, Runtime: 135 ms
-Problem 1084 - Easy - Accepted, Runtime: 84 ms
