@@ -22,24 +22,24 @@
 \contentsline {subsubsection}{\numberline {3.4.2}Distribution by Difficulty}{10}{}%
 \contentsline {subsubsection}{\numberline {3.4.3}Per-Problem Comparison}{11}{}%
 \contentsline {subsubsection}{\numberline {3.4.4}Summary}{11}{}%
-\contentsline {subsection}{\numberline {3.5}Hypothesis 1: Correctness Comparison}{11}{}%
-\contentsline {subsubsection}{\numberline {3.5.1}(i) Hypothesis}{11}{}%
+\contentsline {subsection}{\numberline {3.5}Hypothesis 1: Correctness Comparison}{12}{}%
+\contentsline {subsubsection}{\numberline {3.5.1}(i) Hypothesis}{12}{}%
 \contentsline {subsubsection}{\numberline {3.5.2}(ii) Statistical Test Selection}{12}{}%
 \contentsline {subsubsection}{\numberline {3.5.3}(iii) Data Characteristics}{12}{}%
-\contentsline {subsubsection}{\numberline {3.5.4}(iv) Test Computation}{12}{}%
+\contentsline {subsubsection}{\numberline {3.5.4}(iv) Test Computation}{13}{}%
 \contentsline {subsubsection}{\numberline {3.5.5}(v) Results}{13}{}%
 \contentsline {subsubsection}{\numberline {3.5.6}(vi) Decision and Conclusion}{13}{}%
 \contentsline {subsection}{\numberline {3.6}Hypothesis 2: Execution Time Comparison}{13}{}%
-\contentsline {subsubsection}{\numberline {3.6.1}(i) Hypothesis}{13}{}%
-\contentsline {subsubsection}{\numberline {3.6.2}(ii) Statistical Test Selection}{13}{}%
+\contentsline {subsubsection}{\numberline {3.6.1}(i) Hypothesis}{14}{}%
+\contentsline {subsubsection}{\numberline {3.6.2}(ii) Statistical Test Selection}{14}{}%
 \contentsline {subsubsection}{\numberline {3.6.3}(iii) Data Characteristics}{14}{}%
-\contentsline {subsubsection}{\numberline {3.6.4}(iv) Test Computation}{14}{}%
-\contentsline {subsubsection}{\numberline {3.6.5}(v) Results}{14}{}%
-\contentsline {subsubsection}{\numberline {3.6.6}(vi) Decision and Conclusion}{15}{}%
-\contentsline {subsection}{\numberline {3.7}Hypothesis 3: Impact of Problem Difficulty}{15}{}%
-\contentsline {subsubsection}{\numberline {3.7.1}(i) Hypothesis}{15}{}%
-\contentsline {subsubsection}{\numberline {3.7.2}(ii) Statistical Test Selection}{15}{}%
-\contentsline {subsubsection}{\numberline {3.7.3}(iii) Data Characteristics}{16}{}%
-\contentsline {subsubsection}{\numberline {3.7.4}(iv) Test Computation}{16}{}%
-\contentsline {subsubsection}{\numberline {3.7.5}(v) Results}{16}{}%
-\contentsline {subsubsection}{\numberline {3.7.6}(vi) Decision and Conclusion}{16}{}%
+\contentsline {subsubsection}{\numberline {3.6.4}(iv) Test Computation}{15}{}%
+\contentsline {subsubsection}{\numberline {3.6.5}(v) Results}{16}{}%
+\contentsline {subsubsection}{\numberline {3.6.6}(vi) Decision and Conclusion}{16}{}%
+\contentsline {subsection}{\numberline {3.7}Hypothesis 3: Impact of Problem Difficulty}{16}{}%
+\contentsline {subsubsection}{\numberline {3.7.1}(i) Hypothesis}{16}{}%
+\contentsline {subsubsection}{\numberline {3.7.2}(ii) Statistical Test Selection}{16}{}%
+\contentsline {subsubsection}{\numberline {3.7.3}(iii) Data Characteristics}{17}{}%
+\contentsline {subsubsection}{\numberline {3.7.4}(iv) Test Computation}{17}{}%
+\contentsline {subsubsection}{\numberline {3.7.5}(v) Results}{17}{}%
+\contentsline {subsubsection}{\numberline {3.7.6}(vi) Decision and Conclusion}{18}{}%

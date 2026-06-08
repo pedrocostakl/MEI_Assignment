@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.25 (MiKTeX 24.1) (preloaded format=pdflatex 2026.6.5)  8 JUN 2026 17:44
+This is pdfTeX, Version 3.141592653-2.6-1.40.25 (MiKTeX 24.1) (preloaded format=pdflatex 2026.6.5)  8 JUN 2026 19:08
 entering extended mode
  restricted \write18 enabled.
  file:line:error style messages enabled.
@@ -417,19 +417,16 @@ File: charts/2_boxplot_by_difficulty.png Graphic file (type png)
 Package pdftex.def Info: charts/2_boxplot_by_difficulty.png  used on input line 297.
 (pdftex.def)             Requested size: 455.24411pt x 193.80388pt.
  [10 <./charts/1_avg_runtime_by_difficulty.png>]
-<charts/5_head_to_head.png, id=47, 642.7212pt x 1639.0836pt>
+<charts/5_head_to_head.png, id=47, 932.283pt x 354.123pt>
 File: charts/5_head_to_head.png Graphic file (type png)
 <use charts/5_head_to_head.png>
 Package pdftex.def Info: charts/5_head_to_head.png  used on input line 308.
-(pdftex.def)             Requested size: 386.96027pt x 986.83417pt.
-
-
-LaTeX Warning: Float too large for page by 313.18022pt on input line 311.
-
+(pdftex.def)             Requested size: 386.96027pt x 146.9853pt.
+ [11 <./charts/2_boxplot_by_difficulty.png> <./charts/5_head_to_head.png>]
 
 LaTeX Warning: `h' float specifier changed to `ht'.
 
-[11 <./charts/2_boxplot_by_difficulty.png>] [12{C:/Users/Luis Vaz/AppData/Local/Programs/MiKTeX/fonts/enc/dvips/lm/lm-mathsy.enc}] [13]
+[12{C:/Users/Luis Vaz/AppData/Local/Programs/MiKTeX/fonts/enc/dvips/lm/lm-mathsy.enc}] [13]
 <charts/6_qq_plot_runtime_differences.png, id=62, 426.393pt x 424.9476pt>
 File: charts/6_qq_plot_runtime_differences.png Graphic file (type png)
 <use charts/6_qq_plot_runtime_differences.png>
@@ -439,22 +436,22 @@ Package pdftex.def Info: charts/6_qq_plot_runtime_differences.png  used on input
 
 LaTeX Warning: `h' float specifier changed to `ht'.
 
-[14] [15] [16] [17 <./charts/5_head_to_head.png>] [18 <./charts/6_qq_plot_runtime_differences.png>] (main.aux)
+[14] [15 <./charts/6_qq_plot_runtime_differences.png>] [16] [17] [18] (main.aux)
  ***********
 LaTeX2e <2023-11-01> patch level 1
 L3 programming layer <2024-01-04>
  ***********
  ) 
 Here is how much of TeX's memory you used:
- 6692 strings out of 474486
- 106062 string characters out of 5742304
+ 6696 strings out of 474486
+ 106100 string characters out of 5742304
  1935542 words of memory out of 5000000
  28726 multiletter control sequences out of 15000+600000
- 621566 words of font info for 150 fonts, out of 8000000 for 9000
+ 621721 words of font info for 152 fonts, out of 8000000 for 9000
  1141 hyphenation exceptions out of 8191
  57i,12n,65p,1081b,363s stack positions out of 10000i,1000n,20000p,200000b,200000s
 <C:/Users/Luis Vaz/AppData/Local/Programs/MiKTeX/fonts/type1/public/lm/lmbx10.pfb><C:/Users/Luis Vaz/AppData/Local/Programs/MiKTeX/fonts/type1/public/lm/lmbx12.pfb><C:/Users/Luis Vaz/AppData/Local/Programs/MiKTeX/fonts/type1/public/lm/lmbxi10.pfb><C:/Users/Luis Vaz/AppData/Local/Programs/MiKTeX/fonts/type1/public/lm/lmmi10.pfb><C:/Users/Luis Vaz/AppData/Local/Programs/MiKTeX/fonts/type1/public/lm/lmmi8.pfb><C:/Users/Luis Vaz/AppData/Local/Programs/MiKTeX/fonts/type1/public/lm/lmr10.pfb><C:/Users/Luis Vaz/AppData/Local/Programs/MiKTeX/fonts/type1/public/lm/lmr12.pfb><C:/Users/Luis Vaz/AppData/Local/Programs/MiKTeX/fonts/type1/public/lm/lmr8.pfb><C:/Users/Luis Vaz/AppData/Local/Programs/MiKTeX/fonts/type1/public/lm/lmri10.pfb><C:/Users/Luis Vaz/AppData/Local/Programs/MiKTeX/fonts/type1/public/lm/lmsy10.pfb><C:/Users/Luis Vaz/AppData/Local/Programs/MiKTeX/fonts/type1/public/lm/lmsy8.pfb><C:/Users/Luis Vaz/AppData/Local/Programs/MiKTeX/fonts/type1/public/lm/lmtt12.pfb>
-Output written on main.pdf (18 pages, 551115 bytes).
+Output written on main.pdf (18 pages, 472792 bytes).
 PDF statistics:
  140 PDF objects out of 1000 (max. 8388607)
  0 named destinations out of 1000 (max. 500000)

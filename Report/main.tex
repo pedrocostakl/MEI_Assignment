@@ -421,13 +421,22 @@ Overall, the execution time analysis indicates that ChatGPT and Gemini produce S
     \label{tab:shapiro-runtime}
     \end{table}
 
-    The Q-Q plot in Figure~\ref{fig:qq-runtime} confirms this finding. The sample quantiles deviate substantially from the theoretical normal quantiles, particularly in the tails, indicating heavy-tailed and non-normal behaviour in the distribution of paired differences.
+    The Q-Q plots in Figures~\ref{fig:qq-chatgpt} and \ref{fig:qq-gemini} confirm this finding by visualizing the distribution of execution times for each model independently. The sample quantiles deviate substantially from the theoretical normal quantiles, particularly in the upper tails. This indicates heavy-tailed and heavily skewed non-normal behaviour caused by extreme outliers. Because the individual distributions (and their paired differences) are not normally distributed, parametric testing cannot be used.
 
     \begin{figure}[h]
         \centering
-        \includegraphics[width=0.65\textwidth]{charts/6_qq_plot_runtime_differences.png}
-        \caption{Q-Q plot of paired runtime differences (ChatGPT $-$ Gemini). Deviations from the diagonal indicate non-normality.}
-        \label{fig:qq-runtime}
+        \begin{minipage}{0.48\textwidth}
+            \centering
+            \includegraphics[width=\linewidth]{charts/6_qq_plot_chatgpt.png}
+            \caption{Q-Q plot of execution times for ChatGPT Mini.}
+            \label{fig:qq-chatgpt}
+        \end{minipage}\hfill
+        \begin{minipage}{0.48\textwidth}
+            \centering
+            \includegraphics[width=\linewidth]{charts/6_qq_plot_gemini.png}
+            \caption{Q-Q plot of execution times for Gemini Flash.}
+            \label{fig:qq-gemini}
+        \end{minipage}
     \end{figure}
 
     \textbf{Selected Test Evaluation:} While a 2-sample T-test is a common method for comparing means, it cannot be used in this scenario for two fundamental reasons. First, a T-test strictly requires the data to follow a normal distribution, an assumption that was proven false by the Shapiro-Wilk test. Second, a 2-sample T-test assumes the two groups are independent. In this experiment, the data is paired (both models solved the exact same problems), meaning problem difficulty influences both models simultaneously. Even a paired T-test would be invalid due to the lack of normality.

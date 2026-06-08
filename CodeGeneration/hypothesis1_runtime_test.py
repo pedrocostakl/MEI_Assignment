@@ -133,8 +133,9 @@ else:
     print(f"  => p = {shapiro_p:.6f} <= {alpha}  =>  REJECT H0 of normality")
     print(f"  => The differences are NOT normally distributed.")
 
-# -- 3. QQ Plot of the differences -----------------------------------------------
+# -- 3. QQ Plots -----------------------------------------------------------------
 
+# 3a. QQ Plot of the differences (important for statistical test assumptions)
 fig, ax = plt.subplots(figsize=(6, 6))
 res = stats.probplot(differences, dist="norm", plot=ax)
 ax.set_title("Q-Q Plot of Paired Runtime Differences\n(ChatGPT - Gemini)", fontsize=13, fontweight="bold", pad=12)
@@ -150,10 +151,50 @@ ax.annotate(
 )
 
 fig.tight_layout()
-qq_path = os.path.join(OUTPUT_DIR, "6_qq_plot_runtime_differences.png")
-fig.savefig(qq_path, bbox_inches="tight", dpi=150)
+qq_path_diff = os.path.join(OUTPUT_DIR, "6_qq_plot_runtime_differences.png")
+fig.savefig(qq_path_diff, bbox_inches="tight", dpi=150)
 plt.close(fig)
-print(f"\n  QQ plot saved: {qq_path}")
+print(f"\n  QQ plot saved: {qq_path_diff}")
+
+# 3b. QQ Plot of ChatGPT runtimes individually
+fig_gpt, ax_gpt = plt.subplots(figsize=(6, 6))
+stats.probplot(gpt_runtimes, dist="norm", plot=ax_gpt)
+ax_gpt.set_title("Q-Q Plot of Execution Times\n(ChatGPT Mini)", fontsize=13, fontweight="bold", pad=12)
+ax_gpt.set_xlabel("Theoretical Quantiles", fontsize=11)
+ax_gpt.set_ylabel("Sample Quantiles (ms)", fontsize=11)
+
+shapiro_gpt_stat, shapiro_gpt_p = stats.shapiro(gpt_runtimes)
+ax_gpt.annotate(
+    f"Shapiro-Wilk: W={shapiro_gpt_stat:.4f}, p={shapiro_gpt_p:.4f}",
+    xy=(0.05, 0.95), xycoords="axes fraction",
+    fontsize=9, verticalalignment="top",
+    bbox=dict(boxstyle="round,pad=0.4", facecolor="lightyellow", edgecolor="gray", alpha=0.9),
+)
+fig_gpt.tight_layout()
+qq_path_gpt = os.path.join(OUTPUT_DIR, "6_qq_plot_chatgpt.png")
+fig_gpt.savefig(qq_path_gpt, bbox_inches="tight", dpi=150)
+plt.close(fig_gpt)
+print(f"  QQ plot saved: {qq_path_gpt}")
+
+# 3c. QQ Plot of Gemini runtimes individually
+fig_gem, ax_gem = plt.subplots(figsize=(6, 6))
+stats.probplot(gem_runtimes, dist="norm", plot=ax_gem)
+ax_gem.set_title("Q-Q Plot of Execution Times\n(Gemini Flash)", fontsize=13, fontweight="bold", pad=12)
+ax_gem.set_xlabel("Theoretical Quantiles", fontsize=11)
+ax_gem.set_ylabel("Sample Quantiles (ms)", fontsize=11)
+
+shapiro_gem_stat, shapiro_gem_p = stats.shapiro(gem_runtimes)
+ax_gem.annotate(
+    f"Shapiro-Wilk: W={shapiro_gem_stat:.4f}, p={shapiro_gem_p:.4f}",
+    xy=(0.05, 0.95), xycoords="axes fraction",
+    fontsize=9, verticalalignment="top",
+    bbox=dict(boxstyle="round,pad=0.4", facecolor="lightyellow", edgecolor="gray", alpha=0.9),
+)
+fig_gem.tight_layout()
+qq_path_gem = os.path.join(OUTPUT_DIR, "6_qq_plot_gemini.png")
+fig_gem.savefig(qq_path_gem, bbox_inches="tight", dpi=150)
+plt.close(fig_gem)
+print(f"  QQ plot saved: {qq_path_gem}")
 
 # -- 4. Statistical Test ---------------------------------------------------------
 
@@ -221,5 +262,7 @@ print(f"  p-value             : {test_p_val:.6f}")
 print(f"  alpha               : {alpha}")
 print(f"  Decision            : {'Reject H0' if decision == 'reject' else 'Fail to reject H0'}")
 print(f"  Effect size         : Cohen's d = {cohens_d:.4f} ({effect_label})")
-print(f"  QQ plot             : {qq_path}")
+print(f"  QQ plot             : {qq_path_diff}")
+print(f"  QQ plot             : {qq_path_gpt}")
+print(f"  QQ plot             : {qq_path_gem}")
 print(f"{'=' * 65}")
