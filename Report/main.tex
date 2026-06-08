@@ -227,11 +227,55 @@ All generated solutions were evaluated using the LeetCode platform under the sam
 Each problem was submitted in an independent conversation context. This ensured that information from previous interactions could not influence subsequent responses.
 
 
+\subsection{Results and Correctness Analysis}
 
+The generated SQL solutions were evaluated on 60 problems per model. Since the evaluation platform returns a binary outcome (Accepted or Not Accepted), correctness was measured as the proportion of accepted solutions:
 
-\subsection{Hypothesis Testing Procedure (Template)}
+\[
+\text{Accuracy} = \frac{\text{Accepted Solutions}}{\text{Total Problems}}
+\]
+Table~\ref{tab:codegen-overall} presents the overall correctness achieved by each model.
 
-This section presents the statistical procedure used to evaluate each hypothesis. The analysis follows four steps: (i) hypothesis definition, (ii) test selection, (iii) test execution, and (iv) interpretation of results.
+\begin{table}[h]
+\centering
+\begin{tabular}{lccc}
+\hline
+	extbf{Model} & \textbf{Accepted} & \textbf{Total} & \textbf{Accuracy} \\
+\hline
+ChatGPT & 58 & 60 & 96.67\% \\
+Gemini  & 57 & 60 & 95.00\% \\
+\hline
+\end{tabular}
+\caption{Overall correctness of the SQL code generation models.}
+\label{tab:codegen-overall}
+\end{table}
+
+Both models achieved high correctness rates, with ChatGPT obtaining a marginally higher accuracy than Gemini. The difference corresponds to a single additional accepted solution.
+
+To evaluate the impact of problem complexity, the results were further analyzed according to the predefined difficulty levels.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lccc}
+\hline
+\textbf{Difficulty} & \textbf{ChatGPT} & \textbf{Gemini} & \textbf{Total Problems} \\
+\hline
+Easy   & 20/20 (100.00\%) & 20/20 (100.00\%) & 20 \\
+Medium & 20/20 (100.00\%) & 19/20 (95.00\%)  & 20 \\
+Hard   & 16/20 (80.00\%)  & 17/20 (89.47\%)  & 20 \\
+\hline
+\end{tabular}
+\caption{Correctness by difficulty level.}
+\label{tab:codegen-difficulty}
+\end{table}
+
+The results indicate a progressive decrease in correctness as problem difficulty increases. Both models solved all Easy problems successfully, while the Hard category produced the lowest acceptance rates. This trend suggests that problem complexity has a measurable impact on SQL code generation performance, regardless of the model used.
+
+\subsection{Statistical Comparison}
+
+Although ChatGPT achieved a slightly higher accuracy than Gemini, it is necessary to determine whether this observed difference is statistically significant or simply due to random variation. Since both models were evaluated on the same set of problems and each observation is classified as either correct or incorrect, the comparison was performed using McNemar's test.
+
+The test is based on a contingency table that records, for each problem, whether both models produced correct solutions, both failed, or only one of the models generated a correct solution. This paired analysis enables the assessment of whether one model consistently outperforms the other across the evaluated problem set.
 
 \subsubsection{(i) Hypothesis}
 
