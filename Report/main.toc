@@ -21,9 +21,15 @@
 \contentsline {subsubsection}{\numberline {4.8.3}Controlled Variables}{8}{}%
 \contentsline {subsection}{\numberline {4.9}Results and Correctness Analysis}{9}{}%
 \contentsline {subsection}{\numberline {4.10}Statistical Comparison}{10}{}%
-\contentsline {subsubsection}{\numberline {4.10.1}(i) Hypothesis}{10}{}%
-\contentsline {subsubsection}{\numberline {4.10.2}(ii) Statistical Test Selection}{10}{}%
-\contentsline {subsubsection}{\numberline {4.10.3}(iii) Data Characteristics}{10}{}%
-\contentsline {subsubsection}{\numberline {4.10.4}(iv) Test Computation}{11}{}%
-\contentsline {subsubsection}{\numberline {4.10.5}(v) Results}{11}{}%
-\contentsline {subsubsection}{\numberline {4.10.6}(vi) Decision and Conclusion}{11}{}%
+\contentsline {subsection}{\numberline {4.11}Execution Time Analysis}{10}{}%
+\contentsline {subsubsection}{\numberline {4.11.1}Descriptive Statistics}{10}{}%
+\contentsline {subsubsection}{\numberline {4.11.2}Distribution by Difficulty}{11}{}%
+\contentsline {subsubsection}{\numberline {4.11.3}Overall Runtime Distribution}{12}{}%
+\contentsline {subsubsection}{\numberline {4.11.4}Per-Problem Comparison}{12}{}%
+\contentsline {subsubsection}{\numberline {4.11.5}Summary}{12}{}%
+\contentsline {subsubsection}{\numberline {4.11.6}(i) Hypothesis}{13}{}%
+\contentsline {subsubsection}{\numberline {4.11.7}(ii) Statistical Test Selection}{13}{}%
+\contentsline {subsubsection}{\numberline {4.11.8}(iii) Data Characteristics}{13}{}%
+\contentsline {subsubsection}{\numberline {4.11.9}(iv) Test Computation}{13}{}%
+\contentsline {subsubsection}{\numberline {4.11.10}(v) Results}{13}{}%
+\contentsline {subsubsection}{\numberline {4.11.11}(vi) Decision and Conclusion}{14}{}%

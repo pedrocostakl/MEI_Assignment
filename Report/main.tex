@@ -1,329 +1,400 @@
-\documentclass[11pt,a4paper]{article}
+    \documentclass[11pt,a4paper]{article}
 
-\usepackage[a4paper, margin=2.5cm]{geometry}
+    \usepackage[a4paper, margin=2.5cm]{geometry}
 
-\usepackage{amsmath,amssymb,amsfonts}
-\usepackage{graphicx}
-\usepackage{xcolor}
-\usepackage[T1]{fontenc}
-\usepackage{lmodern}
-\usepackage{microtype}
+    \usepackage{amsmath,amssymb,amsfonts}
+    \usepackage{graphicx}
+    \usepackage{xcolor}
+    \usepackage[T1]{fontenc}
+    \usepackage{lmodern}
+    \usepackage{microtype}
 
-\usepackage{longtable,array}
+    \usepackage{longtable,array}
 
-\linespread{1.25} % approximate one-and-a-half spacing without extra packages
-\renewcommand{\arraystretch}{1.2}
-\setlength{\parskip}{6pt}
-\setlength{\parindent}{0pt}
+    \linespread{1.25} % approximate one-and-a-half spacing without extra packages
+    \renewcommand{\arraystretch}{1.2}
+    \setlength{\parskip}{6pt}
+    \setlength{\parindent}{0pt}
 
 
-\title{
-  \textbf {Experimental Methods in Computer Science}\\
-  \large \textbf {Experiment Design}
-}
+    \title{
+    \textbf {Experimental Methods in Computer Science}\\
+    \large \textbf {Experiment Design}
+    }
 
 
-\author{
-\begin{tabular}{c}
-André Miguel Correia Cardoso
-\texttt{2022222265}\\
-Luis Miguel Ferreira Vaz 
-\texttt{2022214707}\\
-Pedro Costa 
-\texttt{2022220304}\\
-\end{tabular}
-}
+    \author{
+    \begin{tabular}{c}
+    André Miguel Correia Cardoso
+    \texttt{2022222265}\\
+    Luis Miguel Ferreira Vaz 
+    \texttt{2022214707}\\
+    Pedro Costa 
+    \texttt{2022220304}\\
+    \end{tabular}
+    }
 
-\date{University of Coimbra, Mestrado em Engenharia Informática 2025/2026}
+    \date{University of Coimbra, Mestrado em Engenharia Informática 2025/2026}
 
-\begin{document}
+    \begin{document}
 
-\maketitle
+    \maketitle
 
-\newpage
-\tableofcontents
-\newpage
+    \newpage
+    \tableofcontents
+    \newpage
 
-\section{Introduction}
-Large Language Models (LLMs) are increasingly being integrated into software development workflow. As their use becomes more widespread, it is important to evaluate the extent to which developers can rely on these tools in practical software engineering contexts.
+    \section{Introduction}
+    Large Language Models (LLMs) are increasingly being integrated into software development workflow. As their use becomes more widespread, it is important to evaluate the extent to which developers can rely on these tools in practical software engineering contexts.
 
-This report was developed as part of the Experimental Methods in Computer Science curricular unit and addresses the following central problem statement:\\
+    This report was developed as part of the Experimental Methods in Computer Science curricular unit and addresses the following central problem statement:\\
 
-\textbf{\textit{Can developers rely on LLM-based tools to support software development activities?}}\\
+    \textbf{\textit{Can developers rely on LLM-based tools to support software development activities?}}\\
 
-Given the wide scope of this question, the experiment focuses on two specific areas of software development: Code Generation and Code Review (more specifically Bug Finding). These two areas were studied separately, using distinct datasets and statistical analysis methods suited to each task.
+    Given the wide scope of this question, the experiment focuses on two specific areas of software development: Code Generation and Code Review (more specifically Bug Finding). These two areas were studied separately, using distinct datasets and statistical analysis methods suited to each task.
 
-Despite these differences, both parts of the experiment share a common setting: they are based on the Python programming language and evaluate the same LLM models. This allows for a structured comparison of model performance across two relevant software development activities, contributing to a broader understanding of the capabilities and limitations of LLM-based tools.
+    Despite these differences, both parts of the experiment share a common setting: they are based on the Python programming language and evaluate the same LLM models. This allows for a structured comparison of model performance across two relevant software development activities, contributing to a broader understanding of the capabilities and limitations of LLM-based tools.
 
 
-\section{Experimental Design}
-\subsection{}
+    \section{Experimental Design}
+    \subsection{}
 
-\section{Bug Finding}
-Code Review, and more specifically Bug Finding, refers to the practice of providing an LLM with source code and asking it to inspect the code for potential defects. Depending on the experimental setup, this process may involve supplying only the relevant code files, or it may include additional contextual information such as failing tests, execution outputs, error messages, or brief descriptions of the expected behaviour.
+    \section{Bug Finding}
+    Code Review, and more specifically Bug Finding, refers to the practice of providing an LLM with source code and asking it to inspect the code for potential defects. Depending on the experimental setup, this process may involve supplying only the relevant code files, or it may include additional contextual information such as failing tests, execution outputs, error messages, or brief descriptions of the expected behaviour.
 
-This experiment focuses on the bug detection capabilities of the selected LLMs. In particular, the models are tasked with analysing Python source code and identifying the locations of real bugs. The objective is to evaluate how effectively each model can support developers in detecting defects during code review activities.
+    This experiment focuses on the bug detection capabilities of the selected LLMs. In particular, the models are tasked with analysing Python source code and identifying the locations of real bugs. The objective is to evaluate how effectively each model can support developers in detecting defects during code review activities.
 
-\subsection{Experimental Design}
+    \subsection{Experimental Design}
 
-\subsubsection{Research Question}
-The research question for this experiment is:\\
-\textit{How does the choice of Large Language Model affect bug-finding performance in real-world Python bugs?}
+    \subsubsection{Research Question}
+    The research question for this experiment is:\\
+    \textit{How does the choice of Large Language Model affect bug-finding performance in real-world Python bugs?}
 
 
-\subsubsection{Independent Variables}
-The independent variables are:
-\begin{itemize}
-    \item \textbf{LLM Model (2 levels)}:
-    \item \textbf{Language (1 level)} :
-        \begin{itemize}
-            \item Python
-        \end{itemize}
-        Even though there is only one language bing used in the bug, it is still considered an independent variable.
-\end{itemize}
+    \subsubsection{Independent Variables}
+    The independent variables are:
+    \begin{itemize}
+        \item \textbf{LLM Model (2 levels)}:
+        \item \textbf{Language (1 level)} :
+            \begin{itemize}
+                \item Python
+            \end{itemize}
+            Even though there is only one language bing used in the bug, it is still considered an independent variable.
+    \end{itemize}
 
-\subsubsection{Dependent Variables}
-The dependent variables used in the statistical comparison are:
-\begin{itemize}
-    \item \textbf{Recall}: Fraction of the real bugs identified. \[
-            Recall = \frac{TP}{TP + FN}
-            \]
-    \item \textbf{F1-Score}: F1-score combines recall and precision into a single metric that penalises both missed 
-bugs and incorrectly reported bugs: \[
-            F1 = \frac{2TP}{2TP + FP + FN}
-            \]
-\end{itemize}
-Precision was excluded, since, due to its formula, when an LLM reports zero bugs, it will generate a division by 0. Since F1-score is the harmonic mean between Recall and Precision we decided to opt for that dependent variable.
+    \subsubsection{Dependent Variables}
+    The dependent variables used in the statistical comparison are:
+    \begin{itemize}
+        \item \textbf{Recall}: Fraction of the real bugs identified. \[
+                Recall = \frac{TP}{TP + FN}
+                \]
+        \item \textbf{F1-Score}: F1-score combines recall and precision into a single metric that penalises both missed 
+    bugs and incorrectly reported bugs: \[
+                F1 = \frac{2TP}{2TP + FP + FN}
+                \]
+    \end{itemize}
+    Precision was excluded, since, due to its formula, when an LLM reports zero bugs, it will generate a division by 0. Since F1-score is the harmonic mean between Recall and Precision we decided to opt for that dependent variable.
 
-\subsubsection{Controlled Variables}
-In order to reduce unnecessary variables and isolate each LLM's performance, we kept the following variable constant:
-\begin{itemize}
-    \item \textbf{Scenarios}: Both LLMs are fed the same bug scenarios
-    \item \textbf{Prompt}: All prompts follow the same format. They just vary from scenario to scenario in the Source Files section, since they include that specific scenario's buggy code.
-    \item \textbf{New chat for each submission}: In order to avoid outputs based on previous context, each submission is made in a new chat.
-\end{itemize}
+    \subsubsection{Controlled Variables}
+    In order to reduce unnecessary variables and isolate each LLM's performance, we kept the following variable constant:
+    \begin{itemize}
+        \item \textbf{Scenarios}: Both LLMs are fed the same bug scenarios
+        \item \textbf{Prompt}: All prompts follow the same format. They just vary from scenario to scenario in the Source Files section, since they include that specific scenario's buggy code.
+        \item \textbf{New chat for each submission}: In order to avoid outputs based on previous context, each submission is made in a new chat.
+    \end{itemize}
 
 
 
 
 
-\section{Code Generation}
-\subsection{Context and Motivation}
+    \section{Code Generation}
+    \subsection{Context and Motivation}
 
-This experiment evaluated the reliability of Large Language Models (LLMs) in generating SQL queries. SQL was selected because it provides a standardized environment in which generated solutions can be automatically executed and validated against predefined test cases.
+    This experiment evaluated the reliability of Large Language Models (LLMs) in generating SQL queries. SQL was selected because it provides a standardized environment in which generated solutions can be automatically executed and validated against predefined test cases.
 
-\subsection{Dataset and Problem Selection}
+    \subsection{Dataset and Problem Selection}
 
-A dataset consisting of 45 SQL programming problems was collected from the LeetCode platform. The selected problems were evenly distributed across three difficulty levels (Easy, Medium, and Hard), enabling the evaluation of model performance under varying levels of complexity.
+    A dataset consisting of 45 SQL programming problems was collected from the LeetCode platform. The selected problems were evenly distributed across three difficulty levels (Easy, Medium, and Hard), enabling the evaluation of model performance under varying levels of complexity.
 
-\subsection{Prompting and Generation Procedure}
+    \subsection{Prompting and Generation Procedure}
 
-For each problem, both LLMs received the same prompt template and were instructed to generate a single SQL query as the solution. Each problem was submitted independently, and no interaction history was shared between problems.
+    For each problem, both LLMs received the same prompt template and were instructed to generate a single SQL query as the solution. Each problem was submitted independently, and no interaction history was shared between problems.
 
-Each model was allowed a single attempt per problem. This design choice was made to evaluate first-response reliability and to avoid bias introduced by iterative refinement or multiple attempts.
+    Each model was allowed a single attempt per problem. This design choice was made to evaluate first-response reliability and to avoid bias introduced by iterative refinement or multiple attempts.
 
-\subsection{Evaluation Methodology}
+    \subsection{Evaluation Methodology}
 
-The generated solutions were submitted to the LeetCode evaluation platform, which automatically executed each query against a set of hidden test cases. The platform determined whether each solution was accepted or rejected based on its execution results.
+    The generated solutions were submitted to the LeetCode evaluation platform, which automatically executed each query against a set of hidden test cases. The platform determined whether each solution was accepted or rejected based on its execution results.
 
-The evaluation was based on the acceptance status rather than direct comparison of query syntax. This ensures that semantically equivalent queries producing identical results are considered correct.
+    The evaluation was based on the acceptance status rather than direct comparison of query syntax. This ensures that semantically equivalent queries producing identical results are considered correct.
 
-\subsection{Performance Metrics}
+    \subsection{Performance Metrics}
 
-In addition to correctness, execution time reported by the platform was also recorded. This metric is used to analyze the query's efficiency, enabling a comparative analysis of computational performance between models.
+    In addition to correctness, execution time reported by the platform was also recorded. This metric is used to analyze the query's efficiency, enabling a comparative analysis of computational performance between models.
 
-Although execution time is influenced by factors such as query structure and database optimization strategies, it provides a practical indicator of relative efficiency between generated solutions.
+    Although execution time is influenced by factors such as query structure and database optimization strategies, it provides a practical indicator of relative efficiency between generated solutions.
 
 
-\subsection{Experimental Controls}
+    \subsection{Experimental Controls}
 
-To ensure experimental consistency, all problems were presented using the same prompt structure. Only the problem statement and input/output specifications varied between tasks.
+    To ensure experimental consistency, all problems were presented using the same prompt structure. Only the problem statement and input/output specifications varied between tasks.
 
-Furthermore, each problem was submitted in an independent conversation context, preventing information from previous interactions from influencing subsequent responses. As a result, every generated solution constitutes an independent observation.
-\subsection{Research Questions}
+    Furthermore, each problem was submitted in an independent conversation context, preventing information from previous interactions from influencing subsequent responses. As a result, every generated solution constitutes an independent observation.
+    \subsection{Research Questions}
 
-The experiment was designed to investigate the reliability of Large Language Models (LLMs) in SQL code generation. Specifically, the study aims to address the following research questions:
+    The experiment was designed to investigate the reliability of Large Language Models (LLMs) in SQL code generation. Specifically, the study aims to address the following research questions:
 
-\begin{itemize}
-    \item \textbf{RQ1}: Is there a statistically significant difference in the correctness of SQL queries generated by ChatGPT Mini and Gemini Flash?
-    
-    \item \textbf{RQ2}: Does problem difficulty significantly influence the correctness of SQL queries generated by Large Language Models?
-\end{itemize}
+    \begin{itemize}
+        \item \textbf{RQ1}: Is there a statistically significant difference in the correctness of SQL queries generated by ChatGPT Mini and Gemini Flash?
+        
+        \item \textbf{RQ2}: Does problem difficulty significantly influence the correctness of SQL queries generated by Large Language Models?
+    \end{itemize}
 
-\subsection{Variables}
+    \subsection{Variables}
 
-The experimental design includes two independent variables and multiple dependent variables used to evaluate the reliability and performance of Large Language Models (LLMs) in SQL code generation.
+    The experimental design includes two independent variables and multiple dependent variables used to evaluate the reliability and performance of Large Language Models (LLMs) in SQL code generation.
 
-\subsubsection{Independent Variables}
+    \subsubsection{Independent Variables}
 
-\textbf{IV1: LLM Model}
+    \textbf{IV1: LLM Model}
 
-This variable represents the Large Language Model used to generate SQL queries. It has two levels:
-\begin{itemize}
-    \item ChatGPT Mini
-    \item Gemini Flash
-\end{itemize}
+    This variable represents the Large Language Model used to generate SQL queries. It has two levels:
+    \begin{itemize}
+        \item ChatGPT Mini
+        \item Gemini Flash
+    \end{itemize}
 
-\textbf{IV2: Problem Difficulty}
+    \textbf{IV2: Problem Difficulty}
 
-This variable represents the difficulty level of the SQL programming problems selected from the dataset. It has three levels:
-\begin{itemize}
-    \item Easy
-    \item Medium
-    \item Hard
-\end{itemize}
+    This variable represents the difficulty level of the SQL programming problems selected from the dataset. It has three levels:
+    \begin{itemize}
+        \item Easy
+        \item Medium
+        \item Hard
+    \end{itemize}
 
-\subsubsection{Dependent Variables}
+    \subsubsection{Dependent Variables}
 
-\textbf{DV1: Query Outcome Classification (Primary Outcome)}
+    \textbf{DV1: Query Outcome Classification (Primary Outcome)}
 
-This variable classifies the outcome of each generated SQL query based on its execution and correctness. It is defined as a categorical variable with the following levels:
+    This variable classifies the outcome of each generated SQL query based on its execution and correctness. It is defined as a categorical variable with the following levels:
 
-\begin{itemize}
-    \item \textbf{Correct}: the query executes successfully and passes all hidden test cases
-    \item \textbf{Incorrect Logic}: the query executes successfully but fails one or more hidden test cases due to logical or constraint violations
-    \item \textbf{Syntax or Execution Error}: the query fails to execute due to syntax errors or runtime issues
-\end{itemize}
+    \begin{itemize}
+        \item \textbf{Correct}: the query executes successfully and passes all hidden test cases
+        \item \textbf{Incorrect Logic}: the query executes successfully but fails one or more hidden test cases due to logical or constraint violations
+        \item \textbf{Syntax or Execution Error}: the query fails to execute due to syntax errors or runtime issues
+    \end{itemize}
 
-This classification allows a more granular analysis of failure types beyond binary correctness.
+    This classification allows a more granular analysis of failure types beyond binary correctness.
 
-\textbf{DV2: Execution Success}
+    \textbf{DV2: Execution Success}
 
-This variable captures whether the generated SQL query is syntactically valid and executable. It is defined as:
-\begin{itemize}
-    \item Executes successfully
-    \item Execution error
-\end{itemize}
+    This variable captures whether the generated SQL query is syntactically valid and executable. It is defined as:
+    \begin{itemize}
+        \item Executes successfully
+        \item Execution error
+    \end{itemize}
 
-\textbf{DV3: Execution Time (Secondary Performance Metric)}
+    \textbf{DV3: Execution Time (Secondary Performance Metric)}
 
-This variable records the execution time reported by the evaluation platform for each query. It is treated as a continuous variable and used as a proxy for query efficiency. It is not used as a measure of correctness, but instead as a secondary performance indicator to compare computational efficiency across models.
+    This variable records the execution time reported by the evaluation platform for each query. It is treated as a continuous variable and used as a proxy for query efficiency. It is not used as a measure of correctness, but instead as a secondary performance indicator to compare computational efficiency across models.
 
-\subsubsection{Controlled Variables}
+    \subsubsection{Controlled Variables}
 
-Several factors that could influence the quality of the generated solutions were kept constant throughout the experiment to ensure that observed differences could be attributed to the independent variables under investigation.
+    Several factors that could influence the quality of the generated solutions were kept constant throughout the experiment to ensure that observed differences could be attributed to the independent variables under investigation.
 
-\textbf{CV1: Prompt Template}
+    \textbf{CV1: Prompt Template}
 
-All problems were presented using the same prompt template. Only the problem statement and the associated input/output specifications varied between tasks.
+    All problems were presented using the same prompt template. Only the problem statement and the associated input/output specifications varied between tasks.
 
-\textbf{CV2: Number of Generation Attempts}
+    \textbf{CV2: Number of Generation Attempts}
 
-Each model was allowed a single attempt per problem. No retries, prompt refinements, or iterative interactions were permitted.
+    Each model was allowed a single attempt per problem. No retries, prompt refinements, or iterative interactions were permitted.
 
-\textbf{CV3: Evaluation Platform}
+    \textbf{CV3: Evaluation Platform}
 
-All generated solutions were evaluated using the LeetCode platform under the same evaluation procedure and hidden test cases.
+    All generated solutions were evaluated using the LeetCode platform under the same evaluation procedure and hidden test cases.
 
-\textbf{CV4: Conversation Context}
+    \textbf{CV4: Conversation Context}
 
-Each problem was submitted in an independent conversation context. This ensured that information from previous interactions could not influence subsequent responses.
+    Each problem was submitted in an independent conversation context. This ensured that information from previous interactions could not influence subsequent responses.
 
 
-\subsection{Results and Correctness Analysis}
+    \subsection{Results and Correctness Analysis}
 
-The generated SQL solutions were evaluated on 60 problems per model. Since the evaluation platform returns a binary outcome (Accepted or Not Accepted), correctness was measured as the proportion of accepted solutions:
+    The generated SQL solutions were evaluated on 60 problems per model. Since the evaluation platform returns a binary outcome (Accepted or Not Accepted), correctness was measured as the proportion of accepted solutions:
 
-\[
-\text{Accuracy} = \frac{\text{Accepted Solutions}}{\text{Total Problems}}
-\]
-Table~\ref{tab:codegen-overall} presents the overall correctness achieved by each model.
+    \[
+    \text{Accuracy} = \frac{\text{Accepted Solutions}}{\text{Total Problems}}
+    \]
+    Table~\ref{tab:codegen-overall} presents the overall correctness achieved by each model.
+
+    \begin{table}[h]
+    \centering
+    \begin{tabular}{lccc}
+    \hline
+        extbf{Model} & \textbf{Accepted} & \textbf{Total} & \textbf{Accuracy} \\
+    \hline
+    ChatGPT & 58 & 60 & 96.67\% \\
+    Gemini  & 57 & 60 & 95.00\% \\
+    \hline
+    \end{tabular}
+    \caption{Overall correctness of the SQL code generation models.}
+    \label{tab:codegen-overall}
+    \end{table}
+
+    Both models achieved high correctness rates, with ChatGPT obtaining a marginally higher accuracy than Gemini. The difference corresponds to a single additional accepted solution.
+
+    To evaluate the impact of problem complexity, the results were further analyzed according to the predefined difficulty levels.
+
+    \begin{table}[h]
+    \centering
+    \begin{tabular}{lccc}
+    \hline
+    \textbf{Difficulty} & \textbf{ChatGPT} & \textbf{Gemini} & \textbf{Total Problems} \\
+    \hline
+    Easy   & 20/20 (100.00\%) & 20/20 (100.00\%) & 20 \\
+    Medium & 20/20 (100.00\%) & 19/20 (95.00\%)  & 20 \\
+    Hard   & 16/20 (80.00\%)  & 17/20 (89.47\%)  & 20 \\
+    \hline
+    \end{tabular}
+    \caption{Correctness by difficulty level.}
+    \label{tab:codegen-difficulty}
+    \end{table}
+
+    The results indicate a progressive decrease in correctness as problem difficulty increases. Both models solved all Easy problems successfully, while the Hard category produced the lowest acceptance rates. This trend suggests that problem complexity has a measurable impact on SQL code generation performance, regardless of the model used.
+
+    \subsection{Statistical Comparison}
+
+    Although ChatGPT achieved a slightly higher accuracy than Gemini, it is necessary to determine whether this observed difference is statistically significant or simply due to random variation. Since both models were evaluated on the same set of problems and each observation is classified as either correct or incorrect, the comparison was performed using McNemar's test.
+
+    The test is based on a contingency table that records, for each problem, whether both models produced correct solutions, both failed, or only one of the models generated a correct solution. This paired analysis enables the assessment of whether one model consistently outperforms the other across the evaluated problem set.
+
+
+
+    \subsection{Execution Time Analysis}
+
+Beyond correctness, the execution time reported by the LeetCode platform was recorded for each accepted submission and used as a secondary performance indicator. The following analysis is based exclusively on accepted solutions, as rejected queries do not produce meaningful runtime measurements.
+
+\subsubsection{Descriptive Statistics}
+
+Table~\ref{tab:runtime-stats} summarises the central tendency and dispersion of execution times across all accepted submissions.
 
 \begin{table}[h]
 \centering
-\begin{tabular}{lccc}
+\begin{tabular}{lcccc}
 \hline
-	extbf{Model} & \textbf{Accepted} & \textbf{Total} & \textbf{Accuracy} \\
+\textbf{Model} & \textbf{Mean (ms)} & \textbf{Median (ms)} & \textbf{Std. Dev. (ms)} & \textbf{Accepted} \\
 \hline
-ChatGPT & 58 & 60 & 96.67\% \\
-Gemini  & 57 & 60 & 95.00\% \\
-\hline
-\end{tabular}
-\caption{Overall correctness of the SQL code generation models.}
-\label{tab:codegen-overall}
-\end{table}
-
-Both models achieved high correctness rates, with ChatGPT obtaining a marginally higher accuracy than Gemini. The difference corresponds to a single additional accepted solution.
-
-To evaluate the impact of problem complexity, the results were further analyzed according to the predefined difficulty levels.
-
-\begin{table}[h]
-\centering
-\begin{tabular}{lccc}
-\hline
-\textbf{Difficulty} & \textbf{ChatGPT} & \textbf{Gemini} & \textbf{Total Problems} \\
-\hline
-Easy   & 20/20 (100.00\%) & 20/20 (100.00\%) & 20 \\
-Medium & 20/20 (100.00\%) & 19/20 (95.00\%)  & 20 \\
-Hard   & 16/20 (80.00\%)  & 17/20 (89.47\%)  & 20 \\
+ChatGPT & 109 & 82 & 122 & 54/61 \\
+Gemini  & 107 & 82 &  95 & 55/61 \\
 \hline
 \end{tabular}
-\caption{Correctness by difficulty level.}
-\label{tab:codegen-difficulty}
+\caption{Descriptive statistics of execution time for accepted submissions.}
+\label{tab:runtime-stats}
 \end{table}
 
-The results indicate a progressive decrease in correctness as problem difficulty increases. Both models solved all Easy problems successfully, while the Hard category produced the lowest acceptance rates. This trend suggests that problem complexity has a measurable impact on SQL code generation performance, regardless of the model used.
+The two models present nearly identical median runtimes (82\,ms for both), and their means differ by only 2\,ms. However, both distributions exhibit considerable right skew, driven by a small number of outliers. Notably, ChatGPT produced a 764\,ms result on Problem~1158 (Medium) and Gemini produced results of 644\,ms and 445\,ms on Problems~577 and~1084 (Easy), respectively. These outliers inflate the mean substantially relative to the median, which is why the median is a more representative measure of central tendency for this dataset.
 
-\subsection{Statistical Comparison}
+\subsubsection{Distribution by Difficulty}
 
-Although ChatGPT achieved a slightly higher accuracy than Gemini, it is necessary to determine whether this observed difference is statistically significant or simply due to random variation. Since both models were evaluated on the same set of problems and each observation is classified as either correct or incorrect, the comparison was performed using McNemar's test.
+Figure~\ref{fig:avg-runtime} shows the mean execution time grouped by difficulty level and model. ChatGPT presents a higher average on Hard problems, largely due to the 229\,ms result on Problem~1890, while Gemini achieves a lower average on that category. Conversely, Gemini's Easy average is inflated by the two outliers mentioned above.
 
-The test is based on a contingency table that records, for each problem, whether both models produced correct solutions, both failed, or only one of the models generated a correct solution. This paired analysis enables the assessment of whether one model consistently outperforms the other across the evaluated problem set.
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.75\textwidth]{charts/1_avg_runtime_by_difficulty.png}
+    \caption{Mean execution time by difficulty level.}
+    \label{fig:avg-runtime}
+\end{figure}
 
-\subsubsection{(i) Hypothesis}
+The box plots in Figure~\ref{fig:boxplot} corroborate this observation. Both models display similar interquartile ranges across difficulty levels, indicating that the majority of queries execute within a comparable and consistent time range. The outliers visible in the Easy category for Gemini are the primary source of distributional asymmetry for that model.
 
-\textbf{Null Hypothesis ($H_0$):} \\
-\textit{To be defined for the specific research question.}
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=\textwidth]{charts/2_boxplot_by_difficulty.png}
+    \caption{Runtime distribution by difficulty level (box plots). Boxes show the interquartile range; horizontal lines indicate the median; whiskers extend to the minimum and maximum non-outlier values.}
+    \label{fig:boxplot}
+\end{figure}
 
-\textbf{Alternative Hypothesis ($H_1$):} \\
-\textit{To be defined for the specific research question.}
+\subsubsection{Overall Runtime Distribution}
 
-\subsubsection{(ii) Statistical Test Selection}
+Figure~\ref{fig:histogram} presents overlapping histograms of execution times across all accepted submissions using 30\,ms bins. Both distributions are strongly right-skewed and concentrated in the 60--150\,ms range, with long tails extending toward higher values. The dashed vertical lines mark the mean for each model, confirming that the bulk of observations fall well below the mean due to the influence of outliers. The distributions are largely overlapping, suggesting that the two models produce queries of similar computational efficiency for the majority of problems.
 
-\textbf{Selected Test:} \textit{To be defined}
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.85\textwidth]{charts/4_runtime_histogram.png}
+    \caption{Histogram of execution times for all accepted submissions (30\,ms bins). Dashed lines indicate the mean runtime per model.}
+    \label{fig:histogram}
+\end{figure}
 
-The selected statistical test is justified based on the type of data (categorical or continuous), the experimental design (paired or independent samples), and the distributional properties of the dataset.
+\subsubsection{Per-Problem Comparison}
 
-\textbf{Data Assumption Checks:}
-\begin{itemize}
-    \item Normality assessment: \textit{To be defined (e.g., Shapiro-Wilk test or visual inspection)}
-    \item Distribution shape (skewness): \textit{To be defined}
-\end{itemize}
+Figure~\ref{fig:head-to-head} provides a direct head-to-head comparison of execution times for each problem accepted by both models. No consistent dominance is observed for either model: each outperforms the other on roughly half the shared problems. The largest discrepancies arise from the individual outliers previously identified and are not representative of a systematic performance gap.
 
-\subsubsection{(iii) Data Characteristics}
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.85\textwidth]{charts/5_head_to_head.png}
+    \caption{Per-problem execution time comparison for all problems accepted by both models.}
+    \label{fig:head-to-head}
+\end{figure}
 
-\textbf{Normality Analysis:} \\
-\textit{To be defined after data collection}
+\subsubsection{Summary}
 
-\textbf{Skewness Analysis:} \\
-\textit{To be defined after data collection}
+Overall, the execution time analysis indicates that ChatGPT and Gemini produce SQL queries of comparable runtime efficiency. Both models concentrate their runtimes within a narrow band (60--150\,ms) across all difficulty levels. The minor differences observed in aggregate statistics are attributable to isolated outliers rather than to a systematic performance advantage of either model. Consequently, execution time does not constitute a meaningful differentiator between the two models under the conditions of this experiment.
+    \subsubsection{(i) Hypothesis}
 
-\subsubsection{(iv) Test Computation}
+    \textbf{Null Hypothesis ($H_0$):} \\
+    \textit{To be defined for the specific research question.}
 
-The test statistic is computed using the following formulation:
+    \textbf{Alternative Hypothesis ($H_1$):} \\
+    \textit{To be defined for the specific research question.}
 
-\[
-\text{Test statistic formula to be inserted here}
-\]
+    \subsubsection{(ii) Statistical Test Selection}
 
-Where:
-\begin{itemize}
-    \item \textit{Define variables used in the formula after data collection}
-\end{itemize}
+    \textbf{Selected Test:} \textit{To be defined}
 
-\subsubsection{(v) Results}
+    The selected statistical test is justified based on the type of data (categorical or continuous), the experimental design (paired or independent samples), and the distributional properties of the dataset.
 
-\textbf{Test Statistic:} \textit{To be computed} \\
-\textbf{p-value:} \textit{To be computed} \\
-\textbf{Significance Level ($\alpha$):} 0.05
+    \textbf{Data Assumption Checks:}
+    \begin{itemize}
+        \item Normality assessment: \textit{To be defined (e.g., Shapiro-Wilk test or visual inspection)}
+        \item Distribution shape (skewness): \textit{To be defined}
+    \end{itemize}
 
-\subsubsection{(vi) Decision and Conclusion}
+    \subsubsection{(iii) Data Characteristics}
 
-\begin{itemize}
-    \item If $p \leq \alpha$: Reject $H_0$
-    \item If $p > \alpha$: Fail to reject $H_0$
-\end{itemize}
+    \textbf{Normality Analysis:} \\
+    \textit{To be defined after data collection}
 
-\textbf{Conclusion:} \textit{To be written after results are obtained}
+    \textbf{Skewness Analysis:} \\
+    \textit{To be defined after data collection}
 
-\end{document}
+    \subsubsection{(iv) Test Computation}
+
+    The test statistic is computed using the following formulation:
+
+    \[
+    \text{Test statistic formula to be inserted here}
+    \]
+
+    Where:
+    \begin{itemize}
+        \item \textit{Define variables used in the formula after data collection}
+    \end{itemize}
+
+    \subsubsection{(v) Results}
+
+    \textbf{Test Statistic:} \textit{To be computed} \\
+    \textbf{p-value:} \textit{To be computed} \\
+    \textbf{Significance Level ($\alpha$):} 0.05
+
+    \subsubsection{(vi) Decision and Conclusion}
+
+    \begin{itemize}
+        \item If $p \leq \alpha$: Reject $H_0$
+        \item If $p > \alpha$: Fail to reject $H_0$
+    \end{itemize}
+
+    \textbf{Conclusion:} \textit{To be written after results are obtained}
+
+    \end{document}
