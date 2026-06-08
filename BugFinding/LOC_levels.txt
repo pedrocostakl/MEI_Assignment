@@ -1,0 +1,61 @@
+Low LOC level — ≤330 LOC
+| Prompt File                 | LOC |
+| --------------------------- | --: |
+| `prompt_fastapi_bug_12.txt` | 145 |
+| `prompt_fastapi_bug_16.txt` |  79 |
+| `prompt_fastapi_bug_4.txt`  | 311 |
+| `prompt_fastapi_bug_5.txt`  | 161 |
+| `prompt_fastapi_bug_7.txt`  |  23 |
+| `prompt_httpie_bug_3.txt`   | 152 |
+| `prompt_httpie_bug_4.txt`   | 130 |
+| `prompt_httpie_bug_5.txt`   | 301 |
+| `prompt_sanic_bug_5.txt`    |  58 |
+| `prompt_scrapy_bug_1.txt`   |  72 |
+| `prompt_scrapy_bug_2.txt`   | 330 |
+| `prompt_scrapy_bug_3.txt`   | 106 |
+| `prompt_scrapy_bug_4.txt`   | 162 |
+| `prompt_scrapy_bug_5.txt`   | 162 |
+| `prompt_scrapy_bug_6.txt`   | 220 |
+| `prompt_scrapy_bug_7.txt`   | 203 |
+| `prompt_scrapy_bug_8.txt`   |  99 |
+
+Medium LOC level — 331–980 LOC
+| Prompt File                 | LOC |
+| --------------------------- | --: |
+| `prompt_fastapi_bug_10.txt` | 854 |
+| `prompt_fastapi_bug_11.txt` | 561 |
+| `prompt_fastapi_bug_13.txt` | 593 |
+| `prompt_fastapi_bug_14.txt` | 354 |
+| `prompt_fastapi_bug_15.txt` | 529 |
+| `prompt_fastapi_bug_3.txt`  | 973 |
+| `prompt_fastapi_bug_6.txt`  | 776 |
+| `prompt_fastapi_bug_8.txt`  | 858 |
+| `prompt_fastapi_bug_9.txt`  | 579 |
+| `prompt_httpie_bug_1.txt`   | 377 |
+| `prompt_httpie_bug_2.txt`   | 358 |
+| `prompt_sanic_bug_4.txt`    | 612 |
+| `prompt_tornado_bug_11.txt` | 737 |
+| `prompt_tornado_bug_13.txt` | 783 |
+| `prompt_tornado_bug_2.txt`  | 833 |
+| `prompt_tornado_bug_3.txt`  | 773 |
+
+High LOC level — >980 LOC
+| Prompt File                 |  LOC |
+| --------------------------- | ---: |
+| `prompt_fastapi_bug_1.txt`  | 2159 |
+| `prompt_fastapi_bug_2.txt`  |  991 |
+| `prompt_sanic_bug_1.txt`    | 1438 |
+| `prompt_sanic_bug_2.txt`    | 1013 |
+| `prompt_sanic_bug_3.txt`    | 1468 |
+| `prompt_tornado_bug_1.txt`  | 1656 |
+| `prompt_tornado_bug_10.txt` | 4508 |
+| `prompt_tornado_bug_12.txt` | 1134 |
+| `prompt_tornado_bug_14.txt` | 1034 |
+| `prompt_tornado_bug_15.txt` | 3196 |
+| `prompt_tornado_bug_16.txt` | 1034 |
+| `prompt_tornado_bug_4.txt`  | 3582 |
+| `prompt_tornado_bug_5.txt`  | 1223 |
+| `prompt_tornado_bug_6.txt`  | 1503 |
+| `prompt_tornado_bug_7.txt`  | 1128 |
+| `prompt_tornado_bug_8.txt`  | 1239 |
+| `prompt_tornado_bug_9.txt`  | 1019 |
