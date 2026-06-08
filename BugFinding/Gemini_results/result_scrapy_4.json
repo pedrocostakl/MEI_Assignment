@@ -6,5 +6,8 @@
   "num_reported_bugs": 1,
   "true_positives": 1,
   "false_positives": 0,
-  "false_negatives": 0
+  "false_negatives": 0,
+  "precision": 1.0,
+  "recall": 1.0,
+  "f1_score": 1.0
 }

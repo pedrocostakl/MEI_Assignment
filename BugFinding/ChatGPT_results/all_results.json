@@ -7,7 +7,10 @@
     "num_reported_bugs": 2,
     "true_positives": 2,
     "false_positives": 0,
-    "false_negatives": 2
+    "false_negatives": 2,
+    "precision": 1.0,
+    "recall": 0.5,
+    "f1_score": 0.6666666666666666
   },
   {
     "case_name": "fastapi_10",
@@ -17,7 +20,10 @@
     "num_reported_bugs": 1,
     "true_positives": 1,
     "false_positives": 0,
-    "false_negatives": 0
+    "false_negatives": 0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1_score": 1.0
   },
   {
     "case_name": "fastapi_11",
@@ -27,7 +33,10 @@
     "num_reported_bugs": 2,
     "true_positives": 1,
     "false_positives": 1,
-    "false_negatives": 0
+    "false_negatives": 0,
+    "precision": 0.5,
+    "recall": 1.0,
+    "f1_score": 0.6666666666666666
   },
   {
     "case_name": "fastapi_12",
@@ -37,7 +46,10 @@
     "num_reported_bugs": 1,
     "true_positives": 1,
     "false_positives": 0,
-    "false_negatives": 0
+    "false_negatives": 0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1_score": 1.0
   },
   {
     "case_name": "fastapi_13",
@@ -47,7 +59,10 @@
     "num_reported_bugs": 1,
     "true_positives": 1,
     "false_positives": 0,
-    "false_negatives": 1
+    "false_negatives": 1,
+    "precision": 1.0,
+    "recall": 0.5,
+    "f1_score": 0.6666666666666666
   },
   {
     "case_name": "fastapi_14",
@@ -57,7 +72,10 @@
     "num_reported_bugs": 2,
     "true_positives": 2,
     "false_positives": 0,
-    "false_negatives": 1
+    "false_negatives": 1,
+    "precision": 1.0,
+    "recall": 0.6666666666666666,
+    "f1_score": 0.8
   },
   {
     "case_name": "fastapi_15",
@@ -67,7 +85,10 @@
     "num_reported_bugs": 1,
     "true_positives": 1,
     "false_positives": 0,
-    "false_negatives": 0
+    "false_negatives": 0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1_score": 1.0
   },
   {
     "case_name": "fastapi_16",
@@ -77,7 +98,10 @@
     "num_reported_bugs": 1,
     "true_positives": 1,
     "false_positives": 0,
-    "false_negatives": 0
+    "false_negatives": 0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1_score": 1.0
   },
   {
     "case_name": "fastapi_2",
@@ -87,7 +111,10 @@
     "num_reported_bugs": 2,
     "true_positives": 1,
     "false_positives": 1,
-    "false_negatives": 0
+    "false_negatives": 0,
+    "precision": 0.5,
+    "recall": 1.0,
+    "f1_score": 0.6666666666666666
   },
   {
     "case_name": "fastapi_3",
@@ -97,7 +124,10 @@
     "num_reported_bugs": 1,
     "true_positives": 1,
     "false_positives": 0,
-    "false_negatives": 1
+    "false_negatives": 1,
+    "precision": 1.0,
+    "recall": 0.5,
+    "f1_score": 0.6666666666666666
   },
   {
     "case_name": "fastapi_4",
@@ -107,7 +137,10 @@
     "num_reported_bugs": 1,
     "true_positives": 1,
     "false_positives": 0,
-    "false_negatives": 0
+    "false_negatives": 0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1_score": 1.0
   },
   {
     "case_name": "fastapi_5",
@@ -117,7 +150,10 @@
     "num_reported_bugs": 1,
     "true_positives": 1,
     "false_positives": 0,
-    "false_negatives": 0
+    "false_negatives": 0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1_score": 1.0
   },
   {
     "case_name": "fastapi_6",
@@ -127,7 +163,10 @@
     "num_reported_bugs": 1,
     "true_positives": 1,
     "false_positives": 0,
-    "false_negatives": 0
+    "false_negatives": 0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1_score": 1.0
   },
   {
     "case_name": "fastapi_7",
@@ -137,7 +176,10 @@
     "num_reported_bugs": 1,
     "true_positives": 1,
     "false_positives": 0,
-    "false_negatives": 1
+    "false_negatives": 1,
+    "precision": 1.0,
+    "recall": 0.5,
+    "f1_score": 0.6666666666666666
   },
   {
     "case_name": "fastapi_8",
@@ -147,7 +189,10 @@
     "num_reported_bugs": 1,
     "true_positives": 1,
     "false_positives": 0,
-    "false_negatives": 1
+    "false_negatives": 1,
+    "precision": 1.0,
+    "recall": 0.5,
+    "f1_score": 0.6666666666666666
   },
   {
     "case_name": "fastapi_9",
@@ -157,7 +202,10 @@
     "num_reported_bugs": 1,
     "true_positives": 1,
     "false_positives": 0,
-    "false_negatives": 2
+    "false_negatives": 2,
+    "precision": 1.0,
+    "recall": 0.3333333333333333,
+    "f1_score": 0.5
   },
   {
     "case_name": "httpie_1",
@@ -167,7 +215,10 @@
     "num_reported_bugs": 1,
     "true_positives": 1,
     "false_positives": 0,
-    "false_negatives": 1
+    "false_negatives": 1,
+    "precision": 1.0,
+    "recall": 0.5,
+    "f1_score": 0.6666666666666666
   },
   {
     "case_name": "httpie_2",
@@ -177,7 +228,10 @@
     "num_reported_bugs": 1,
     "true_positives": 0,
     "false_positives": 1,
-    "false_negatives": 2
+    "false_negatives": 2,
+    "precision": 0.0,
+    "recall": 0.0,
+    "f1_score": 0.0
   },
   {
     "case_name": "httpie_3",
@@ -187,7 +241,10 @@
     "num_reported_bugs": 1,
     "true_positives": 1,
     "false_positives": 0,
-    "false_negatives": 0
+    "false_negatives": 0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1_score": 1.0
   },
   {
     "case_name": "httpie_4",
@@ -197,7 +254,10 @@
     "num_reported_bugs": 1,
     "true_positives": 1,
     "false_positives": 0,
-    "false_negatives": 0
+    "false_negatives": 0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1_score": 1.0
   },
   {
     "case_name": "httpie_5",
@@ -207,7 +267,10 @@
     "num_reported_bugs": 1,
     "true_positives": 1,
     "false_positives": 0,
-    "false_negatives": 0
+    "false_negatives": 0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1_score": 1.0
   },
   {
     "case_name": "sanic_1",
@@ -217,7 +280,10 @@
     "num_reported_bugs": 1,
     "true_positives": 1,
     "false_positives": 0,
-    "false_negatives": 0
+    "false_negatives": 0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1_score": 1.0
   },
   {
     "case_name": "sanic_2",
@@ -227,7 +293,10 @@
     "num_reported_bugs": 1,
     "true_positives": 1,
     "false_positives": 0,
-    "false_negatives": 0
+    "false_negatives": 0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1_score": 1.0
   },
   {
     "case_name": "sanic_3",
@@ -237,7 +306,10 @@
     "num_reported_bugs": 1,
     "true_positives": 0,
     "false_positives": 1,
-    "false_negatives": 2
+    "false_negatives": 2,
+    "precision": 0.0,
+    "recall": 0.0,
+    "f1_score": 0.0
   },
   {
     "case_name": "sanic_4",
@@ -247,7 +319,10 @@
     "num_reported_bugs": 1,
     "true_positives": 1,
     "false_positives": 0,
-    "false_negatives": 0
+    "false_negatives": 0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1_score": 1.0
   },
   {
     "case_name": "sanic_5",
@@ -257,7 +332,10 @@
     "num_reported_bugs": 1,
     "true_positives": 1,
     "false_positives": 0,
-    "false_negatives": 0
+    "false_negatives": 0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1_score": 1.0
   },
   {
     "case_name": "scrapy_1",
@@ -267,7 +345,10 @@
     "num_reported_bugs": 1,
     "true_positives": 1,
     "false_positives": 0,
-    "false_negatives": 0
+    "false_negatives": 0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1_score": 1.0
   },
   {
     "case_name": "scrapy_2",
@@ -277,7 +358,10 @@
     "num_reported_bugs": 1,
     "true_positives": 1,
     "false_positives": 0,
-    "false_negatives": 0
+    "false_negatives": 0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1_score": 1.0
   },
   {
     "case_name": "scrapy_3",
@@ -287,7 +371,10 @@
     "num_reported_bugs": 1,
     "true_positives": 1,
     "false_positives": 0,
-    "false_negatives": 1
+    "false_negatives": 1,
+    "precision": 1.0,
+    "recall": 0.5,
+    "f1_score": 0.6666666666666666
   },
   {
     "case_name": "scrapy_4",
@@ -297,7 +384,10 @@
     "num_reported_bugs": 1,
     "true_positives": 0,
     "false_positives": 1,
-    "false_negatives": 1
+    "false_negatives": 1,
+    "precision": 0.0,
+    "recall": 0.0,
+    "f1_score": 0.0
   },
   {
     "case_name": "scrapy_5",
@@ -307,7 +397,10 @@
     "num_reported_bugs": 0,
     "true_positives": 0,
     "false_positives": 0,
-    "false_negatives": 1
+    "false_negatives": 1,
+    "precision": 0.0,
+    "recall": 0.0,
+    "f1_score": 0.0
   },
   {
     "case_name": "scrapy_6",
@@ -317,7 +410,10 @@
     "num_reported_bugs": 1,
     "true_positives": 1,
     "false_positives": 0,
-    "false_negatives": 0
+    "false_negatives": 0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1_score": 1.0
   },
   {
     "case_name": "scrapy_7",
@@ -327,7 +423,10 @@
     "num_reported_bugs": 1,
     "true_positives": 1,
     "false_positives": 0,
-    "false_negatives": 1
+    "false_negatives": 1,
+    "precision": 1.0,
+    "recall": 0.5,
+    "f1_score": 0.6666666666666666
   },
   {
     "case_name": "scrapy_8",
@@ -337,7 +436,10 @@
     "num_reported_bugs": 1,
     "true_positives": 1,
     "false_positives": 0,
-    "false_negatives": 1
+    "false_negatives": 1,
+    "precision": 1.0,
+    "recall": 0.5,
+    "f1_score": 0.6666666666666666
   },
   {
     "case_name": "tornado_1",
@@ -347,7 +449,10 @@
     "num_reported_bugs": 2,
     "true_positives": 1,
     "false_positives": 1,
-    "false_negatives": 2
+    "false_negatives": 2,
+    "precision": 0.5,
+    "recall": 0.3333333333333333,
+    "f1_score": 0.4
   },
   {
     "case_name": "tornado_10",
@@ -357,7 +462,10 @@
     "num_reported_bugs": 1,
     "true_positives": 1,
     "false_positives": 0,
-    "false_negatives": 1
+    "false_negatives": 1,
+    "precision": 1.0,
+    "recall": 0.5,
+    "f1_score": 0.6666666666666666
   },
   {
     "case_name": "tornado_11",
@@ -367,7 +475,10 @@
     "num_reported_bugs": 1,
     "true_positives": 1,
     "false_positives": 0,
-    "false_negatives": 0
+    "false_negatives": 0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1_score": 1.0
   },
   {
     "case_name": "tornado_12",
@@ -377,7 +488,10 @@
     "num_reported_bugs": 1,
     "true_positives": 1,
     "false_positives": 0,
-    "false_negatives": 2
+    "false_negatives": 2,
+    "precision": 1.0,
+    "recall": 0.3333333333333333,
+    "f1_score": 0.5
   },
   {
     "case_name": "tornado_13",
@@ -387,7 +501,10 @@
     "num_reported_bugs": 1,
     "true_positives": 1,
     "false_positives": 0,
-    "false_negatives": 1
+    "false_negatives": 1,
+    "precision": 1.0,
+    "recall": 0.5,
+    "f1_score": 0.6666666666666666
   },
   {
     "case_name": "tornado_14",
@@ -397,7 +514,10 @@
     "num_reported_bugs": 1,
     "true_positives": 1,
     "false_positives": 0,
-    "false_negatives": 0
+    "false_negatives": 0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1_score": 1.0
   },
   {
     "case_name": "tornado_15",
@@ -407,7 +527,10 @@
     "num_reported_bugs": 1,
     "true_positives": 1,
     "false_positives": 0,
-    "false_negatives": 1
+    "false_negatives": 1,
+    "precision": 1.0,
+    "recall": 0.5,
+    "f1_score": 0.6666666666666666
   },
   {
     "case_name": "tornado_16",
@@ -417,7 +540,10 @@
     "num_reported_bugs": 2,
     "true_positives": 2,
     "false_positives": 0,
-    "false_negatives": 0
+    "false_negatives": 0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1_score": 1.0
   },
   {
     "case_name": "tornado_2",
@@ -427,7 +553,10 @@
     "num_reported_bugs": 1,
     "true_positives": 1,
     "false_positives": 0,
-    "false_negatives": 0
+    "false_negatives": 0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1_score": 1.0
   },
   {
     "case_name": "tornado_3",
@@ -437,7 +566,10 @@
     "num_reported_bugs": 2,
     "true_positives": 1,
     "false_positives": 1,
-    "false_negatives": 0
+    "false_negatives": 0,
+    "precision": 0.5,
+    "recall": 1.0,
+    "f1_score": 0.6666666666666666
   },
   {
     "case_name": "tornado_4",
@@ -447,7 +579,10 @@
     "num_reported_bugs": 2,
     "true_positives": 1,
     "false_positives": 1,
-    "false_negatives": 0
+    "false_negatives": 0,
+    "precision": 0.5,
+    "recall": 1.0,
+    "f1_score": 0.6666666666666666
   },
   {
     "case_name": "tornado_5",
@@ -457,7 +592,10 @@
     "num_reported_bugs": 1,
     "true_positives": 1,
     "false_positives": 0,
-    "false_negatives": 0
+    "false_negatives": 0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1_score": 1.0
   },
   {
     "case_name": "tornado_6",
@@ -467,7 +605,10 @@
     "num_reported_bugs": 1,
     "true_positives": 1,
     "false_positives": 0,
-    "false_negatives": 3
+    "false_negatives": 3,
+    "precision": 1.0,
+    "recall": 0.25,
+    "f1_score": 0.4
   },
   {
     "case_name": "tornado_7",
@@ -477,7 +618,10 @@
     "num_reported_bugs": 1,
     "true_positives": 1,
     "false_positives": 0,
-    "false_negatives": 1
+    "false_negatives": 1,
+    "precision": 1.0,
+    "recall": 0.5,
+    "f1_score": 0.6666666666666666
   },
   {
     "case_name": "tornado_8",
@@ -487,7 +631,10 @@
     "num_reported_bugs": 1,
     "true_positives": 0,
     "false_positives": 1,
-    "false_negatives": 1
+    "false_negatives": 1,
+    "precision": 0.0,
+    "recall": 0.0,
+    "f1_score": 0.0
   },
   {
     "case_name": "tornado_9",
@@ -497,6 +644,9 @@
     "num_reported_bugs": 1,
     "true_positives": 0,
     "false_positives": 1,
-    "false_negatives": 1
+    "false_negatives": 1,
+    "precision": 0.0,
+    "recall": 0.0,
+    "f1_score": 0.0
   }
 ]

@@ -9,7 +9,23 @@
     \usepackage{lmodern}
     \usepackage{microtype}
 
-\usepackage{longtable,array}
+\usepackage{longtable,booktabs,array}
+\usepackage{float}
+\usepackage{caption}
+\usepackage{listings}
+
+\lstset{
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  breakatwhitespace=false,
+  columns=fullflexible,
+  keepspaces=true,
+  frame=single
+}
+\usepackage[
+       hidelinks
+]{hyperref}
+\usepackage{bookmark}
 
     \linespread{1.25} % approximate one-and-a-half spacing without extra packages
     \renewcommand{\arraystretch}{1.2}
@@ -73,11 +89,17 @@
     The independent variables are:
     \begin{itemize}
         \item \textbf{LLM Model (2 levels)}:
-        \item \textbf{Language (1 level)} :
             \begin{itemize}
-                \item Python
+                \item ChatGPT Mini
+                \item Gemini Flash
             \end{itemize}
-            Even though there is only one language bing used in the bug, it is still considered an independent variable.
+        \item \textbf{LOC (3 levels)}: LOC (\textit{Lines of Code}) of the source files.
+            \begin{itemize}
+                \item Low LOC level --- $\leq 330$ LOC
+                \item Medium LOC level — 331–980 LOC
+                \item High LOC level — >980 LOC
+            \end{itemize}
+       
     \end{itemize}
 
     \subsubsection{Dependent Variables}
@@ -99,13 +121,60 @@
         \item \textbf{Scenarios}: Both LLMs are fed the same bug scenarios
         \item \textbf{Prompt}: All prompts follow the same format. They just vary from scenario to scenario in the Source Files section, since they include that specific scenario's buggy code.
         \item \textbf{New chat for each submission}: In order to avoid outputs based on previous context, each submission is made in a new chat.
+         \item \textbf{Language (1 level)} :
+            \begin{itemize}
+                \item Python
+            \end{itemize}
+            Even though there is only one language bing used in the bug, it is still considered an independent variable.
     \end{itemize}
 
+    \subsection{Experimental Procedure}
+    \subsubsection{Dataset \& Data Collection}
+    To obtain a realistic dataset of Python bugs, the BugsInPy repository was used. A total of 50 bug scenarios were collected, each corresponding to a real defect extracted from an open-source Python project.\\
+    For each scenario, the dataset includes the buggy source code, the associated Git diff identifying the modified buggy chunk or chunks, the failing test file, and the failing test output. This information provides both the defective implementation and the contextual evidence needed to analyse the bug, while preserving the realism of real-world software. defects
+    \subsubsection{Prompt Building}
+    To ensure consistency across all bug scenarios, a standard prompt template was created and stored in(\texttt{/BugFinding/LLM\_prompt.txt}). This template was used as the basis for each scenario-specific prompt, ensuring that both LLMs received instructions in the same format and under comparable conditions.
+
+    Each prompt begins by defining the task as bug localization only, explicitly instructing the model to identify the source-code location or locations most likely responsible for the failing test. The prompt also includes rules designed to constrain the model’s behaviour: the model is instructed not to propose fixes, not to rewrite code, and not to provide explanations outside the required output format.
+
+    The expected response format is specified as valid JSON, containing a list of suspected bug locations. 
+
+    After the general instructions, each prompt includes the buggy source file or files, annotated with line numbers so that the model can refer to precise locations in its response. The failing test file is also provided, together with the corresponding test execution output. All of this information is combined into a single \texttt{.txt} file for each bug scenario, allowing the model to analyse the source code, the test logic, and the observed failure within the same prompt.
+    
+    
+    \subsubsection{Submission Mode}
+    Each bug scenario was submitted in a separate conversation to minimise the influence of previous interactions on the model’s responses. This was done to avoid hysteresis, where earlier prompts or outputs may influence the model’s behaviour in later scenarios.
+
+    Each scenario-specific prompt was submitted using the file attachment functionality rather than being manually pasted into the conversation. This reduced the risk of formatting changes, missing content, or accidental text deformation during input, helping to preserve the structure of the prompt exactly as intended.
+    
+     \subsubsection{Response Classification \& Metrics Classification}
+     For both LLM models, the outputs were stored under JSON format in the \texttt{BugFinding/ChatGPT\_outputs} and \texttt{BugFinding/Gemini\_outputs} directories. The benchmarks for the bug locations were also stored under JSON format in the \texttt{BugFinding/benchmarks directory}. 
+
+     The script \texttt{BugFinding/compare\_bug\_locations\_folder.py} is used to calculate the metrics for each output. The script compares the reported bug locations with the benchmark locations. Then the script calculates the number of true positives, false positives and false negatives for each case. Additionally, the precision, recall and F1-score are calculated as well.
+
+
+    \subsection{Results}
+    In the table below, the total overall results can be viewed for both LLM models.
+    \begin{table}[h]
+        \centering
+        \begin{tabular}{lcccccc}
+        \hline
+        \textbf{Model} & \textbf{Num of Cases} & \textbf{Num of real bugs} & \textbf{Num reported bugs} & \textbf{TP}  & \textbf{FP}  & \textbf{FN}\\
+        \hline
+        ChatGPT & 50 & 79 & 57 & 47 & 10 & 32 \\
+        Gemini & 50 & 79 & 53 & 35 & 18 & 44 \\
+        \hline
+        \end{tabular}
+        \caption{Descriptive statistics of execution time for accepted submissions.}
+        \label{tab:runtime-stats}
+    \end{table}
+    
+    \subsection{Statistical Analysis}
+    
 
 
 
-
-    \section{Code Generation}
+   \section{Code Generation}
     \subsection{Context and Motivation}
 
     This experiment evaluated the reliability of Large Language Models (LLMs) in generating SQL queries. SQL was selected because it provides a standardized environment in which generated solutions can be automatically executed and validated against predefined test cases.
@@ -306,7 +375,7 @@ Overall, the execution time analysis indicates that ChatGPT and Gemini produce S
     
     \subsection{Model's Correctness Comparison}
 
-    (i) Hypothesis
+    (i) Hypothesis\\
     \textbf{Null Hypothesis ($H_0$):} \\
     \textit{There is no statistically significant difference in the correctness of SQL queries generated by ChatGPT Mini and Gemini Flash.}
 
@@ -382,7 +451,7 @@ Overall, the execution time analysis indicates that ChatGPT and Gemini produce S
 
     The comparison is based exclusively on problems accepted by both models, resulting in a paired sample of $n = 56$ observations.
 
-    \subsubsection{(ii) Statistical Test Selection}
+    (ii) Statistical Test Selection
 
     Since each problem was submitted to both models and the same evaluation platform was used, the observations are naturally paired. The choice of statistical test depends on the distributional properties of the paired differences $d_i = \text{ChatGPT}_i - \text{Gemini}_i$.
 

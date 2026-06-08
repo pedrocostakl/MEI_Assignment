@@ -44,6 +44,28 @@ def normalize_case_name(path):
     return name
 
 
+def calculate_metrics(tp, fp, fn):
+    """Calculate Precision, Recall, and F1-Score"""
+    
+    # Precision = TP / (TP + FP)
+    precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+    
+    # Recall = TP / (TP + FN)
+    recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+    
+    # F1-Score = 2 * (Precision * Recall) / (Precision + Recall)
+    if precision + recall > 0:
+        f1_score = 2 * (precision * recall) / (precision + recall)
+    else:
+        f1_score = 0.0
+    
+    return {
+        "precision": precision,
+        "recall": recall,
+        "f1_score": f1_score
+    }
+
+
 def compare_locations(output_path, ground_truth_path):
     reported = load_locations(output_path)
     real = load_locations(ground_truth_path)
@@ -77,12 +99,18 @@ def compare_locations(output_path, ground_truth_path):
     false_positives = num_reported_bugs - true_positives
     false_negatives = num_real_bugs - len(matched_real_indices)
 
+    # Calculate metrics
+    metrics_dict = calculate_metrics(true_positives, false_positives, false_negatives)
+
     return {
         "num_real_bugs": num_real_bugs,
         "num_reported_bugs": num_reported_bugs,
         "true_positives": true_positives,
         "false_positives": false_positives,
         "false_negatives": false_negatives,
+        "precision": metrics_dict["precision"],
+        "recall": metrics_dict["recall"],
+        "f1_score": metrics_dict["f1_score"],
     }
 
 
@@ -110,6 +138,9 @@ def compare_folders(outputs_dir, benchmarks_dir, results_dir):
             "true_positives": 0,
             "false_positives": 0,
             "false_negatives": 0,
+            "avg_precision": 0.0,
+            "avg_recall": 0.0,
+            "avg_f1_score": 0.0,
         },
         "missing_benchmarks": [],
         "invalid_outputs": [],
@@ -160,6 +191,17 @@ def compare_folders(outputs_dir, benchmarks_dir, results_dir):
         summary["totals"]["true_positives"] += metrics["true_positives"]
         summary["totals"]["false_positives"] += metrics["false_positives"]
         summary["totals"]["false_negatives"] += metrics["false_negatives"]
+
+    # Calculate averages for totals
+    num_cases = summary["totals"]["num_cases"]
+    if num_cases > 0:
+        total_precision = sum(case["precision"] for case in summary["cases"])
+        total_recall = sum(case["recall"] for case in summary["cases"])
+        total_f1 = sum(case["f1_score"] for case in summary["cases"])
+        
+        summary["totals"]["avg_precision"] = total_precision / num_cases
+        summary["totals"]["avg_recall"] = total_recall / num_cases
+        summary["totals"]["avg_f1_score"] = total_f1 / num_cases
 
     # Summary with totals + cases
     summary_path = results_dir / "summary.json"
