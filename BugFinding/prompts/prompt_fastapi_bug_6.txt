@@ -894,3 +894,27 @@ E       assert 422 == 200
 E        +  where 422 = <Response [422]>.status_code
 
 tests/test_forms_from_non_typing_sequences.py:29: AssertionError
+=================================== FAILURES ===================================
+________________________ test_python_set_param_as_form _________________________
+
+    def test_python_set_param_as_form():
+        response = client.post(
+            "/form/python-set", data={"items": ["first", "second", "third"]}
+        )
+>       assert response.status_code == 200
+E       assert 422 == 200
+E        +  where 422 = <Response [422]>.status_code
+
+tests/test_forms_from_non_typing_sequences.py:37: AssertionError
+=================================== FAILURES ===================================
+_______________________ test_python_tuple_param_as_form ________________________
+
+    def test_python_tuple_param_as_form():
+        response = client.post(
+            "/form/python-tuple", data={"items": ["first", "second", "third"]}
+        )
+>       assert response.status_code == 200
+E       assert 422 == 200
+E        +  where 422 = <Response [422]>.status_code
+
+tests/test_forms_from_non_typing_sequences.py:45: AssertionError

@@ -1,0 +1,54 @@
+========================================================================================================================
+Prompt File                              Source File                                        LOC        Complexity
+========================================================================================================================
+prompt_fastapi_bug_1.txt                 applications.py + 3                               2159        71              
+prompt_fastapi_bug_10.txt                routing.py                                         854        81        
+prompt_fastapi_bug_11.txt                utils.py                                           561        129       
+prompt_fastapi_bug_12.txt                http.py                                            145        31        
+prompt_fastapi_bug_13.txt                routing.py                                         593        66        
+prompt_fastapi_bug_14.txt                models.py                                          354        5         
+prompt_fastapi_bug_15.txt                routing.py                                         529        48        
+prompt_fastapi_bug_16.txt                encoders.py                                        79         21        
+prompt_fastapi_bug_2.txt                 routing.py                                         991        127       
+prompt_fastapi_bug_3.txt                 routing.py                                         973        124       
+prompt_fastapi_bug_4.txt                 utils.py                                           311        51        
+prompt_fastapi_bug_5.txt                 utils.py                                           161        36        
+prompt_fastapi_bug_6.txt                 utils.py                                           776        173       
+prompt_fastapi_bug_7.txt                 exception_handlers.py                              23         3         
+prompt_fastapi_bug_8.txt                 routing.py                                         858        86        
+prompt_fastapi_bug_9.txt                 utils.py                                           579        136       
+prompt_httpie_bug_1.txt                  downloads.py                                       377        69        
+prompt_httpie_bug_2.txt                  client.py/core.py                                  358        37               
+prompt_httpie_bug_3.txt                  sessions.py                                        152        28        
+prompt_httpie_bug_4.txt                  models.py                                          130        22        
+prompt_httpie_bug_5.txt                  cli.py                                             301        47        
+prompt_sanic_bug_1.txt                   app.py                                             1438       332       
+prompt_sanic_bug_2.txt                   server.py                                          1013       205       
+prompt_sanic_bug_3.txt                   app.py                                             1468       331       
+prompt_sanic_bug_4.txt                   request.py                                         612        91        
+prompt_sanic_bug_5.txt                   log.py                                             58         1         
+prompt_scrapy_bug_1.txt                  offsite.py                                         72         16        
+prompt_scrapy_bug_2.txt                  datatypes.py                                       330        64        
+prompt_scrapy_bug_3.txt                  redirect.py                                        106        19        
+prompt_scrapy_bug_4.txt                  __init__.py                                        162        31        
+prompt_scrapy_bug_5.txt                  __init__.py                                        162        31        
+prompt_scrapy_bug_6.txt                  images.py                                          220        40        
+prompt_scrapy_bug_7.txt                  form.py                                            203        75        
+prompt_scrapy_bug_8.txt                  item.py                                            99         15        
+prompt_tornado_bug_1.txt                 websocket.py                                       1656       293       
+prompt_tornado_bug_10.txt                web.py/websocket.py                                4508       801            
+prompt_tornado_bug_11.txt                http1connection.py                                 737        233       
+prompt_tornado_bug_12.txt                auth.py                                            1134       220       
+prompt_tornado_bug_13.txt                http1connection.py/http1connection_test.py         783        227               
+prompt_tornado_bug_14.txt                ioloop.py                                          1034       243       
+prompt_tornado_bug_15.txt                web.py                                             3196       796       
+prompt_tornado_bug_16.txt                gen.py                                             1034       252       
+prompt_tornado_bug_2.txt                 http1connection.py                                 833        237       
+prompt_tornado_bug_3.txt                 httpclient.py                                      773        176       
+prompt_tornado_bug_4.txt                 web.py                                             3582       790       
+prompt_tornado_bug_5.txt                 ioloop.py                                          1223       290       
+prompt_tornado_bug_6.txt                 ioloop.py/asyncio.py                               1503       290              
+prompt_tornado_bug_7.txt                 ioloop.py                                          1128       264       
+prompt_tornado_bug_8.txt                 websocket.py                                       1239       272       
+prompt_tornado_bug_9.txt                 httputil.py                                        1019       207       
+========================================================================================================================

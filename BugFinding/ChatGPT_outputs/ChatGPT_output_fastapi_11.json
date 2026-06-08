@@ -3,10 +3,18 @@
       {
          "file_id":"file_1",
          "file_path":"BugsInPy/workspace/fastapi/fastapi/dependencies/utils.py",
-         "line_start":537,
-         "line_end":538,
+         "line_start":133,
+         "line_end":139,
          "confidence":"high",
-         "reason":"For a single body parameter the original field is returned directly. Union body fields can then bypass the synthetic body model generation path, leading to OpenAPI schema generation missing referenced Union submodels and triggering the KeyError."
+         "reason":"is_scalar_field only checks field.type_ against BaseModel and misses Union fields whose sub_fields are BaseModel types, so Union[BaseModel, BaseModel] is misclassified as a scalar query parameter instead of a body parameter. This matches the OpenAPI traceback where the union body field is processed as an operation parameter and the POST requests fail validation."
+      },
+      {
+         "file_id":"file_1",
+         "file_path":"BugsInPy/workspace/fastapi/fastapi/dependencies/utils.py",
+         "line_start":267,
+         "line_end":268,
+         "confidence":"medium",
+         "reason":"get_param_field relies on is_scalar_field to convert non-scalar parameters without explicit schema into Body parameters. Because Union[BaseModel, BaseModel] is treated as scalar, this body conversion is skipped and the bad Query schema propagates into OpenAPI generation and request parsing."
       }
    ]
 }
