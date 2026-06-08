@@ -43,7 +43,7 @@ Problem 1174 - Medium - Accepted, Runtime: 82 ms
 Problem 1193 - Medium - Accepted, Runtime: 70 ms
 Problem 1204 - Medium - Accepted, Runtime: 213 ms
 Problem 1321 - Medium - Accepted, Runtime: 78 ms
-Problem 1341 - Medium - Accepted, Runtime: 159 ms
+
 
 --------Easy------
 
@@ -67,3 +67,4 @@ Problem 627 - Easy - Accepted, Runtime: 92 ms
 Problem 1050 - Easy - Accepted, Runtime: 68 ms
 Problem 1068 - Easy - Accepted, Runtime: 98 ms
 Problem 1075 - Easy - Accepted, Runtime: 135 ms
+Problem 1084 - Easy - Accepted, Runtime: 84 ms

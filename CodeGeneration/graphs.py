@@ -236,7 +236,7 @@ def chart_histogram():
     print(f"  Saved: {path}")
 
 
-# ── 5. Head-to-head per problem ──────────────────────────────────────────────
+# ── 5. Head-to-head per problem (vertical bars, sample of 15) ───────────────
 
 def chart_head_to_head():
     rows = []
@@ -244,30 +244,56 @@ def chart_head_to_head():
         gpt_map = {pid: rt for pid, rt, ok in chatgpt[diff] if ok and rt is not None}
         gem_map = {pid: rt for pid, rt, ok in gemini[diff]  if ok and rt is not None}
         for pid in sorted(set(gpt_map) & set(gem_map)):
-            rows.append((pid, diff[0].upper(), gpt_map[pid], gem_map[pid]))
+            rows.append((pid, diff, diff[0].upper(), gpt_map[pid], gem_map[pid]))
 
     rows.sort(key=lambda r: r[0])
-    labels   = [f"#{r[0]} ({r[1]})" for r in rows]
-    gpt_vals = [r[2] for r in rows]
-    gem_vals = [r[3] for r in rows]
 
-    n = len(rows)
-    fig_h = max(n * 0.38 + 1.5, 8)
-    fig, ax = plt.subplots(figsize=(9, fig_h))
+    # Pick 5 problems from each difficulty for a balanced, readable sample
+    sample = []
+    for d in DIFFS_:
+        subset = [r for r in rows if r[1] == d]
+        sample.extend(subset[:5])
 
-    y = np.arange(n)
-    h = 0.35
-    ax.barh(y + h/2, gpt_vals, h, color=BLUE,  label="ChatGPT", zorder=3)
-    ax.barh(y - h/2, gem_vals, h, color=CORAL, label="Gemini",  zorder=3)
+    labels   = [f"#{r[0]}\n({r[2]})" for r in sample]
+    gpt_vals = [r[3] for r in sample]
+    gem_vals = [r[4] for r in sample]
 
-    ax.set_yticks(y)
-    ax.set_yticklabels(labels, fontsize=8.5)
-    ax.invert_yaxis()
-    ax.set_xlabel("Runtime (ms)", fontsize=10)
-    ax.set_title("Per-problem runtime — head-to-head\n(problems accepted by both models)", fontsize=13, fontweight="bold", pad=12)
-    ax.legend(fontsize=10, loc="lower right")
-    ax.grid(axis="x", color=GRID_C, linewidth=0.8)
+    n = len(sample)
+    x = np.arange(n)
+    w = 0.38
+
+    fig, ax = plt.subplots(figsize=(13, 5))
+
+    b1 = ax.bar(x - w/2, gpt_vals, w, color=BLUE,  label="ChatGPT", zorder=3)
+    b2 = ax.bar(x + w/2, gem_vals, w, color=CORAL, label="Gemini",  zorder=3)
+
+    # Value labels on top of each bar
+    ax.bar_label(b1, fmt="%d", padding=2, fontsize=7.5, color=BLUE)
+    ax.bar_label(b2, fmt="%d", padding=2, fontsize=7.5, color=CORAL)
+
+    # Set ylim before drawing difficulty band labels
+    y_max = max(max(gpt_vals), max(gem_vals)) * 1.22
+    ax.set_ylim(0, y_max)
+
+    # Shaded difficulty bands
+    band_edges = [0, 5, 10, 15]
+    band_labels = ["Easy", "Medium", "Hard"]
+    band_colors = ["#f0f4ff", "#fff7f0", "#f5f5f5"]
+    for i, (start, end) in enumerate(zip(band_edges, band_edges[1:])):
+        ax.axvspan(start - 0.5, end - 0.5, color=band_colors[i], alpha=0.45, zorder=0)
+        ax.text((start + end - 1) / 2, y_max * 0.97,
+                band_labels[i], ha="center", va="top", fontsize=9,
+                color="#888888", fontstyle="italic")
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, fontsize=9)
+    ax.set_ylabel("Runtime (ms)", fontsize=10)
+    ax.set_title("Per-problem runtime — head-to-head sample (5 problems per difficulty)",
+                 fontsize=13, fontweight="bold", pad=12)
+    ax.legend(fontsize=10)
+    ax.grid(axis="y", color=GRID_C, linewidth=0.8)
     ax.set_axisbelow(True)
+    ax.set_xlim(-0.5, n - 0.5)
 
     fig.tight_layout()
     path = os.path.join(OUTPUT_DIR, "5_head_to_head.png")
