@@ -21,9 +21,8 @@ Problem 1873 - Hard - Accepted, Runtime: 82 ms
 Problem 1789 - Hard - Accepted, Runtime: 102 ms
 Problem 1757 - Hard - Accepted, Runtime: 81 ms
 Problem 1741 - Hard - Accepted, Runtime: 96 ms
-
-HackerRank 1 - Interviews Hard - Wrong Answer 
-HackerRank 2 - 15 days - Accepted
+Problem Interviews Hard - Wrong Answer 
+Problem 15 days - Hard - Accepted
 
 
 ----Medium----
