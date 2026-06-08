@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.25 (MiKTeX 24.1) (preloaded format=pdflatex 2026.6.5)  8 JUN 2026 19:08
+This is pdfTeX, Version 3.141592653-2.6-1.40.25 (MiKTeX 24.1) (preloaded format=pdflatex 2026.6.5)  8 JUN 2026 20:21
 entering extended mode
  restricted \write18 enabled.
  file:line:error style messages enabled.
@@ -405,55 +405,67 @@ Underfull \hbox (badness 10000) in paragraph at lines 52--53
 LaTeX Font Info:    Trying to load font information for TS1+lmr on input line 75.
  (C:\Users\Luis Vaz\AppData\Local\Programs\MiKTeX\tex/latex/lm\ts1lmr.fd
 File: ts1lmr.fd 2015/05/01 v1.6.1 Font defs for Latin Modern
-) [5{C:/Users/Luis Vaz/AppData/Local/Programs/MiKTeX/fonts/enc/dvips/lm/lm-ts1.enc}{C:/Users/Luis Vaz/AppData/Local/Programs/MiKTeX/fonts/enc/dvips/lm/lm-mathit.enc}{C:/Users/Luis Vaz/AppData/Local/Programs/MiKTeX/fonts/enc/dvips/lm/lm-rm.enc}] [6] [7] [8] [9]
+) [5{C:/Users/Luis Vaz/AppData/Local/Programs/MiKTeX/fonts/enc/dvips/lm/lm-ts1.enc}{C:/Users/Luis Vaz/AppData/Local/Programs/MiKTeX/fonts/enc/dvips/lm/lm-mathit.enc}{C:/Users/Luis Vaz/AppData/Local/Programs/MiKTeX/fonts/enc/dvips/lm/lm-rm.enc}] [6] [7] [8]
+
+LaTeX Warning: `h' float specifier changed to `ht'.
+
+[9]
 <charts/1_avg_runtime_by_difficulty.png, id=40, 498.1812pt x 317.988pt>
 File: charts/1_avg_runtime_by_difficulty.png Graphic file (type png)
 <use charts/1_avg_runtime_by_difficulty.png>
-Package pdftex.def Info: charts/1_avg_runtime_by_difficulty.png  used on input line 288.
+Package pdftex.def Info: charts/1_avg_runtime_by_difficulty.png  used on input line 278.
 (pdftex.def)             Requested size: 341.43307pt x 217.94176pt.
 <charts/2_boxplot_by_difficulty.png, id=42, 865.7946pt x 368.577pt>
 File: charts/2_boxplot_by_difficulty.png Graphic file (type png)
 <use charts/2_boxplot_by_difficulty.png>
-Package pdftex.def Info: charts/2_boxplot_by_difficulty.png  used on input line 297.
+Package pdftex.def Info: charts/2_boxplot_by_difficulty.png  used on input line 287.
 (pdftex.def)             Requested size: 455.24411pt x 193.80388pt.
- [10 <./charts/1_avg_runtime_by_difficulty.png>]
-<charts/5_head_to_head.png, id=47, 932.283pt x 354.123pt>
+
+
+LaTeX Warning: `h' float specifier changed to `ht'.
+
+<charts/5_head_to_head.png, id=43, 932.283pt x 354.123pt>
 File: charts/5_head_to_head.png Graphic file (type png)
 <use charts/5_head_to_head.png>
-Package pdftex.def Info: charts/5_head_to_head.png  used on input line 308.
+Package pdftex.def Info: charts/5_head_to_head.png  used on input line 298.
 (pdftex.def)             Requested size: 386.96027pt x 146.9853pt.
- [11 <./charts/2_boxplot_by_difficulty.png> <./charts/5_head_to_head.png>]
+[10 <./charts/1_avg_runtime_by_difficulty.png>] [11 <./charts/2_boxplot_by_difficulty.png> <./charts/5_head_to_head.png>] [12{C:/Users/Luis Vaz/AppData/Local/Programs/MiKTeX/fonts/enc/dvips/lm/lm-mathsy.enc}] [13]
+<charts/6_qq_plot_chatgpt.png, id=62, 426.393pt x 424.9476pt>
+File: charts/6_qq_plot_chatgpt.png Graphic file (type png)
+<use charts/6_qq_plot_chatgpt.png>
+Package pdftex.def Info: charts/6_qq_plot_chatgpt.png  used on input line 420.
+(pdftex.def)             Requested size: 218.51521pt x 217.77083pt.
+<charts/6_qq_plot_gemini.png, id=63, 426.393pt x 424.9476pt>
+File: charts/6_qq_plot_gemini.png Graphic file (type png)
+<use charts/6_qq_plot_gemini.png>
+Package pdftex.def Info: charts/6_qq_plot_gemini.png  used on input line 425.
+(pdftex.def)             Requested size: 218.51521pt x 217.77083pt.
+
 
 LaTeX Warning: `h' float specifier changed to `ht'.
 
-[12{C:/Users/Luis Vaz/AppData/Local/Programs/MiKTeX/fonts/enc/dvips/lm/lm-mathsy.enc}] [13]
-<charts/6_qq_plot_runtime_differences.png, id=62, 426.393pt x 424.9476pt>
-File: charts/6_qq_plot_runtime_differences.png Graphic file (type png)
-<use charts/6_qq_plot_runtime_differences.png>
-Package pdftex.def Info: charts/6_qq_plot_runtime_differences.png  used on input line 428.
-(pdftex.def)             Requested size: 295.90588pt x 294.913pt.
-
-
-LaTeX Warning: `h' float specifier changed to `ht'.
-
-[14] [15 <./charts/6_qq_plot_runtime_differences.png>] [16] [17] [18] (main.aux)
+[14] [15 <./charts/6_qq_plot_chatgpt.png> <./charts/6_qq_plot_gemini.png>] [16] [17] (main.aux)
  ***********
 LaTeX2e <2023-11-01> patch level 1
 L3 programming layer <2024-01-04>
  ***********
+
+
+LaTeX Warning: Label(s) may have changed. Rerun to get cross-references right.
+
  ) 
 Here is how much of TeX's memory you used:
- 6696 strings out of 474486
- 106100 string characters out of 5742304
+ 6704 strings out of 474486
+ 106308 string characters out of 5742304
  1935542 words of memory out of 5000000
- 28726 multiletter control sequences out of 15000+600000
- 621721 words of font info for 152 fonts, out of 8000000 for 9000
+ 28736 multiletter control sequences out of 15000+600000
+ 621638 words of font info for 151 fonts, out of 8000000 for 9000
  1141 hyphenation exceptions out of 8191
  57i,12n,65p,1081b,363s stack positions out of 10000i,1000n,20000p,200000b,200000s
 <C:/Users/Luis Vaz/AppData/Local/Programs/MiKTeX/fonts/type1/public/lm/lmbx10.pfb><C:/Users/Luis Vaz/AppData/Local/Programs/MiKTeX/fonts/type1/public/lm/lmbx12.pfb><C:/Users/Luis Vaz/AppData/Local/Programs/MiKTeX/fonts/type1/public/lm/lmbxi10.pfb><C:/Users/Luis Vaz/AppData/Local/Programs/MiKTeX/fonts/type1/public/lm/lmmi10.pfb><C:/Users/Luis Vaz/AppData/Local/Programs/MiKTeX/fonts/type1/public/lm/lmmi8.pfb><C:/Users/Luis Vaz/AppData/Local/Programs/MiKTeX/fonts/type1/public/lm/lmr10.pfb><C:/Users/Luis Vaz/AppData/Local/Programs/MiKTeX/fonts/type1/public/lm/lmr12.pfb><C:/Users/Luis Vaz/AppData/Local/Programs/MiKTeX/fonts/type1/public/lm/lmr8.pfb><C:/Users/Luis Vaz/AppData/Local/Programs/MiKTeX/fonts/type1/public/lm/lmri10.pfb><C:/Users/Luis Vaz/AppData/Local/Programs/MiKTeX/fonts/type1/public/lm/lmsy10.pfb><C:/Users/Luis Vaz/AppData/Local/Programs/MiKTeX/fonts/type1/public/lm/lmsy8.pfb><C:/Users/Luis Vaz/AppData/Local/Programs/MiKTeX/fonts/type1/public/lm/lmtt12.pfb>
-Output written on main.pdf (18 pages, 472792 bytes).
+Output written on main.pdf (17 pages, 509045 bytes).
 PDF statistics:
- 140 PDF objects out of 1000 (max. 8388607)
+ 139 PDF objects out of 1000 (max. 8388607)
  0 named destinations out of 1000 (max. 500000)
- 35349 words of extra memory for PDF output out of 35830 (max. 10000000)
+ 35354 words of extra memory for PDF output out of 35830 (max. 10000000)
 
