@@ -65,11 +65,11 @@ def plot_project_stacked_bars():
         
         # Create stacked bars
         p1 = ax.bar(x, tp_values, width, label='TP', color='#2ecc71')
-        p2 = ax.bar(x, fp_values, width, bottom=tp_values, 
-                    label='FP', color='#e74c3c')
-        p3 = ax.bar(x, fn_values, width,
+        p2 = ax.bar(x, fn_values, width,
                     bottom=np.array(tp_values) + np.array(fp_values),
                     label='FN', color='#f39c12')
+        p3 = ax.bar(x, fp_values, width, bottom=tp_values, 
+                    label='FP', color='#e74c3c')
         
         # Customize subplot
         ax.set_title(project.capitalize(), fontsize=12, fontweight='bold')
