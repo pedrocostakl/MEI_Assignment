@@ -1,0 +1,28 @@
+{
+   "bug_locations":[
+      {
+         "file_id":"file_1",
+         "file_path":"BugsInPy/workspace/scrapy/scrapy/utils/url.py",
+         "line_start":59,
+         "line_end":61,
+         "confidence":"high",
+         "reason":"Query parsing and re-encoding ignore the canonicalize_url encoding argument and decode invalid percent sequences with UTF-8 replacement, causing the observed query encoding failures."
+      },
+      {
+         "file_id":"file_1",
+         "file_path":"BugsInPy/workspace/scrapy/scrapy/utils/url.py",
+         "line_start":67,
+         "line_end":69,
+         "confidence":"high",
+         "reason":"Path canonicalization and URL reconstruction bypass the encoding-aware safe_url_string behavior noted in the preceding comment and do not IDNA-encode the netloc, causing non-UTF8 path bytes and IDN domains to canonicalize incorrectly."
+      },
+      {
+         "file_id":"file_1",
+         "file_path":"BugsInPy/workspace/scrapy/scrapy/utils/url.py",
+         "line_start":72,
+         "line_end":75,
+         "confidence":"high",
+         "reason":"_unquotepath uses urllib.parse.unquote with its default UTF-8 decoding, which turns non-UTF8 percent escapes such as %E9 and %A3 into replacement characters instead of preserving and upper-casing them."
+      }
+   ]
+}

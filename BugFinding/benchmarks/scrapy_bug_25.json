@@ -1,0 +1,19 @@
+{
+  "bug_locations": [
+    {
+      "file_path": "BugsInPy/workspace/scrapy/scrapy/utils/url.py",
+      "line_start": 7,
+      "line_end": 21
+    },
+    {
+      "file_path": "BugsInPy/workspace/scrapy/scrapy/utils/url.py",
+      "line_start": 37,
+      "line_end": 78
+    },
+    {
+      "file_path": "BugsInPy/workspace/scrapy/scrapy/utils/url.py",
+      "line_start": 81,
+      "line_end": 87
+    }
+  ]
+}

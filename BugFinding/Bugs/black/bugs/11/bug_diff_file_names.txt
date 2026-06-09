@@ -1,0 +1,5 @@
+# git diff <buggy_version> <patched_version>
+# git diff --name-only 283a5d53a8d57e8e186a08c9fbf249e1fbe7bc94 024c9cab55da7bd3236fd88759c9735d6149b464
+black.py
+tests/data/comments6.py
+tests/test_black.py

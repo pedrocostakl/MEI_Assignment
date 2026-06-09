@@ -1,0 +1,1234 @@
+You are given buggy source files, failing test files, and test execution output.
+
+Your task is BUG LOCALIZATION ONLY.
+
+Identify the source-code location(s) most likely responsible for the failing test.
+
+Return only valid JSON using this exact format:
+
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "relative/path.py",
+      "line_start": 1,
+      "line_end": 1,
+      "confidence": "low|medium|high",
+      "reason": "Max 2 sentences."
+    }
+  ]
+}
+
+Rules:
+- Do not propose fixes.
+- Do not rewrite code.
+- Do not explain anything outside the JSON.
+- Line numbers must refer to the numbered buggy source files, not the test files.
+
+- A scenario may contain one or more bug locations.
+- Do not stop after identifying the first likely bug location.
+- After finding the most likely location, continue inspecting the buggy source files for additional independent locations that may also be responsible for the failing behaviour.
+
+- Each entry should identify one source-code location that likely needs to be changed to fix the failure.
+- Include separate entries for separate suspicious source-code regions, even if they contribute to the same failing test.
+- Do not include duplicate locations, call sites, stack-trace propagation lines, or lines that are only affected by the bug.
+
+- Prefer the smallest line range that is sufficient to identify each suspected bug location.
+- Report locations supported by the source code and at least one of the following: failing test logic, failing output, traceback, assertion difference, or data flow from the failing behaviour.
+- Medium-confidence locations are acceptable when the evidence suggests they may be part of the bug.
+- Low-confidence locations should only be included when they are directly relevant to the failing behaviour.
+
+- If no source-code location can be identified with reasonable confidence, return:
+{
+  "bug_locations": []
+}
+
+
+SOURCE FILES:
+
+[file_1] BugsInPy/workspace/scrapy/scrapy/http/request/form.py
+```python
+  1 | """
+  2 | This module implements the FormRequest class which is a more convenient class
+  3 | (than Request) to generate Requests based on form data.
+  4 | 
+  5 | See documentation in docs/topics/request-response.rst
+  6 | """
+  7 | 
+  8 | from six.moves.urllib.parse import urljoin, urlencode
+  9 | import lxml.html
+ 10 | from parsel.selector import create_root_node
+ 11 | import six
+ 12 | from scrapy.http.request import Request
+ 13 | from scrapy.utils.python import to_bytes, is_listlike
+ 14 | 
+ 15 | 
+ 16 | class FormRequest(Request):
+ 17 | 
+ 18 |     def __init__(self, *args, **kwargs):
+ 19 |         formdata = kwargs.pop('formdata', None)
+ 20 |         if formdata and kwargs.get('method') is None:
+ 21 |             kwargs['method'] = 'POST'
+ 22 | 
+ 23 |         super(FormRequest, self).__init__(*args, **kwargs)
+ 24 | 
+ 25 |         if formdata:
+ 26 |             items = formdata.items() if isinstance(formdata, dict) else formdata
+ 27 |             querystr = _urlencode(items, self.encoding)
+ 28 |             if self.method == 'POST':
+ 29 |                 self.headers.setdefault(b'Content-Type', b'application/x-www-form-urlencoded')
+ 30 |                 self._set_body(querystr)
+ 31 |             else:
+ 32 |                 self._set_url(self.url + ('&' if '?' in self.url else '?') + querystr)
+ 33 | 
+ 34 |     @classmethod
+ 35 |     def from_response(cls, response, formname=None, formid=None, formnumber=0, formdata=None,
+ 36 |                       clickdata=None, dont_click=False, formxpath=None, **kwargs):
+ 37 |         kwargs.setdefault('encoding', response.encoding)
+ 38 |         form = _get_form(response, formname, formid, formnumber, formxpath)
+ 39 |         formdata = _get_inputs(form, formdata, dont_click, clickdata, response)
+ 40 |         url = _get_form_url(form, kwargs.pop('url', None))
+ 41 |         method = kwargs.pop('method', form.method)
+ 42 |         return cls(url=url, method=method, formdata=formdata, **kwargs)
+ 43 | 
+ 44 | 
+ 45 | def _get_form_url(form, url):
+ 46 |     if url is None:
+ 47 |         return form.action or form.base_url
+ 48 |     return urljoin(form.base_url, url)
+ 49 | 
+ 50 | 
+ 51 | def _urlencode(seq, enc):
+ 52 |     values = [(to_bytes(k, enc), to_bytes(v, enc))
+ 53 |               for k, vs in seq
+ 54 |               for v in (vs if is_listlike(vs) else [vs])]
+ 55 |     return urlencode(values, doseq=1)
+ 56 | 
+ 57 | 
+ 58 | def _get_form(response, formname, formid, formnumber, formxpath):
+ 59 |     """Find the form element """
+ 60 |     text = response.body_as_unicode()
+ 61 |     root = create_root_node(text, lxml.html.HTMLParser, base_url=response.url)
+ 62 |     forms = root.xpath('//form')
+ 63 |     if not forms:
+ 64 |         raise ValueError("No <form> element found in %s" % response)
+ 65 | 
+ 66 |     if formname is not None:
+ 67 |         f = root.xpath('//form[@name="%s"]' % formname)
+ 68 |         if f:
+ 69 |             return f[0]
+ 70 | 
+ 71 |     if formid is not None:
+ 72 |         f = root.xpath('//form[@id="%s"]' % formid)
+ 73 |         if f:
+ 74 |             return f[0]
+ 75 |             
+ 76 |     # Get form element from xpath, if not found, go up
+ 77 |     if formxpath is not None:
+ 78 |         nodes = root.xpath(formxpath)
+ 79 |         if nodes:
+ 80 |             el = nodes[0]
+ 81 |             while True:
+ 82 |                 if el.tag == 'form':
+ 83 |                     return el
+ 84 |                 el = el.getparent()
+ 85 |                 if el is None:
+ 86 |                     break
+ 87 |         raise ValueError('No <form> element found with %s' % formxpath)
+ 88 | 
+ 89 |     # If we get here, it means that either formname was None
+ 90 |     # or invalid
+ 91 |     if formnumber is not None:
+ 92 |         try:
+ 93 |             form = forms[formnumber]
+ 94 |         except IndexError:
+ 95 |             raise IndexError("Form number %d not found in %s" %
+ 96 |                              (formnumber, response))
+ 97 |         else:
+ 98 |             return form
+ 99 | 
+100 | 
+101 | def _get_inputs(form, formdata, dont_click, clickdata, response):
+102 |     try:
+103 |         formdata = dict(formdata or ())
+104 |     except (ValueError, TypeError):
+105 |         raise ValueError('formdata should be a dict or iterable of tuples')
+106 | 
+107 |     inputs = form.xpath('descendant::textarea'
+108 |                         '|descendant::select'
+109 |                         '|descendant::input[@type!="submit" and @type!="image" and @type!="reset"'
+110 |                         'and ((@type!="checkbox" and @type!="radio") or @checked)]')
+111 |     values = [(k, u'' if v is None else v)
+112 |               for k, v in (_value(e) for e in inputs)
+113 |               if k and k not in formdata]
+114 | 
+115 |     if not dont_click:
+116 |         clickable = _get_clickable(clickdata, form)
+117 |         if clickable and clickable[0] not in formdata and not clickable[0] is None:
+118 |             values.append(clickable)
+119 | 
+120 |     values.extend(formdata.items())
+121 |     return values
+122 | 
+123 | 
+124 | def _value(ele):
+125 |     n = ele.name
+126 |     v = ele.value
+127 |     if ele.tag == 'select':
+128 |         return _select_value(ele, n, v)
+129 |     return n, v
+130 | 
+131 | 
+132 | def _select_value(ele, n, v):
+133 |     multiple = ele.multiple
+134 |     if v is None and not multiple:
+135 |         # Match browser behaviour on simple select tag without options selected
+136 |         # And for select tags wihout options
+137 |         o = ele.value_options
+138 |         return (n, o[0]) if o else (None, None)
+139 |     elif v is not None and multiple:
+140 |         # This is a workround to bug in lxml fixed 2.3.1
+141 |         # fix https://github.com/lxml/lxml/commit/57f49eed82068a20da3db8f1b18ae00c1bab8b12#L1L1139
+142 |         selected_options = ele.xpath('.//option[@selected]')
+143 |         v = [(o.get('value') or o.text or u'').strip() for o in selected_options]
+144 |     return n, v
+145 | 
+146 | 
+147 | def _get_clickable(clickdata, form):
+148 |     """
+149 |     Returns the clickable element specified in clickdata,
+150 |     if the latter is given. If not, it returns the first
+151 |     clickable element found
+152 |     """
+153 |     clickables = [el for el in form.xpath('descendant::input[@type="submit"]'
+154 |                                           '|descendant::button[@type="submit"]'
+155 |                                           '|descendant::button[not(@type)]')]
+156 |     if not clickables:
+157 |         return
+158 | 
+159 |     # If we don't have clickdata, we just use the first clickable element
+160 |     if clickdata is None:
+161 |         el = clickables[0]
+162 |         return (el.get('name'), el.get('value') or '')
+163 | 
+164 |     # If clickdata is given, we compare it to the clickable elements to find a
+165 |     # match. We first look to see if the number is specified in clickdata,
+166 |     # because that uniquely identifies the element
+167 |     nr = clickdata.get('nr', None)
+168 |     if nr is not None:
+169 |         try:
+170 |             el = list(form.inputs)[nr]
+171 |         except IndexError:
+172 |             pass
+173 |         else:
+174 |             return (el.get('name'), el.get('value') or '')
+175 | 
+176 |     # We didn't find it, so now we build an XPath expression out of the other
+177 |     # arguments, because they can be used as such
+178 |     xpath = u'.//*' + \
+179 |             u''.join(u'[@%s="%s"]' % c for c in six.iteritems(clickdata))
+180 |     el = form.xpath(xpath)
+181 |     if len(el) == 1:
+182 |         return (el[0].get('name'), el[0].get('value') or '')
+183 |     elif len(el) > 1:
+184 |         raise ValueError("Multiple elements found (%r) matching the criteria "
+185 |                          "in clickdata: %r" % (el, clickdata))
+186 |     else:
+187 |         raise ValueError('No clickable element matching clickdata: %r' % (clickdata,))
+```
+
+[file_2] BugsInPy/workspace/scrapy/scrapy/utils/response.py
+```python
+ 1 | """
+ 2 | This module provides some useful functions for working with
+ 3 | scrapy.http.Response objects
+ 4 | """
+ 5 | import os
+ 6 | import re
+ 7 | import weakref
+ 8 | import webbrowser
+ 9 | import tempfile
+10 | 
+11 | from twisted.web import http
+12 | from scrapy.utils.python import to_bytes, to_native_str
+13 | from w3lib import html
+14 | 
+15 | from scrapy.utils.decorators import deprecated
+16 | 
+17 | 
+18 | @deprecated
+19 | def body_or_str(*a, **kw):
+20 |     from scrapy.utils.iterators import _body_or_str
+21 |     return _body_or_str(*a, **kw)
+22 | 
+23 | 
+24 | _baseurl_cache = weakref.WeakKeyDictionary()
+25 | def get_base_url(response):
+26 |     """Return the base url of the given response, joined with the response url"""
+27 |     if response not in _baseurl_cache:
+28 |         text = response.body_as_unicode()[0:4096]
+29 |         _baseurl_cache[response] = html.get_base_url(text, response.url,
+30 |             response.encoding)
+31 |     return _baseurl_cache[response]
+32 | 
+33 | 
+34 | _noscript_re = re.compile(u'<noscript>.*?</noscript>', re.IGNORECASE | re.DOTALL)
+35 | _script_re = re.compile(u'<script.*?>.*?</script>', re.IGNORECASE | re.DOTALL)
+36 | _metaref_cache = weakref.WeakKeyDictionary()
+37 | def get_meta_refresh(response):
+38 |     """Parse the http-equiv refrsh parameter from the given response"""
+39 |     if response not in _metaref_cache:
+40 |         text = response.body_as_unicode()[0:4096]
+41 |         text = _noscript_re.sub(u'', text)
+42 |         text = _script_re.sub(u'', text)
+43 |         _metaref_cache[response] = html.get_meta_refresh(text, response.url,
+44 |             response.encoding)
+45 |     return _metaref_cache[response]
+46 | 
+47 | 
+48 | def response_status_message(status):
+49 |     """Return status code plus status text descriptive message
+50 | 
+51 |     >>> response_status_message(200)
+52 |     '200 OK'
+53 | 
+54 |     >>> response_status_message(404)
+55 |     '404 Not Found'
+56 |     """
+57 |     return '%s %s' % (status, to_native_str(http.RESPONSES.get(int(status))))
+58 | 
+59 | 
+60 | def response_httprepr(response):
+61 |     """Return raw HTTP representation (as bytes) of the given response. This
+62 |     is provided only for reference, since it's not the exact stream of bytes
+63 |     that was received (that's not exposed by Twisted).
+64 |     """
+65 |     s = b"HTTP/1.1 " + to_bytes(str(response.status)) + b" " + \
+66 |         to_bytes(http.RESPONSES.get(response.status, b'')) + b"\r\n"
+67 |     if response.headers:
+68 |         s += response.headers.to_string() + b"\r\n"
+69 |     s += b"\r\n"
+70 |     s += response.body
+71 |     return s
+72 | 
+73 | 
+74 | def open_in_browser(response, _openfunc=webbrowser.open):
+75 |     """Open the given response in a local web browser, populating the <base>
+76 |     tag for external links to work
+77 |     """
+78 |     from scrapy.http import HtmlResponse, TextResponse
+79 |     # XXX: this implementation is a bit dirty and could be improved
+80 |     body = response.body
+81 |     if isinstance(response, HtmlResponse):
+82 |         if b'<base' not in body:
+83 |             repl = '<head><base href="%s">' % response.url
+84 |             body = body.replace(b'<head>', to_bytes(repl))
+85 |         ext = '.html'
+86 |     elif isinstance(response, TextResponse):
+87 |         ext = '.txt'
+88 |     else:
+89 |         raise TypeError("Unsupported response type: %s" %
+90 |                         response.__class__.__name__)
+91 |     fd, fname = tempfile.mkstemp(ext)
+92 |     os.write(fd, body)
+93 |     os.close(fd)
+94 |     return _openfunc("file://%s" % fname)
+```
+
+
+FAILING TEST FILES:
+
+[test_file_1] BugsInPy/workspace/scrapy/tests/test_http_request.py
+```python
+  1 | import cgi
+  2 | import unittest
+  3 | 
+  4 | import six
+  5 | from six.moves import xmlrpc_client as xmlrpclib
+  6 | from six.moves.urllib.parse import urlparse
+  7 | 
+  8 | from scrapy.http import Request, FormRequest, XmlRpcRequest, Headers, HtmlResponse
+  9 | from scrapy.utils.python import to_bytes, to_native_str
+ 10 | 
+ 11 | 
+ 12 | class RequestTest(unittest.TestCase):
+ 13 | 
+ 14 |     request_class = Request
+ 15 |     default_method = 'GET'
+ 16 |     default_headers = {}
+ 17 |     default_meta = {}
+ 18 | 
+ 19 |     def test_init(self):
+ 20 |         # Request requires url in the constructor
+ 21 |         self.assertRaises(Exception, self.request_class)
+ 22 | 
+ 23 |         # url argument must be basestring
+ 24 |         self.assertRaises(TypeError, self.request_class, 123)
+ 25 |         r = self.request_class('http://www.example.com')
+ 26 | 
+ 27 |         r = self.request_class("http://www.example.com")
+ 28 |         assert isinstance(r.url, str)
+ 29 |         self.assertEqual(r.url, "http://www.example.com")
+ 30 |         self.assertEqual(r.method, self.default_method)
+ 31 | 
+ 32 |         assert isinstance(r.headers, Headers)
+ 33 |         self.assertEqual(r.headers, self.default_headers)
+ 34 |         self.assertEqual(r.meta, self.default_meta)
+ 35 | 
+ 36 |         meta = {"lala": "lolo"}
+ 37 |         headers = {b"caca": b"coco"}
+ 38 |         r = self.request_class("http://www.example.com", meta=meta, headers=headers, body="a body")
+ 39 | 
+ 40 |         assert r.meta is not meta
+ 41 |         self.assertEqual(r.meta, meta)
+ 42 |         assert r.headers is not headers
+ 43 |         self.assertEqual(r.headers[b"caca"], b"coco")
+ 44 | 
+ 45 |     def test_url_no_scheme(self):
+ 46 |         self.assertRaises(ValueError, self.request_class, 'foo')
+ 47 | 
+ 48 |     def test_headers(self):
+ 49 |         # Different ways of setting headers attribute
+ 50 |         url = 'http://www.scrapy.org'
+ 51 |         headers = {b'Accept':'gzip', b'Custom-Header':'nothing to tell you'}
+ 52 |         r = self.request_class(url=url, headers=headers)
+ 53 |         p = self.request_class(url=url, headers=r.headers)
+ 54 | 
+ 55 |         self.assertEqual(r.headers, p.headers)
+ 56 |         self.assertFalse(r.headers is headers)
+ 57 |         self.assertFalse(p.headers is r.headers)
+ 58 | 
+ 59 |         # headers must not be unicode
+ 60 |         h = Headers({'key1': u'val1', u'key2': 'val2'})
+ 61 |         h[u'newkey'] = u'newval'
+ 62 |         for k, v in h.iteritems():
+ 63 |             self.assert_(isinstance(k, bytes))
+ 64 |             for s in v:
+ 65 |                 self.assert_(isinstance(s, bytes))
+ 66 | 
+ 67 |     def test_eq(self):
+ 68 |         url = 'http://www.scrapy.org'
+ 69 |         r1 = self.request_class(url=url)
+ 70 |         r2 = self.request_class(url=url)
+ 71 |         self.assertNotEqual(r1, r2)
+ 72 | 
+ 73 |         set_ = set()
+ 74 |         set_.add(r1)
+ 75 |         set_.add(r2)
+ 76 |         self.assertEqual(len(set_), 2)
+ 77 | 
+ 78 |     def test_url(self):
+ 79 |         r = self.request_class(url="http://www.scrapy.org/path")
+ 80 |         self.assertEqual(r.url, "http://www.scrapy.org/path")
+ 81 | 
+ 82 |     def test_url_quoting(self):
+ 83 |         r = self.request_class(url="http://www.scrapy.org/blank%20space")
+ 84 |         self.assertEqual(r.url, "http://www.scrapy.org/blank%20space")
+ 85 |         r = self.request_class(url="http://www.scrapy.org/blank space")
+ 86 |         self.assertEqual(r.url, "http://www.scrapy.org/blank%20space")
+ 87 | 
+ 88 |     @unittest.skipUnless(six.PY2, "TODO")
+ 89 |     def test_url_encoding(self):
+ 90 |         r1 = self.request_class(url=u"http://www.scrapy.org/price/\xa3", encoding="utf-8")
+ 91 |         r2 = self.request_class(url=u"http://www.scrapy.org/price/\xa3", encoding="latin1")
+ 92 |         self.assertEqual(r1.url, "http://www.scrapy.org/price/%C2%A3")
+ 93 |         self.assertEqual(r2.url, "http://www.scrapy.org/price/%A3")
+ 94 | 
+ 95 |     def test_body(self):
+ 96 |         r1 = self.request_class(url="http://www.example.com/")
+ 97 |         assert r1.body == b''
+ 98 | 
+ 99 |         r2 = self.request_class(url="http://www.example.com/", body=b"")
+100 |         assert isinstance(r2.body, bytes)
+101 |         self.assertEqual(r2.encoding, 'utf-8') # default encoding
+102 | 
+103 |         r3 = self.request_class(url="http://www.example.com/", body=u"Price: \xa3100", encoding='utf-8')
+104 |         assert isinstance(r3.body, bytes)
+105 |         self.assertEqual(r3.body, b"Price: \xc2\xa3100")
+106 | 
+107 |         r4 = self.request_class(url="http://www.example.com/", body=u"Price: \xa3100", encoding='latin1')
+108 |         assert isinstance(r4.body, bytes)
+109 |         self.assertEqual(r4.body, b"Price: \xa3100")
+110 | 
+111 |     def test_ajax_url(self):
+112 |         # ascii url
+113 |         r = self.request_class(url="http://www.example.com/ajax.html#!key=value")
+114 |         self.assertEqual(r.url, "http://www.example.com/ajax.html?_escaped_fragment_=key%3Dvalue")
+115 |         # unicode url
+116 |         r = self.request_class(url=u"http://www.example.com/ajax.html#!key=value")
+117 |         self.assertEqual(r.url, "http://www.example.com/ajax.html?_escaped_fragment_=key%3Dvalue")
+118 | 
+119 |     def test_copy(self):
+120 |         """Test Request copy"""
+121 | 
+122 |         def somecallback():
+123 |             pass
+124 | 
+125 |         r1 = self.request_class("http://www.example.com", callback=somecallback, errback=somecallback)
+126 |         r1.meta['foo'] = 'bar'
+127 |         r2 = r1.copy()
+128 | 
+129 |         # make sure copy does not propagate callbacks
+130 |         assert r1.callback is somecallback
+131 |         assert r1.errback is somecallback
+132 |         assert r2.callback is r1.callback
+133 |         assert r2.errback is r2.errback
+134 | 
+135 |         # make sure meta dict is shallow copied
+136 |         assert r1.meta is not r2.meta, "meta must be a shallow copy, not identical"
+137 |         self.assertEqual(r1.meta, r2.meta)
+138 | 
+139 |         # make sure headers attribute is shallow copied
+140 |         assert r1.headers is not r2.headers, "headers must be a shallow copy, not identical"
+141 |         self.assertEqual(r1.headers, r2.headers)
+142 |         self.assertEqual(r1.encoding, r2.encoding)
+143 |         self.assertEqual(r1.dont_filter, r2.dont_filter)
+144 | 
+145 |         # Request.body can be identical since it's an immutable object (str)
+146 | 
+147 |     def test_copy_inherited_classes(self):
+148 |         """Test Request children copies preserve their class"""
+149 | 
+150 |         class CustomRequest(self.request_class):
+151 |             pass
+152 | 
+153 |         r1 = CustomRequest('http://www.example.com')
+154 |         r2 = r1.copy()
+155 | 
+156 |         assert type(r2) is CustomRequest
+157 | 
+158 |     def test_replace(self):
+159 |         """Test Request.replace() method"""
+160 |         r1 = self.request_class("http://www.example.com", method='GET')
+161 |         hdrs = Headers(r1.headers)
+162 |         hdrs[b'key'] = b'value'
+163 |         r2 = r1.replace(method="POST", body="New body", headers=hdrs)
+164 |         self.assertEqual(r1.url, r2.url)
+165 |         self.assertEqual((r1.method, r2.method), ("GET", "POST"))
+166 |         self.assertEqual((r1.body, r2.body), (b'', b"New body"))
+167 |         self.assertEqual((r1.headers, r2.headers), (self.default_headers, hdrs))
+168 | 
+169 |         # Empty attributes (which may fail if not compared properly)
+170 |         r3 = self.request_class("http://www.example.com", meta={'a': 1}, dont_filter=True)
+171 |         r4 = r3.replace(url="http://www.example.com/2", body=b'', meta={}, dont_filter=False)
+172 |         self.assertEqual(r4.url, "http://www.example.com/2")
+173 |         self.assertEqual(r4.body, b'')
+174 |         self.assertEqual(r4.meta, {})
+175 |         assert r4.dont_filter is False
+176 | 
+177 |     def test_method_always_str(self):
+178 |         r = self.request_class("http://www.example.com", method=u"POST")
+179 |         assert isinstance(r.method, str)
+180 | 
+181 |     def test_immutable_attributes(self):
+182 |         r = self.request_class("http://example.com")
+183 |         self.assertRaises(AttributeError, setattr, r, 'url', 'http://example2.com')
+184 |         self.assertRaises(AttributeError, setattr, r, 'body', 'xxx')
+185 | 
+186 | 
+187 | class FormRequestTest(RequestTest):
+188 | 
+189 |     request_class = FormRequest
+190 | 
+191 |     def assertQueryEqual(self, first, second, msg=None):
+192 |         first = to_native_str(first).split("&")
+193 |         second = to_native_str(second).split("&")
+194 |         return self.assertEqual(sorted(first), sorted(second), msg)
+195 | 
+196 |     def test_empty_formdata(self):
+197 |         r1 = self.request_class("http://www.example.com", formdata={})
+198 |         self.assertEqual(r1.body, b'')
+199 | 
+200 |     @unittest.skipUnless(six.PY2, "TODO")
+201 |     def test_default_encoding(self):
+202 |         # using default encoding (utf-8)
+203 |         data = {'one': 'two', 'price': '\xc2\xa3 100'}
+204 |         r2 = self.request_class("http://www.example.com", formdata=data)
+205 |         self.assertEqual(r2.method, 'POST')
+206 |         self.assertEqual(r2.encoding, 'utf-8')
+207 |         self.assertQueryEqual(r2.body, b'price=%C2%A3+100&one=two')
+208 |         self.assertEqual(r2.headers[b'Content-Type'], b'application/x-www-form-urlencoded')
+209 | 
+210 |     def test_custom_encoding(self):
+211 |         data = {'price': u'\xa3 100'}
+212 |         r3 = self.request_class("http://www.example.com", formdata=data, encoding='latin1')
+213 |         self.assertEqual(r3.encoding, 'latin1')
+214 |         self.assertEqual(r3.body, b'price=%A3+100')
+215 | 
+216 |     def test_multi_key_values(self):
+217 |         # using multiples values for a single key
+218 |         data = {'price': u'\xa3 100', 'colours': ['red', 'blue', 'green']}
+219 |         r3 = self.request_class("http://www.example.com", formdata=data)
+220 |         self.assertQueryEqual(r3.body,
+221 |             b'colours=red&colours=blue&colours=green&price=%C2%A3+100')
+222 | 
+223 |     def test_from_response_post(self):
+224 |         response = _buildresponse(
+225 |             b"""<form action="post.php" method="POST">
+226 |             <input type="hidden" name="test" value="val1">
+227 |             <input type="hidden" name="test" value="val2">
+228 |             <input type="hidden" name="test2" value="xxx">
+229 |             </form>""",
+230 |             url="http://www.example.com/this/list.html")
+231 |         req = self.request_class.from_response(response,
+232 |                 formdata={'one': ['two', 'three'], 'six': 'seven'})
+233 |         self.assertEqual(req.method, 'POST')
+234 |         self.assertEqual(req.headers[b'Content-type'], b'application/x-www-form-urlencoded')
+235 |         self.assertEqual(req.url, "http://www.example.com/this/post.php")
+236 |         fs = _qs(req)
+237 |         self.assertEqual(set(fs[b"test"]), {b"val1", b"val2"})
+238 |         self.assertEqual(set(fs[b"one"]), {b"two", b"three"})
+239 |         self.assertEqual(fs[b'test2'], [b'xxx'])
+240 |         self.assertEqual(fs[b'six'], [b'seven'])
+241 | 
+242 |     def test_from_response_extra_headers(self):
+243 |         response = _buildresponse(
+244 |             """<form action="post.php" method="POST">
+245 |             <input type="hidden" name="test" value="val1">
+246 |             <input type="hidden" name="test" value="val2">
+247 |             <input type="hidden" name="test2" value="xxx">
+248 |             </form>""")
+249 |         req = self.request_class.from_response(response,
+250 |                 formdata={'one': ['two', 'three'], 'six': 'seven'},
+251 |                 headers={"Accept-Encoding": "gzip,deflate"})
+252 |         self.assertEqual(req.method, 'POST')
+253 |         self.assertEqual(req.headers['Content-type'], b'application/x-www-form-urlencoded')
+254 |         self.assertEqual(req.headers['Accept-Encoding'], b'gzip,deflate')
+255 | 
+256 |     def test_from_response_get(self):
+257 |         response = _buildresponse(
+258 |             """<form action="get.php" method="GET">
+259 |             <input type="hidden" name="test" value="val1">
+260 |             <input type="hidden" name="test" value="val2">
+261 |             <input type="hidden" name="test2" value="xxx">
+262 |             </form>""",
+263 |             url="http://www.example.com/this/list.html")
+264 |         r1 = self.request_class.from_response(response,
+265 |                 formdata={'one': ['two', 'three'], 'six': 'seven'})
+266 |         self.assertEqual(r1.method, 'GET')
+267 |         self.assertEqual(urlparse(r1.url).hostname, "www.example.com")
+268 |         self.assertEqual(urlparse(r1.url).path, "/this/get.php")
+269 |         fs = _qs(r1)
+270 |         self.assertEqual(set(fs['test']), set(['val1', 'val2']))
+271 |         self.assertEqual(set(fs['one']), set(['two', 'three']))
+272 |         self.assertEqual(fs['test2'], ['xxx'])
+273 |         self.assertEqual(fs['six'], ['seven'])
+274 | 
+275 |     def test_from_response_override_params(self):
+276 |         response = _buildresponse(
+277 |             """<form action="get.php" method="POST">
+278 |             <input type="hidden" name="one" value="1">
+279 |             <input type="hidden" name="two" value="3">
+280 |             </form>""")
+281 |         req = self.request_class.from_response(response, formdata={'two': '2'})
+282 |         fs = _qs(req)
+283 |         self.assertEqual(fs[b'one'], [b'1'])
+284 |         self.assertEqual(fs[b'two'], [b'2'])
+285 | 
+286 |     def test_from_response_override_method(self):
+287 |         response = _buildresponse(
+288 |                 '''<html><body>
+289 |                 <form action="/app"></form>
+290 |                 </body></html>''')
+291 |         request = FormRequest.from_response(response)
+292 |         self.assertEqual(request.method, 'GET')
+293 |         request = FormRequest.from_response(response, method='POST')
+294 |         self.assertEqual(request.method, 'POST')
+295 | 
+296 |     def test_from_response_override_url(self):
+297 |         response = _buildresponse(
+298 |                 '''<html><body>
+299 |                 <form action="/app"></form>
+300 |                 </body></html>''')
+301 |         request = FormRequest.from_response(response)
+302 |         self.assertEqual(request.url, 'http://example.com/app')
+303 |         request = FormRequest.from_response(response, url='http://foo.bar/absolute')
+304 |         self.assertEqual(request.url, 'http://foo.bar/absolute')
+305 |         request = FormRequest.from_response(response, url='/relative')
+306 |         self.assertEqual(request.url, 'http://example.com/relative')
+307 | 
+308 |     def test_from_response_submit_first_clickable(self):
+309 |         response = _buildresponse(
+310 |             """<form action="get.php" method="GET">
+311 |             <input type="submit" name="clickable1" value="clicked1">
+312 |             <input type="hidden" name="one" value="1">
+313 |             <input type="hidden" name="two" value="3">
+314 |             <input type="submit" name="clickable2" value="clicked2">
+315 |             </form>""")
+316 |         req = self.request_class.from_response(response, formdata={'two': '2'})
+317 |         fs = _qs(req)
+318 |         self.assertEqual(fs['clickable1'], ['clicked1'])
+319 |         self.assertFalse('clickable2' in fs, fs)
+320 |         self.assertEqual(fs['one'], ['1'])
+321 |         self.assertEqual(fs['two'], ['2'])
+322 | 
+323 |     def test_from_response_submit_not_first_clickable(self):
+324 |         response = _buildresponse(
+325 |             """<form action="get.php" method="GET">
+326 |             <input type="submit" name="clickable1" value="clicked1">
+327 |             <input type="hidden" name="one" value="1">
+328 |             <input type="hidden" name="two" value="3">
+329 |             <input type="submit" name="clickable2" value="clicked2">
+330 |             </form>""")
+331 |         req = self.request_class.from_response(response, formdata={'two': '2'}, \
+332 |                                               clickdata={'name': 'clickable2'})
+333 |         fs = _qs(req)
+334 |         self.assertEqual(fs['clickable2'], ['clicked2'])
+335 |         self.assertFalse('clickable1' in fs, fs)
+336 |         self.assertEqual(fs['one'], ['1'])
+337 |         self.assertEqual(fs['two'], ['2'])
+338 | 
+339 |     def test_from_response_dont_submit_image_as_input(self):
+340 |         response = _buildresponse(
+341 |             """<form>
+342 |             <input type="hidden" name="i1" value="i1v">
+343 |             <input type="image" name="i2" src="http://my.image.org/1.jpg">
+344 |             <input type="submit" name="i3" value="i3v">
+345 |             </form>""")
+346 |         req = self.request_class.from_response(response, dont_click=True)
+347 |         fs = _qs(req)
+348 |         self.assertEqual(fs, {'i1': ['i1v']})
+349 | 
+350 |     def test_from_response_dont_submit_reset_as_input(self):
+351 |         response = _buildresponse(
+352 |             """<form>
+353 |             <input type="hidden" name="i1" value="i1v">
+354 |             <input type="text" name="i2" value="i2v">
+355 |             <input type="reset" name="resetme">
+356 |             <input type="submit" name="i3" value="i3v">
+357 |             </form>""")
+358 |         req = self.request_class.from_response(response, dont_click=True)
+359 |         fs = _qs(req)
+360 |         self.assertEqual(fs, {'i1': ['i1v'], 'i2': ['i2v']})
+361 | 
+362 |     def test_from_response_multiple_clickdata(self):
+363 |         response = _buildresponse(
+364 |             """<form action="get.php" method="GET">
+365 |             <input type="submit" name="clickable" value="clicked1">
+366 |             <input type="submit" name="clickable" value="clicked2">
+367 |             <input type="hidden" name="one" value="clicked1">
+368 |             <input type="hidden" name="two" value="clicked2">
+369 |             </form>""")
+370 |         req = self.request_class.from_response(response, \
+371 |                 clickdata={'name': 'clickable', 'value': 'clicked2'})
+372 |         fs = _qs(req)
+373 |         self.assertEqual(fs['clickable'], ['clicked2'])
+374 |         self.assertEqual(fs['one'], ['clicked1'])
+375 |         self.assertEqual(fs['two'], ['clicked2'])
+376 | 
+377 |     def test_from_response_unicode_clickdata(self):
+378 |         response = _buildresponse(
+379 |             u"""<form action="get.php" method="GET">
+380 |             <input type="submit" name="price in \u00a3" value="\u00a3 1000">
+381 |             <input type="submit" name="price in \u20ac" value="\u20ac 2000">
+382 |             <input type="hidden" name="poundsign" value="\u00a3">
+383 |             <input type="hidden" name="eurosign" value="\u20ac">
+384 |             </form>""")
+385 |         req = self.request_class.from_response(response, \
+386 |                 clickdata={'name': u'price in \u00a3'})
+387 |         fs = _qs(req)
+388 |         self.assertTrue(fs[to_native_str(u'price in \u00a3')])
+389 | 
+390 |     def test_from_response_multiple_forms_clickdata(self):
+391 |         response = _buildresponse(
+392 |             """<form name="form1">
+393 |             <input type="submit" name="clickable" value="clicked1">
+394 |             <input type="hidden" name="field1" value="value1">
+395 |             </form>
+396 |             <form name="form2">
+397 |             <input type="submit" name="clickable" value="clicked2">
+398 |             <input type="hidden" name="field2" value="value2">
+399 |             </form>
+400 |             """)
+401 |         req = self.request_class.from_response(response, formname='form2', \
+402 |                 clickdata={'name': 'clickable'})
+403 |         fs = _qs(req)
+404 |         self.assertEqual(fs['clickable'], ['clicked2'])
+405 |         self.assertEqual(fs['field2'], ['value2'])
+406 |         self.assertFalse('field1' in fs, fs)
+407 | 
+408 |     def test_from_response_override_clickable(self):
+409 |         response = _buildresponse('''<form><input type="submit" name="clickme" value="one"> </form>''')
+410 |         req = self.request_class.from_response(response, \
+411 |                 formdata={'clickme': 'two'}, clickdata={'name': 'clickme'})
+412 |         fs = _qs(req)
+413 |         self.assertEqual(fs['clickme'], ['two'])
+414 | 
+415 |     def test_from_response_dont_click(self):
+416 |         response = _buildresponse(
+417 |             """<form action="get.php" method="GET">
+418 |             <input type="submit" name="clickable1" value="clicked1">
+419 |             <input type="hidden" name="one" value="1">
+420 |             <input type="hidden" name="two" value="3">
+421 |             <input type="submit" name="clickable2" value="clicked2">
+422 |             </form>""")
+423 |         r1 = self.request_class.from_response(response, dont_click=True)
+424 |         fs = _qs(r1)
+425 |         self.assertFalse('clickable1' in fs, fs)
+426 |         self.assertFalse('clickable2' in fs, fs)
+427 | 
+428 |     def test_from_response_ambiguous_clickdata(self):
+429 |         response = _buildresponse(
+430 |             """
+431 |             <form action="get.php" method="GET">
+432 |             <input type="submit" name="clickable1" value="clicked1">
+433 |             <input type="hidden" name="one" value="1">
+434 |             <input type="hidden" name="two" value="3">
+435 |             <input type="submit" name="clickable2" value="clicked2">
+436 |             </form>""")
+437 |         self.assertRaises(ValueError, self.request_class.from_response,
+438 |                           response, clickdata={'type': 'submit'})
+439 | 
+440 |     def test_from_response_non_matching_clickdata(self):
+441 |         response = _buildresponse(
+442 |             """<form>
+443 |             <input type="submit" name="clickable" value="clicked">
+444 |             </form>""")
+445 |         self.assertRaises(ValueError, self.request_class.from_response,
+446 |                           response, clickdata={'nonexistent': 'notme'})
+447 | 
+448 |     def test_from_response_nr_index_clickdata(self):
+449 |         response = _buildresponse(
+450 |             """<form>
+451 |             <input type="submit" name="clickable1" value="clicked1">
+452 |             <input type="submit" name="clickable2" value="clicked2">
+453 |             </form>
+454 |             """)
+455 |         req = self.request_class.from_response(response, clickdata={'nr': 1})
+456 |         fs = _qs(req)
+457 |         self.assertIn('clickable2', fs)
+458 |         self.assertNotIn('clickable1', fs)
+459 | 
+460 |     def test_from_response_invalid_nr_index_clickdata(self):
+461 |         response = _buildresponse(
+462 |             """<form>
+463 |             <input type="submit" name="clickable" value="clicked">
+464 |             </form>
+465 |             """)
+466 |         self.assertRaises(ValueError, self.request_class.from_response,
+467 |                           response, clickdata={'nr': 1})
+468 | 
+469 |     def test_from_response_errors_noform(self):
+470 |         response = _buildresponse("""<html></html>""")
+471 |         self.assertRaises(ValueError, self.request_class.from_response, response)
+472 | 
+473 |     def test_from_response_invalid_html5(self):
+474 |         response = _buildresponse("""<!DOCTYPE html><body></html><form>"""
+475 |                                   """<input type="text" name="foo" value="xxx">"""
+476 |                                   """</form></body></html>""")
+477 |         req = self.request_class.from_response(response, formdata={'bar': 'buz'})
+478 |         fs = _qs(req)
+479 |         self.assertEqual(fs, {'foo': ['xxx'], 'bar': ['buz']})
+480 | 
+481 |     def test_from_response_errors_formnumber(self):
+482 |         response = _buildresponse(
+483 |             """<form action="get.php" method="GET">
+484 |             <input type="hidden" name="test" value="val1">
+485 |             <input type="hidden" name="test" value="val2">
+486 |             <input type="hidden" name="test2" value="xxx">
+487 |             </form>""")
+488 |         self.assertRaises(IndexError, self.request_class.from_response, response, formnumber=1)
+489 | 
+490 |     def test_from_response_noformname(self):
+491 |         response = _buildresponse(
+492 |             """<form action="post.php" method="POST">
+493 |             <input type="hidden" name="one" value="1">
+494 |             <input type="hidden" name="two" value="2">
+495 |             </form>""")
+496 |         r1 = self.request_class.from_response(response, formdata={'two':'3'})
+497 |         self.assertEqual(r1.method, 'POST')
+498 |         self.assertEqual(r1.headers['Content-type'], b'application/x-www-form-urlencoded')
+499 |         fs = _qs(r1)
+500 |         self.assertEqual(fs, {b'one': [b'1'], b'two': [b'3']})
+501 | 
+502 |     def test_from_response_formname_exists(self):
+503 |         response = _buildresponse(
+504 |             """<form action="post.php" method="POST">
+505 |             <input type="hidden" name="one" value="1">
+506 |             <input type="hidden" name="two" value="2">
+507 |             </form>
+508 |             <form name="form2" action="post.php" method="POST">
+509 |             <input type="hidden" name="three" value="3">
+510 |             <input type="hidden" name="four" value="4">
+511 |             </form>""")
+512 |         r1 = self.request_class.from_response(response, formname="form2")
+513 |         self.assertEqual(r1.method, 'POST')
+514 |         fs = _qs(r1)
+515 |         self.assertEqual(fs, {b'four': [b'4'], b'three': [b'3']})
+516 | 
+517 |     def test_from_response_formname_notexist(self):
+518 |         response = _buildresponse(
+519 |             """<form name="form1" action="post.php" method="POST">
+520 |             <input type="hidden" name="one" value="1">
+521 |             </form>
+522 |             <form name="form2" action="post.php" method="POST">
+523 |             <input type="hidden" name="two" value="2">
+524 |             </form>""")
+525 |         r1 = self.request_class.from_response(response, formname="form3")
+526 |         self.assertEqual(r1.method, 'POST')
+527 |         fs = _qs(r1)
+528 |         self.assertEqual(fs, {b'one': [b'1']})
+529 | 
+530 |     def test_from_response_formname_errors_formnumber(self):
+531 |         response = _buildresponse(
+532 |             """<form name="form1" action="post.php" method="POST">
+533 |             <input type="hidden" name="one" value="1">
+534 |             </form>
+535 |             <form name="form2" action="post.php" method="POST">
+536 |             <input type="hidden" name="two" value="2">
+537 |             </form>""")
+538 |         self.assertRaises(IndexError, self.request_class.from_response, \
+539 |                           response, formname="form3", formnumber=2)
+540 | 
+541 |     def test_from_response_formid_exists(self):
+542 |         response = _buildresponse(
+543 |             """<form action="post.php" method="POST">
+544 |             <input type="hidden" name="one" value="1">
+545 |             <input type="hidden" name="two" value="2">
+546 |             </form>
+547 |             <form id="form2" action="post.php" method="POST">
+548 |             <input type="hidden" name="three" value="3">
+549 |             <input type="hidden" name="four" value="4">
+550 |             </form>""")
+551 |         r1 = self.request_class.from_response(response, formid="form2")
+552 |         self.assertEqual(r1.method, 'POST')
+553 |         fs = _qs(r1)
+554 |         self.assertEqual(fs, {b'four': [b'4'], b'three': [b'3']})
+555 | 
+556 |     def test_from_response_formname_notexists_fallback_formid(self):
+557 |         response = _buildresponse(
+558 |             """<form action="post.php" method="POST">
+559 |             <input type="hidden" name="one" value="1">
+560 |             <input type="hidden" name="two" value="2">
+561 |             </form>
+562 |             <form id="form2" name="form2" action="post.php" method="POST">
+563 |             <input type="hidden" name="three" value="3">
+564 |             <input type="hidden" name="four" value="4">
+565 |             </form>""")
+566 |         r1 = self.request_class.from_response(response, formname="form3", formid="form2")
+567 |         self.assertEqual(r1.method, 'POST')
+568 |         fs = _qs(r1)
+569 |         self.assertEqual(fs, {b'four': [b'4'], b'three': [b'3']})
+570 | 
+571 |     def test_from_response_formid_notexist(self):
+572 |         response = _buildresponse(
+573 |             """<form id="form1" action="post.php" method="POST">
+574 |             <input type="hidden" name="one" value="1">
+575 |             </form>
+576 |             <form id="form2" action="post.php" method="POST">
+577 |             <input type="hidden" name="two" value="2">
+578 |             </form>""")
+579 |         r1 = self.request_class.from_response(response, formid="form3")
+580 |         self.assertEqual(r1.method, 'POST')
+581 |         fs = _qs(r1)
+582 |         self.assertEqual(fs, {b'one': [b'1']})
+583 | 
+584 |     def test_from_response_formid_errors_formnumber(self):
+585 |         response = _buildresponse(
+586 |             """<form id="form1" action="post.php" method="POST">
+587 |             <input type="hidden" name="one" value="1">
+588 |             </form>
+589 |             <form id="form2" name="form2" action="post.php" method="POST">
+590 |             <input type="hidden" name="two" value="2">
+591 |             </form>""")
+592 |         self.assertRaises(IndexError, self.request_class.from_response, \
+593 |                           response, formid="form3", formnumber=2)
+594 | 
+595 |     def test_from_response_select(self):
+596 |         res = _buildresponse(
+597 |             '''<form>
+598 |             <select name="i1">
+599 |                 <option value="i1v1">option 1</option>
+600 |                 <option value="i1v2" selected>option 2</option>
+601 |             </select>
+602 |             <select name="i2">
+603 |                 <option value="i2v1">option 1</option>
+604 |                 <option value="i2v2">option 2</option>
+605 |             </select>
+606 |             <select>
+607 |                 <option value="i3v1">option 1</option>
+608 |                 <option value="i3v2">option 2</option>
+609 |             </select>
+610 |             <select name="i4" multiple>
+611 |                 <option value="i4v1">option 1</option>
+612 |                 <option value="i4v2" selected>option 2</option>
+613 |                 <option value="i4v3" selected>option 3</option>
+614 |             </select>
+615 |             <select name="i5" multiple>
+616 |                 <option value="i5v1">option 1</option>
+617 |                 <option value="i5v2">option 2</option>
+618 |             </select>
+619 |             <select name="i6"></select>
+620 |             <select name="i7"/>
+621 |             </form>''')
+622 |         req = self.request_class.from_response(res)
+623 |         fs = _qs(req)
+624 |         self.assertEqual(fs, {'i1': ['i1v2'], 'i2': ['i2v1'], 'i4': ['i4v2', 'i4v3']})
+625 | 
+626 |     def test_from_response_radio(self):
+627 |         res = _buildresponse(
+628 |             '''<form>
+629 |             <input type="radio" name="i1" value="i1v1">
+630 |             <input type="radio" name="i1" value="iv2" checked>
+631 |             <input type="radio" name="i2" checked>
+632 |             <input type="radio" name="i2">
+633 |             <input type="radio" name="i3" value="i3v1">
+634 |             <input type="radio" name="i3">
+635 |             <input type="radio" value="i4v1">
+636 |             <input type="radio">
+637 |             </form>''')
+638 |         req = self.request_class.from_response(res)
+639 |         fs = _qs(req)
+640 |         self.assertEqual(fs, {'i1': ['iv2'], 'i2': ['on']})
+641 | 
+642 |     def test_from_response_checkbox(self):
+643 |         res = _buildresponse(
+644 |             '''<form>
+645 |             <input type="checkbox" name="i1" value="i1v1">
+646 |             <input type="checkbox" name="i1" value="iv2" checked>
+647 |             <input type="checkbox" name="i2" checked>
+648 |             <input type="checkbox" name="i2">
+649 |             <input type="checkbox" name="i3" value="i3v1">
+650 |             <input type="checkbox" name="i3">
+651 |             <input type="checkbox" value="i4v1">
+652 |             <input type="checkbox">
+653 |             </form>''')
+654 |         req = self.request_class.from_response(res)
+655 |         fs = _qs(req)
+656 |         self.assertEqual(fs, {'i1': ['iv2'], 'i2': ['on']})
+657 | 
+658 |     def test_from_response_input_text(self):
+659 |         res = _buildresponse(
+660 |             '''<form>
+661 |             <input type="text" name="i1" value="i1v1">
+662 |             <input type="text" name="i2">
+663 |             <input type="text" value="i3v1">
+664 |             <input type="text">
+665 |             </form>''')
+666 |         req = self.request_class.from_response(res)
+667 |         fs = _qs(req)
+668 |         self.assertEqual(fs, {'i1': ['i1v1'], 'i2': ['']})
+669 | 
+670 |     def test_from_response_input_hidden(self):
+671 |         res = _buildresponse(
+672 |             '''<form>
+673 |             <input type="hidden" name="i1" value="i1v1">
+674 |             <input type="hidden" name="i2">
+675 |             <input type="hidden" value="i3v1">
+676 |             <input type="hidden">
+677 |             </form>''')
+678 |         req = self.request_class.from_response(res)
+679 |         fs = _qs(req)
+680 |         self.assertEqual(fs, {'i1': ['i1v1'], 'i2': ['']})
+681 | 
+682 |     def test_from_response_input_textarea(self):
+683 |         res = _buildresponse(
+684 |             '''<form>
+685 |             <textarea name="i1">i1v</textarea>
+686 |             <textarea name="i2"></textarea>
+687 |             <textarea name="i3"/>
+688 |             <textarea>i4v</textarea>
+689 |             </form>''')
+690 |         req = self.request_class.from_response(res)
+691 |         fs = _qs(req)
+692 |         self.assertEqual(fs, {'i1': ['i1v'], 'i2': [''], 'i3': ['']})
+693 | 
+694 |     def test_from_response_descendants(self):
+695 |         res = _buildresponse(
+696 |             '''<form>
+697 |             <div>
+698 |               <fieldset>
+699 |                 <input type="text" name="i1">
+700 |                 <select name="i2">
+701 |                     <option value="v1" selected>
+702 |                 </select>
+703 |               </fieldset>
+704 |               <input type="radio" name="i3" value="i3v2" checked>
+705 |               <input type="checkbox" name="i4" value="i4v2" checked>
+706 |               <textarea name="i5"></textarea>
+707 |               <input type="hidden" name="h1" value="h1v">
+708 |               </div>
+709 |             <input type="hidden" name="h2" value="h2v">
+710 |             </form>''')
+711 |         req = self.request_class.from_response(res)
+712 |         fs = _qs(req)
+713 |         self.assertEqual(set(fs), set(['h2', 'i2', 'i1', 'i3', 'h1', 'i5', 'i4']))
+714 | 
+715 |     def test_from_response_xpath(self):
+716 |         response = _buildresponse(
+717 |             """<form action="post.php" method="POST">
+718 |             <input type="hidden" name="one" value="1">
+719 |             <input type="hidden" name="two" value="2">
+720 |             </form>
+721 |             <form action="post2.php" method="POST">
+722 |             <input type="hidden" name="three" value="3">
+723 |             <input type="hidden" name="four" value="4">
+724 |             </form>""")
+725 |         r1 = self.request_class.from_response(response, formxpath="//form[@action='post.php']")
+726 |         fs = _qs(r1)
+727 |         self.assertEqual(fs[b'one'], [b'1'])
+728 | 
+729 |         r1 = self.request_class.from_response(response, formxpath="//form/input[@name='four']")
+730 |         fs = _qs(r1)
+731 |         self.assertEqual(fs[b'three'], [b'3'])
+732 | 
+733 |         self.assertRaises(ValueError, self.request_class.from_response,
+734 |                           response, formxpath="//form/input[@name='abc']")
+735 | 
+736 |     def test_from_response_button_submit(self):
+737 |         response = _buildresponse(
+738 |             """<form action="post.php" method="POST">
+739 |             <input type="hidden" name="test1" value="val1">
+740 |             <input type="hidden" name="test2" value="val2">
+741 |             <button type="submit" name="button1" value="submit1">Submit</button>
+742 |             </form>""",
+743 |             url="http://www.example.com/this/list.html")
+744 |         req = self.request_class.from_response(response)
+745 |         self.assertEqual(req.method, 'POST')
+746 |         self.assertEqual(req.headers['Content-type'], b'application/x-www-form-urlencoded')
+747 |         self.assertEqual(req.url, "http://www.example.com/this/post.php")
+748 |         fs = _qs(req)
+749 |         self.assertEqual(fs[b'test1'], [b'val1'])
+750 |         self.assertEqual(fs[b'test2'], [b'val2'])
+751 |         self.assertEqual(fs[b'button1'], [b'submit1'])
+752 | 
+753 |     def test_from_response_button_notype(self):
+754 |         response = _buildresponse(
+755 |             """<form action="post.php" method="POST">
+756 |             <input type="hidden" name="test1" value="val1">
+757 |             <input type="hidden" name="test2" value="val2">
+758 |             <button name="button1" value="submit1">Submit</button>
+759 |             </form>""",
+760 |             url="http://www.example.com/this/list.html")
+761 |         req = self.request_class.from_response(response)
+762 |         self.assertEqual(req.method, 'POST')
+763 |         self.assertEqual(req.headers['Content-type'], b'application/x-www-form-urlencoded')
+764 |         self.assertEqual(req.url, "http://www.example.com/this/post.php")
+765 |         fs = _qs(req)
+766 |         self.assertEqual(fs[b'test1'], [b'val1'])
+767 |         self.assertEqual(fs[b'test2'], [b'val2'])
+768 |         self.assertEqual(fs[b'button1'], [b'submit1'])
+769 | 
+770 |     def test_from_response_submit_novalue(self):
+771 |         response = _buildresponse(
+772 |             """<form action="post.php" method="POST">
+773 |             <input type="hidden" name="test1" value="val1">
+774 |             <input type="hidden" name="test2" value="val2">
+775 |             <input type="submit" name="button1">Submit</button>
+776 |             </form>""",
+777 |             url="http://www.example.com/this/list.html")
+778 |         req = self.request_class.from_response(response)
+779 |         self.assertEqual(req.method, 'POST')
+780 |         self.assertEqual(req.headers['Content-type'], b'application/x-www-form-urlencoded')
+781 |         self.assertEqual(req.url, "http://www.example.com/this/post.php")
+782 |         fs = _qs(req)
+783 |         self.assertEqual(fs[b'test1'], [b'val1'])
+784 |         self.assertEqual(fs[b'test2'], [b'val2'])
+785 |         self.assertEqual(fs[b'button1'], [b''])
+786 | 
+787 |     def test_from_response_button_novalue(self):
+788 |         response = _buildresponse(
+789 |             """<form action="post.php" method="POST">
+790 |             <input type="hidden" name="test1" value="val1">
+791 |             <input type="hidden" name="test2" value="val2">
+792 |             <button type="submit" name="button1">Submit</button>
+793 |             </form>""",
+794 |             url="http://www.example.com/this/list.html")
+795 |         req = self.request_class.from_response(response)
+796 |         self.assertEqual(req.method, 'POST')
+797 |         self.assertEqual(req.headers['Content-type'], b'application/x-www-form-urlencoded')
+798 |         self.assertEqual(req.url, "http://www.example.com/this/post.php")
+799 |         fs = _qs(req)
+800 |         self.assertEqual(fs[b'test1'], [b'val1'])
+801 |         self.assertEqual(fs[b'test2'], [b'val2'])
+802 |         self.assertEqual(fs[b'button1'], [b''])
+803 | 
+804 |     def test_html_base_form_action(self):
+805 |         response = _buildresponse(
+806 |             """
+807 |             <html>
+808 |                 <head>
+809 |                     <base href="http://b.com/">
+810 |                 </head>
+811 |                 <body>
+812 |                     <form action="test_form">
+813 |                     </form>
+814 |                 </body>
+815 |             </html>
+816 |             """,
+817 |             url='http://a.com/'
+818 |         )
+819 |         req = self.request_class.from_response(response)
+820 |         self.assertEqual(req.url, 'http://b.com/test_form')
+821 | 
+822 | 
+823 | def _buildresponse(body, **kwargs):
+824 |     kwargs.setdefault('body', body)
+825 |     kwargs.setdefault('url', 'http://example.com')
+826 |     kwargs.setdefault('encoding', 'utf-8')
+827 |     return HtmlResponse(**kwargs)
+828 | 
+829 | def _qs(req):
+830 |     if req.method == 'POST':
+831 |         qs = req.body
+832 |     else:
+833 |         qs = req.url.partition('?')[2]
+834 |     return cgi.parse_qs(qs, True)
+835 | 
+836 | 
+837 | class XmlRpcRequestTest(RequestTest):
+838 | 
+839 |     request_class = XmlRpcRequest
+840 |     default_method = 'POST'
+841 |     default_headers = {b'Content-Type': [b'text/xml']}
+842 | 
+843 |     def _test_request(self, **kwargs):
+844 |         r = self.request_class('http://scrapytest.org/rpc2', **kwargs)
+845 |         self.assertEqual(r.headers[b'Content-Type'], b'text/xml')
+846 |         self.assertEqual(r.body, to_bytes(xmlrpclib.dumps(**kwargs)))
+847 |         self.assertEqual(r.method, 'POST')
+848 |         self.assertEqual(r.encoding, kwargs.get('encoding', 'utf-8'))
+849 |         self.assertTrue(r.dont_filter, True)
+850 | 
+851 |     def test_xmlrpc_dumps(self):
+852 |         self._test_request(params=('value',))
+853 |         self._test_request(params=('username', 'password'), methodname='login')
+854 |         self._test_request(params=('response', ), methodresponse='login')
+855 |         self._test_request(params=(u'pas\xa3',), encoding='utf-8')
+856 |         self._test_request(params=(None,), allow_none=1)
+857 |         self.assertRaises(TypeError, self._test_request)
+858 |         self.assertRaises(TypeError, self._test_request, params=(None,))
+859 | 
+860 |     @unittest.skipUnless(six.PY2, "TODO")
+861 |     def test_latin1(self):
+862 |         self._test_request(params=(u'pas\xa3',), encoding='latin')
+863 | 
+864 | 
+865 | if __name__ == "__main__":
+866 |     unittest.main()
+```
+
+TEST EXECUTION OUTPUT:
+
+python -m unittest -q tests.test_http_request.FormRequestTest.test_html_base_form_action
+RUN EVERY COMMAND
+0
+
+
+======================================================================
+FAIL: test_html_base_form_action (tests.test_http_request.FormRequestTest)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/user/BugsInPy/temp/projects/scrapy/tests/test_http_request.py", line 820, in test_html_base_form_action
+    self.assertEqual(req.url, 'http://b.com/test_form')
+AssertionError: 'http://a.com/test_form' != 'http://b.com/test_form'
+- http://a.com/test_form
+?        ^
++ http://b.com/test_form
+?        ^
+
+
+----------------------------------------------------------------------
+Ran 1 test in 0.002s
+
+FAILED (failures=1)

@@ -1,0 +1,760 @@
+You are given buggy source files, failing test files, and test execution output.
+
+Your task is BUG LOCALIZATION ONLY.
+
+Identify the source-code location(s) most likely responsible for the failing test.
+
+Return only valid JSON using this exact format:
+
+{
+  "bug_locations": [
+    {
+      "file_id": "file_1",
+      "file_path": "relative/path.py",
+      "line_start": 1,
+      "line_end": 1,
+      "confidence": "low|medium|high",
+      "reason": "Max 2 sentences."
+    }
+  ]
+}
+
+Rules:
+- Do not propose fixes.
+- Do not rewrite code.
+- Do not explain anything outside the JSON.
+- Line numbers must refer to the numbered buggy source files, not the test files.
+
+- A scenario may contain one or more bug locations.
+- Do not stop after identifying the first likely bug location.
+- After finding the most likely location, continue inspecting the buggy source files for additional independent locations that may also be responsible for the failing behaviour.
+
+- Each entry should identify one source-code location that likely needs to be changed to fix the failure.
+- Include separate entries for separate suspicious source-code regions, even if they contribute to the same failing test.
+- Do not include duplicate locations, call sites, stack-trace propagation lines, or lines that are only affected by the bug.
+
+- Prefer the smallest line range that is sufficient to identify each suspected bug location.
+- Report locations supported by the source code and at least one of the following: failing test logic, failing output, traceback, assertion difference, or data flow from the failing behaviour.
+- Medium-confidence locations are acceptable when the evidence suggests they may be part of the bug.
+- Low-confidence locations should only be included when they are directly relevant to the failing behaviour.
+
+- If no source-code location can be identified with reasonable confidence, return:
+{
+  "bug_locations": []
+}
+
+
+SOURCE FILES:
+
+[file_1] BugsInPy/workspace/scrapy/scrapy/utils/url.py
+```python
+  1 | """
+  2 | This module contains general purpose URL functions not found in the standard
+  3 | library.
+  4 | 
+  5 | Some of the functions that used to be imported from this module have been moved
+  6 | to the w3lib.url module. Always import those from there instead.
+  7 | """
+  8 | import posixpath
+  9 | import re
+ 10 | from six.moves.urllib.parse import (ParseResult, urlunparse, urldefrag,
+ 11 |                                     urlparse, parse_qsl, urlencode,
+ 12 |                                     unquote)
+ 13 | 
+ 14 | # scrapy.utils.url was moved to w3lib.url and import * ensures this
+ 15 | # move doesn't break old code
+ 16 | from w3lib.url import *
+ 17 | from w3lib.url import _safe_chars
+ 18 | from scrapy.utils.python import to_native_str
+ 19 | 
+ 20 | 
+ 21 | def url_is_from_any_domain(url, domains):
+ 22 |     """Return True if the url belongs to any of the given domains"""
+ 23 |     host = parse_url(url).netloc.lower()
+ 24 |     if not host:
+ 25 |         return False
+ 26 |     domains = [d.lower() for d in domains]
+ 27 |     return any((host == d) or (host.endswith('.%s' % d)) for d in domains)
+ 28 | 
+ 29 | 
+ 30 | def url_is_from_spider(url, spider):
+ 31 |     """Return True if the url belongs to the given spider"""
+ 32 |     return url_is_from_any_domain(url,
+ 33 |         [spider.name] + list(getattr(spider, 'allowed_domains', [])))
+ 34 | 
+ 35 | 
+ 36 | def url_has_any_extension(url, extensions):
+ 37 |     return posixpath.splitext(parse_url(url).path)[1].lower() in extensions
+ 38 | 
+ 39 | 
+ 40 | def canonicalize_url(url, keep_blank_values=True, keep_fragments=False,
+ 41 |                      encoding=None):
+ 42 |     """Canonicalize the given url by applying the following procedures:
+ 43 | 
+ 44 |     - sort query arguments, first by key, then by value
+ 45 |     - percent encode paths and query arguments. non-ASCII characters are
+ 46 |       percent-encoded using UTF-8 (RFC-3986)
+ 47 |     - normalize all spaces (in query arguments) '+' (plus symbol)
+ 48 |     - normalize percent encodings case (%2f -> %2F)
+ 49 |     - remove query arguments with blank values (unless keep_blank_values is True)
+ 50 |     - remove fragments (unless keep_fragments is True)
+ 51 | 
+ 52 |     The url passed can be a str or unicode, while the url returned is always a
+ 53 |     str.
+ 54 | 
+ 55 |     For examples see the tests in tests/test_utils_url.py
+ 56 |     """
+ 57 | 
+ 58 |     scheme, netloc, path, params, query, fragment = parse_url(url)
+ 59 |     keyvals = parse_qsl(query, keep_blank_values)
+ 60 |     keyvals.sort()
+ 61 |     query = urlencode(keyvals)
+ 62 | 
+ 63 |     # XXX: copied from w3lib.url.safe_url_string to add encoding argument
+ 64 |     # path = to_native_str(path, encoding)
+ 65 |     # path = moves.urllib.parse.quote(path, _safe_chars, encoding='latin1') or '/'
+ 66 | 
+ 67 |     path = safe_url_string(_unquotepath(path)) or '/'
+ 68 |     fragment = '' if not keep_fragments else fragment
+ 69 |     return urlunparse((scheme, netloc.lower(), path, params, query, fragment))
+ 70 | 
+ 71 | 
+ 72 | def _unquotepath(path):
+ 73 |     for reserved in ('2f', '2F', '3f', '3F'):
+ 74 |         path = path.replace('%' + reserved, '%25' + reserved.upper())
+ 75 |     return unquote(path)
+ 76 | 
+ 77 | 
+ 78 | def parse_url(url, encoding=None):
+ 79 |     """Return urlparsed url from the given argument (which could be an already
+ 80 |     parsed url)
+ 81 |     """
+ 82 |     if isinstance(url, ParseResult):
+ 83 |         return url
+ 84 |     return urlparse(to_native_str(url, encoding))
+ 85 | 
+ 86 | 
+ 87 | def escape_ajax(url):
+ 88 |     """
+ 89 |     Return the crawleable url according to:
+ 90 |     http://code.google.com/web/ajaxcrawling/docs/getting-started.html
+ 91 | 
+ 92 |     >>> escape_ajax("www.example.com/ajax.html#!key=value")
+ 93 |     'www.example.com/ajax.html?_escaped_fragment_=key%3Dvalue'
+ 94 |     >>> escape_ajax("www.example.com/ajax.html?k1=v1&k2=v2#!key=value")
+ 95 |     'www.example.com/ajax.html?k1=v1&k2=v2&_escaped_fragment_=key%3Dvalue'
+ 96 |     >>> escape_ajax("www.example.com/ajax.html?#!key=value")
+ 97 |     'www.example.com/ajax.html?_escaped_fragment_=key%3Dvalue'
+ 98 |     >>> escape_ajax("www.example.com/ajax.html#!")
+ 99 |     'www.example.com/ajax.html?_escaped_fragment_='
+100 | 
+101 |     URLs that are not "AJAX crawlable" (according to Google) returned as-is:
+102 | 
+103 |     >>> escape_ajax("www.example.com/ajax.html#key=value")
+104 |     'www.example.com/ajax.html#key=value'
+105 |     >>> escape_ajax("www.example.com/ajax.html#")
+106 |     'www.example.com/ajax.html#'
+107 |     >>> escape_ajax("www.example.com/ajax.html")
+108 |     'www.example.com/ajax.html'
+109 |     """
+110 |     defrag, frag = urldefrag(url)
+111 |     if not frag.startswith('!'):
+112 |         return url
+113 |     return add_or_replace_parameter(defrag, '_escaped_fragment_', frag[1:])
+114 | 
+115 | 
+116 | def add_http_if_no_scheme(url):
+117 |     """Add http as the default scheme if it is missing from the url."""
+118 |     match = re.match(r"^\w+://", url, flags=re.I)
+119 |     if not match:
+120 |         parts = urlparse(url)
+121 |         scheme = "http:" if parts.netloc else "http://"
+122 |         url = scheme + url
+123 | 
+124 |     return url
+125 | 
+126 | 
+127 | def guess_scheme(url):
+128 |     """Add an URL scheme if missing: file:// for filepath-like input or http:// otherwise."""
+129 |     parts = urlparse(url)
+130 |     if parts.scheme:
+131 |         return url
+132 |     # Note: this does not match Windows filepath
+133 |     if re.match(r'''^                   # start with...
+134 |                     (
+135 |                         \.              # ...a single dot,
+136 |                         (
+137 |                             \. | [^/\.]+  # optionally followed by
+138 |                         )?                # either a second dot or some characters
+139 |                     )?      # optional match of ".", ".." or ".blabla"
+140 |                     /       # at least one "/" for a file path,
+141 |                     .       # and something after the "/"
+142 |                     ''', parts.path, flags=re.VERBOSE):
+143 |         return any_to_uri(url)
+144 |     else:
+145 |         return add_http_if_no_scheme(url)
+```
+
+
+FAILING TEST FILES:
+
+[test_file_1] BugsInPy/workspace/scrapy/tests/test_utils_url.py
+```python
+  1 | # -*- coding: utf-8 -*-
+  2 | import unittest
+  3 | 
+  4 | import six
+  5 | from six.moves.urllib.parse import urlparse
+  6 | 
+  7 | from scrapy.spiders import Spider
+  8 | from scrapy.utils.url import (url_is_from_any_domain, url_is_from_spider,
+  9 |                               canonicalize_url, add_http_if_no_scheme,
+ 10 |                               guess_scheme, parse_url)
+ 11 | 
+ 12 | __doctests__ = ['scrapy.utils.url']
+ 13 | 
+ 14 | 
+ 15 | class UrlUtilsTest(unittest.TestCase):
+ 16 | 
+ 17 |     def test_url_is_from_any_domain(self):
+ 18 |         url = 'http://www.wheele-bin-art.co.uk/get/product/123'
+ 19 |         self.assertTrue(url_is_from_any_domain(url, ['wheele-bin-art.co.uk']))
+ 20 |         self.assertFalse(url_is_from_any_domain(url, ['art.co.uk']))
+ 21 | 
+ 22 |         url = 'http://wheele-bin-art.co.uk/get/product/123'
+ 23 |         self.assertTrue(url_is_from_any_domain(url, ['wheele-bin-art.co.uk']))
+ 24 |         self.assertFalse(url_is_from_any_domain(url, ['art.co.uk']))
+ 25 | 
+ 26 |         url = 'http://www.Wheele-Bin-Art.co.uk/get/product/123'
+ 27 |         self.assertTrue(url_is_from_any_domain(url, ['wheele-bin-art.CO.UK']))
+ 28 |         self.assertTrue(url_is_from_any_domain(url, ['WHEELE-BIN-ART.CO.UK']))
+ 29 | 
+ 30 |         url = 'http://192.169.0.15:8080/mypage.html'
+ 31 |         self.assertTrue(url_is_from_any_domain(url, ['192.169.0.15:8080']))
+ 32 |         self.assertFalse(url_is_from_any_domain(url, ['192.169.0.15']))
+ 33 | 
+ 34 |         url = 'javascript:%20document.orderform_2581_1190810811.mode.value=%27add%27;%20javascript:%20document.orderform_2581_1190810811.submit%28%29'
+ 35 |         self.assertFalse(url_is_from_any_domain(url, ['testdomain.com']))
+ 36 |         self.assertFalse(url_is_from_any_domain(url+'.testdomain.com', ['testdomain.com']))
+ 37 | 
+ 38 |     def test_url_is_from_spider(self):
+ 39 |         spider = Spider(name='example.com')
+ 40 |         self.assertTrue(url_is_from_spider('http://www.example.com/some/page.html', spider))
+ 41 |         self.assertTrue(url_is_from_spider('http://sub.example.com/some/page.html', spider))
+ 42 |         self.assertFalse(url_is_from_spider('http://www.example.org/some/page.html', spider))
+ 43 |         self.assertFalse(url_is_from_spider('http://www.example.net/some/page.html', spider))
+ 44 | 
+ 45 |     def test_url_is_from_spider_class_attributes(self):
+ 46 |         class MySpider(Spider):
+ 47 |             name = 'example.com'
+ 48 |         self.assertTrue(url_is_from_spider('http://www.example.com/some/page.html', MySpider))
+ 49 |         self.assertTrue(url_is_from_spider('http://sub.example.com/some/page.html', MySpider))
+ 50 |         self.assertFalse(url_is_from_spider('http://www.example.org/some/page.html', MySpider))
+ 51 |         self.assertFalse(url_is_from_spider('http://www.example.net/some/page.html', MySpider))
+ 52 | 
+ 53 |     def test_url_is_from_spider_with_allowed_domains(self):
+ 54 |         spider = Spider(name='example.com', allowed_domains=['example.org', 'example.net'])
+ 55 |         self.assertTrue(url_is_from_spider('http://www.example.com/some/page.html', spider))
+ 56 |         self.assertTrue(url_is_from_spider('http://sub.example.com/some/page.html', spider))
+ 57 |         self.assertTrue(url_is_from_spider('http://example.com/some/page.html', spider))
+ 58 |         self.assertTrue(url_is_from_spider('http://www.example.org/some/page.html', spider))
+ 59 |         self.assertTrue(url_is_from_spider('http://www.example.net/some/page.html', spider))
+ 60 |         self.assertFalse(url_is_from_spider('http://www.example.us/some/page.html', spider))
+ 61 | 
+ 62 |         spider = Spider(name='example.com', allowed_domains=set(('example.com', 'example.net')))
+ 63 |         self.assertTrue(url_is_from_spider('http://www.example.com/some/page.html', spider))
+ 64 | 
+ 65 |         spider = Spider(name='example.com', allowed_domains=('example.com', 'example.net'))
+ 66 |         self.assertTrue(url_is_from_spider('http://www.example.com/some/page.html', spider))
+ 67 | 
+ 68 |     def test_url_is_from_spider_with_allowed_domains_class_attributes(self):
+ 69 |         class MySpider(Spider):
+ 70 |             name = 'example.com'
+ 71 |             allowed_domains = ('example.org', 'example.net')
+ 72 |         self.assertTrue(url_is_from_spider('http://www.example.com/some/page.html', MySpider))
+ 73 |         self.assertTrue(url_is_from_spider('http://sub.example.com/some/page.html', MySpider))
+ 74 |         self.assertTrue(url_is_from_spider('http://example.com/some/page.html', MySpider))
+ 75 |         self.assertTrue(url_is_from_spider('http://www.example.org/some/page.html', MySpider))
+ 76 |         self.assertTrue(url_is_from_spider('http://www.example.net/some/page.html', MySpider))
+ 77 |         self.assertFalse(url_is_from_spider('http://www.example.us/some/page.html', MySpider))
+ 78 | 
+ 79 | 
+ 80 | class CanonicalizeUrlTest(unittest.TestCase):
+ 81 | 
+ 82 |     def test_canonicalize_url(self):
+ 83 |         # simplest case
+ 84 |         self.assertEqual(canonicalize_url("http://www.example.com/"),
+ 85 |                                           "http://www.example.com/")
+ 86 | 
+ 87 |     def test_return_str(self):
+ 88 |         assert isinstance(canonicalize_url(u"http://www.example.com"), str)
+ 89 |         assert isinstance(canonicalize_url(b"http://www.example.com"), str)
+ 90 | 
+ 91 |     def test_append_missing_path(self):
+ 92 |         self.assertEqual(canonicalize_url("http://www.example.com"),
+ 93 |                                           "http://www.example.com/")
+ 94 | 
+ 95 |     def test_typical_usage(self):
+ 96 |         self.assertEqual(canonicalize_url("http://www.example.com/do?a=1&b=2&c=3"),
+ 97 |                                           "http://www.example.com/do?a=1&b=2&c=3")
+ 98 |         self.assertEqual(canonicalize_url("http://www.example.com/do?c=1&b=2&a=3"),
+ 99 |                                           "http://www.example.com/do?a=3&b=2&c=1")
+100 |         self.assertEqual(canonicalize_url("http://www.example.com/do?&a=1"),
+101 |                                           "http://www.example.com/do?a=1")
+102 | 
+103 |     def test_sorting(self):
+104 |         self.assertEqual(canonicalize_url("http://www.example.com/do?c=3&b=5&b=2&a=50"),
+105 |                                           "http://www.example.com/do?a=50&b=2&b=5&c=3")
+106 | 
+107 |     def test_keep_blank_values(self):
+108 |         self.assertEqual(canonicalize_url("http://www.example.com/do?b=&a=2", keep_blank_values=False),
+109 |                                           "http://www.example.com/do?a=2")
+110 |         self.assertEqual(canonicalize_url("http://www.example.com/do?b=&a=2"),
+111 |                                           "http://www.example.com/do?a=2&b=")
+112 |         self.assertEqual(canonicalize_url("http://www.example.com/do?b=&c&a=2", keep_blank_values=False),
+113 |                                           "http://www.example.com/do?a=2")
+114 |         self.assertEqual(canonicalize_url("http://www.example.com/do?b=&c&a=2"),
+115 |                                           "http://www.example.com/do?a=2&b=&c=")
+116 | 
+117 |         self.assertEqual(canonicalize_url(u'http://www.example.com/do?1750,4'),
+118 |                                            'http://www.example.com/do?1750%2C4=')
+119 | 
+120 |     def test_spaces(self):
+121 |         self.assertEqual(canonicalize_url("http://www.example.com/do?q=a space&a=1"),
+122 |                                           "http://www.example.com/do?a=1&q=a+space")
+123 |         self.assertEqual(canonicalize_url("http://www.example.com/do?q=a+space&a=1"),
+124 |                                           "http://www.example.com/do?a=1&q=a+space")
+125 |         self.assertEqual(canonicalize_url("http://www.example.com/do?q=a%20space&a=1"),
+126 |                                           "http://www.example.com/do?a=1&q=a+space")
+127 | 
+128 |     def test_canonicalize_url_unicode_path(self):
+129 |         self.assertEqual(canonicalize_url(u"http://www.example.com/résumé"),
+130 |                                           "http://www.example.com/r%C3%A9sum%C3%A9")
+131 | 
+132 |     def test_canonicalize_url_unicode_query_string(self):
+133 |         # default encoding for path and query is UTF-8
+134 |         self.assertEqual(canonicalize_url(u"http://www.example.com/résumé?q=résumé"),
+135 |                                           "http://www.example.com/r%C3%A9sum%C3%A9?q=r%C3%A9sum%C3%A9")
+136 | 
+137 |         # passed encoding will affect query string
+138 |         self.assertEqual(canonicalize_url(u"http://www.example.com/résumé?q=résumé", encoding='latin1'),
+139 |                                           "http://www.example.com/r%C3%A9sum%C3%A9?q=r%E9sum%E9")
+140 | 
+141 |         self.assertEqual(canonicalize_url(u"http://www.example.com/résumé?country=Россия", encoding='cp1251'),
+142 |                                           "http://www.example.com/r%C3%A9sum%C3%A9?country=%D0%EE%F1%F1%E8%FF")
+143 | 
+144 |     def test_canonicalize_url_unicode_query_string_wrong_encoding(self):
+145 |         # trying to encode with wrong encoding
+146 |         # fallback to UTF-8
+147 |         self.assertEqual(canonicalize_url(u"http://www.example.com/résumé?currency=€", encoding='latin1'),
+148 |                                           "http://www.example.com/r%C3%A9sum%C3%A9?currency=%E2%82%AC")
+149 | 
+150 |         self.assertEqual(canonicalize_url(u"http://www.example.com/résumé?country=Россия", encoding='latin1'),
+151 |                                           "http://www.example.com/r%C3%A9sum%C3%A9?country=%D0%A0%D0%BE%D1%81%D1%81%D0%B8%D1%8F")
+152 | 
+153 |     def test_normalize_percent_encoding_in_paths(self):
+154 |         self.assertEqual(canonicalize_url("http://www.example.com/r%c3%a9sum%c3%a9"),
+155 |                                           "http://www.example.com/r%C3%A9sum%C3%A9")
+156 | 
+157 |         # non-UTF8 encoded sequences: they should be kept untouched, only upper-cased
+158 |         # 'latin1'-encoded sequence in path
+159 |         self.assertEqual(canonicalize_url("http://www.example.com/a%a3do"),
+160 |                                           "http://www.example.com/a%A3do")
+161 | 
+162 |         # 'latin1'-encoded path, UTF-8 encoded query string
+163 |         self.assertEqual(canonicalize_url("http://www.example.com/a%a3do?q=r%c3%a9sum%c3%a9"),
+164 |                                           "http://www.example.com/a%A3do?q=r%C3%A9sum%C3%A9")
+165 | 
+166 |         # 'latin1'-encoded path and query string
+167 |         self.assertEqual(canonicalize_url("http://www.example.com/a%a3do?q=r%e9sum%e9"),
+168 |                                           "http://www.example.com/a%A3do?q=r%E9sum%E9")
+169 | 
+170 |     def test_normalize_percent_encoding_in_query_arguments(self):
+171 |         self.assertEqual(canonicalize_url("http://www.example.com/do?k=b%a3"),
+172 |                                           "http://www.example.com/do?k=b%A3")
+173 | 
+174 |         self.assertEqual(canonicalize_url("http://www.example.com/do?k=r%c3%a9sum%c3%a9"),
+175 |                                           "http://www.example.com/do?k=r%C3%A9sum%C3%A9")
+176 | 
+177 |     def test_non_ascii_percent_encoding_in_paths(self):
+178 |         self.assertEqual(canonicalize_url("http://www.example.com/a do?a=1"),
+179 |                                           "http://www.example.com/a%20do?a=1"),
+180 |         self.assertEqual(canonicalize_url("http://www.example.com/a %20do?a=1"),
+181 |                                           "http://www.example.com/a%20%20do?a=1"),
+182 |         self.assertEqual(canonicalize_url(u"http://www.example.com/a do£.html?a=1"),
+183 |                                           "http://www.example.com/a%20do%C2%A3.html?a=1")
+184 |         self.assertEqual(canonicalize_url(b"http://www.example.com/a do\xc2\xa3.html?a=1"),
+185 |                                           "http://www.example.com/a%20do%C2%A3.html?a=1")
+186 | 
+187 |     def test_non_ascii_percent_encoding_in_query_arguments(self):
+188 |         self.assertEqual(canonicalize_url(u"http://www.example.com/do?price=£500&a=5&z=3"),
+189 |                                           u"http://www.example.com/do?a=5&price=%C2%A3500&z=3")
+190 |         self.assertEqual(canonicalize_url(b"http://www.example.com/do?price=\xc2\xa3500&a=5&z=3"),
+191 |                                           "http://www.example.com/do?a=5&price=%C2%A3500&z=3")
+192 |         self.assertEqual(canonicalize_url(b"http://www.example.com/do?price(\xc2\xa3)=500&a=1"),
+193 |                                           "http://www.example.com/do?a=1&price%28%C2%A3%29=500")
+194 | 
+195 |     def test_urls_with_auth_and_ports(self):
+196 |         self.assertEqual(canonicalize_url(u"http://user:pass@www.example.com:81/do?now=1"),
+197 |                                           u"http://user:pass@www.example.com:81/do?now=1")
+198 | 
+199 |     def test_remove_fragments(self):
+200 |         self.assertEqual(canonicalize_url(u"http://user:pass@www.example.com/do?a=1#frag"),
+201 |                                           u"http://user:pass@www.example.com/do?a=1")
+202 |         self.assertEqual(canonicalize_url(u"http://user:pass@www.example.com/do?a=1#frag", keep_fragments=True),
+203 |                                           u"http://user:pass@www.example.com/do?a=1#frag")
+204 | 
+205 |     def test_dont_convert_safe_characters(self):
+206 |         # dont convert safe characters to percent encoding representation
+207 |         self.assertEqual(canonicalize_url(
+208 |             "http://www.simplybedrooms.com/White-Bedroom-Furniture/Bedroom-Mirror:-Josephine-Cheval-Mirror.html"),
+209 |             "http://www.simplybedrooms.com/White-Bedroom-Furniture/Bedroom-Mirror:-Josephine-Cheval-Mirror.html")
+210 | 
+211 |     def test_safe_characters_unicode(self):
+212 |         # urllib.quote uses a mapping cache of encoded characters. when parsing
+213 |         # an already percent-encoded url, it will fail if that url was not
+214 |         # percent-encoded as utf-8, that's why canonicalize_url must always
+215 |         # convert the urls to string. the following test asserts that
+216 |         # functionality.
+217 |         self.assertEqual(canonicalize_url(u'http://www.example.com/caf%E9-con-leche.htm'),
+218 |                                            'http://www.example.com/caf%E9-con-leche.htm')
+219 | 
+220 |     def test_domains_are_case_insensitive(self):
+221 |         self.assertEqual(canonicalize_url("http://www.EXAMPLE.com/"),
+222 |                                           "http://www.example.com/")
+223 | 
+224 |     def test_canonicalize_idns(self):
+225 |         self.assertEqual(canonicalize_url(u'http://www.bücher.de?q=bücher'),
+226 |                                            'http://www.xn--bcher-kva.de/?q=b%C3%BCcher')
+227 |         # Japanese (+ reordering query parameters)
+228 |         self.assertEqual(canonicalize_url(u'http://はじめよう.みんな/?query=サ&maxResults=5'),
+229 |                                            'http://xn--p8j9a0d9c9a.xn--q9jyb4c/?maxResults=5&query=%E3%82%B5')
+230 | 
+231 |     def test_quoted_slash_and_question_sign(self):
+232 |         self.assertEqual(canonicalize_url("http://foo.com/AC%2FDC+rocks%3f/?yeah=1"),
+233 |                          "http://foo.com/AC%2FDC+rocks%3F/?yeah=1")
+234 |         self.assertEqual(canonicalize_url("http://foo.com/AC%2FDC/"),
+235 |                          "http://foo.com/AC%2FDC/")
+236 | 
+237 |     def test_canonicalize_urlparsed(self):
+238 |         # canonicalize_url() can be passed an already urlparse'd URL
+239 |         self.assertEqual(canonicalize_url(urlparse(u"http://www.example.com/résumé?q=résumé")),
+240 |                                           "http://www.example.com/r%C3%A9sum%C3%A9?q=r%C3%A9sum%C3%A9")
+241 |         self.assertEqual(canonicalize_url(urlparse('http://www.example.com/caf%e9-con-leche.htm')),
+242 |                                           'http://www.example.com/caf%E9-con-leche.htm')
+243 |         self.assertEqual(canonicalize_url(urlparse("http://www.example.com/a%a3do?q=r%c3%a9sum%c3%a9")),
+244 |                                           "http://www.example.com/a%A3do?q=r%C3%A9sum%C3%A9")
+245 | 
+246 |     def test_canonicalize_parse_url(self):
+247 |         # parse_url() wraps urlparse and is used in link extractors
+248 |         self.assertEqual(canonicalize_url(parse_url(u"http://www.example.com/résumé?q=résumé")),
+249 |                                           "http://www.example.com/r%C3%A9sum%C3%A9?q=r%C3%A9sum%C3%A9")
+250 |         self.assertEqual(canonicalize_url(parse_url('http://www.example.com/caf%e9-con-leche.htm')),
+251 |                                           'http://www.example.com/caf%E9-con-leche.htm')
+252 |         self.assertEqual(canonicalize_url(parse_url("http://www.example.com/a%a3do?q=r%c3%a9sum%c3%a9")),
+253 |                                           "http://www.example.com/a%A3do?q=r%C3%A9sum%C3%A9")
+254 | 
+255 | 
+256 | class AddHttpIfNoScheme(unittest.TestCase):
+257 | 
+258 |     def test_add_scheme(self):
+259 |         self.assertEqual(add_http_if_no_scheme('www.example.com'),
+260 |                                                'http://www.example.com')
+261 | 
+262 |     def test_without_subdomain(self):
+263 |         self.assertEqual(add_http_if_no_scheme('example.com'),
+264 |                                                'http://example.com')
+265 | 
+266 |     def test_path(self):
+267 |         self.assertEqual(add_http_if_no_scheme('www.example.com/some/page.html'),
+268 |                                                'http://www.example.com/some/page.html')
+269 | 
+270 |     def test_port(self):
+271 |         self.assertEqual(add_http_if_no_scheme('www.example.com:80'),
+272 |                                                'http://www.example.com:80')
+273 | 
+274 |     def test_fragment(self):
+275 |         self.assertEqual(add_http_if_no_scheme('www.example.com/some/page#frag'),
+276 |                                                'http://www.example.com/some/page#frag')
+277 | 
+278 |     def test_query(self):
+279 |         self.assertEqual(add_http_if_no_scheme('www.example.com/do?a=1&b=2&c=3'),
+280 |                                                'http://www.example.com/do?a=1&b=2&c=3')
+281 | 
+282 |     def test_username_password(self):
+283 |         self.assertEqual(add_http_if_no_scheme('username:password@www.example.com'),
+284 |                                                'http://username:password@www.example.com')
+285 | 
+286 |     def test_complete_url(self):
+287 |         self.assertEqual(add_http_if_no_scheme('username:password@www.example.com:80/some/page/do?a=1&b=2&c=3#frag'),
+288 |                                                'http://username:password@www.example.com:80/some/page/do?a=1&b=2&c=3#frag')
+289 | 
+290 |     def test_preserve_http(self):
+291 |         self.assertEqual(add_http_if_no_scheme('http://www.example.com'),
+292 |                                                'http://www.example.com')
+293 | 
+294 |     def test_preserve_http_without_subdomain(self):
+295 |         self.assertEqual(add_http_if_no_scheme('http://example.com'),
+296 |                                                'http://example.com')
+297 | 
+298 |     def test_preserve_http_path(self):
+299 |         self.assertEqual(add_http_if_no_scheme('http://www.example.com/some/page.html'),
+300 |                                                'http://www.example.com/some/page.html')
+301 | 
+302 |     def test_preserve_http_port(self):
+303 |         self.assertEqual(add_http_if_no_scheme('http://www.example.com:80'),
+304 |                                                'http://www.example.com:80')
+305 | 
+306 |     def test_preserve_http_fragment(self):
+307 |         self.assertEqual(add_http_if_no_scheme('http://www.example.com/some/page#frag'),
+308 |                                                'http://www.example.com/some/page#frag')
+309 | 
+310 |     def test_preserve_http_query(self):
+311 |         self.assertEqual(add_http_if_no_scheme('http://www.example.com/do?a=1&b=2&c=3'),
+312 |                                                'http://www.example.com/do?a=1&b=2&c=3')
+313 | 
+314 |     def test_preserve_http_username_password(self):
+315 |         self.assertEqual(add_http_if_no_scheme('http://username:password@www.example.com'),
+316 |                                                'http://username:password@www.example.com')
+317 | 
+318 |     def test_preserve_http_complete_url(self):
+319 |         self.assertEqual(add_http_if_no_scheme('http://username:password@www.example.com:80/some/page/do?a=1&b=2&c=3#frag'),
+320 |                                                'http://username:password@www.example.com:80/some/page/do?a=1&b=2&c=3#frag')
+321 | 
+322 |     def test_protocol_relative(self):
+323 |         self.assertEqual(add_http_if_no_scheme('//www.example.com'),
+324 |                                                'http://www.example.com')
+325 | 
+326 |     def test_protocol_relative_without_subdomain(self):
+327 |         self.assertEqual(add_http_if_no_scheme('//example.com'),
+328 |                                                'http://example.com')
+329 | 
+330 |     def test_protocol_relative_path(self):
+331 |         self.assertEqual(add_http_if_no_scheme('//www.example.com/some/page.html'),
+332 |                                                'http://www.example.com/some/page.html')
+333 | 
+334 |     def test_protocol_relative_port(self):
+335 |         self.assertEqual(add_http_if_no_scheme('//www.example.com:80'),
+336 |                                                'http://www.example.com:80')
+337 | 
+338 |     def test_protocol_relative_fragment(self):
+339 |         self.assertEqual(add_http_if_no_scheme('//www.example.com/some/page#frag'),
+340 |                                                'http://www.example.com/some/page#frag')
+341 | 
+342 |     def test_protocol_relative_query(self):
+343 |         self.assertEqual(add_http_if_no_scheme('//www.example.com/do?a=1&b=2&c=3'),
+344 |                                                'http://www.example.com/do?a=1&b=2&c=3')
+345 | 
+346 |     def test_protocol_relative_username_password(self):
+347 |         self.assertEqual(add_http_if_no_scheme('//username:password@www.example.com'),
+348 |                                                'http://username:password@www.example.com')
+349 | 
+350 |     def test_protocol_relative_complete_url(self):
+351 |         self.assertEqual(add_http_if_no_scheme('//username:password@www.example.com:80/some/page/do?a=1&b=2&c=3#frag'),
+352 |                                                'http://username:password@www.example.com:80/some/page/do?a=1&b=2&c=3#frag')
+353 | 
+354 |     def test_preserve_https(self):
+355 |         self.assertEqual(add_http_if_no_scheme('https://www.example.com'),
+356 |                                                'https://www.example.com')
+357 | 
+358 |     def test_preserve_ftp(self):
+359 |         self.assertEqual(add_http_if_no_scheme('ftp://www.example.com'),
+360 |                                                'ftp://www.example.com')
+361 | 
+362 | 
+363 | class GuessSchemeTest(unittest.TestCase):
+364 |     pass
+365 | 
+366 | def create_guess_scheme_t(args):
+367 |     def do_expected(self):
+368 |         url = guess_scheme(args[0])
+369 |         assert url.startswith(args[1]), \
+370 |             'Wrong scheme guessed: for `%s` got `%s`, expected `%s...`' % (
+371 |                 args[0], url, args[1])
+372 |     return do_expected
+373 | 
+374 | def create_skipped_scheme_t(args):
+375 |     def do_expected(self):
+376 |         raise unittest.SkipTest(args[2])
+377 |         url = guess_scheme(args[0])
+378 |         assert url.startswith(args[1])
+379 |     return do_expected
+380 | 
+381 | for k, args in enumerate ([
+382 |             ('/index',                              'file://'),
+383 |             ('/index.html',                         'file://'),
+384 |             ('./index.html',                        'file://'),
+385 |             ('../index.html',                       'file://'),
+386 |             ('../../index.html',                    'file://'),
+387 |             ('./data/index.html',                   'file://'),
+388 |             ('.hidden/data/index.html',             'file://'),
+389 |             ('/home/user/www/index.html',           'file://'),
+390 |             ('//home/user/www/index.html',          'file://'),
+391 |             ('file:///home/user/www/index.html',    'file://'),
+392 | 
+393 |             ('index.html',                          'http://'),
+394 |             ('example.com',                         'http://'),
+395 |             ('www.example.com',                     'http://'),
+396 |             ('www.example.com/index.html',          'http://'),
+397 |             ('http://example.com',                  'http://'),
+398 |             ('http://example.com/index.html',       'http://'),
+399 |             ('localhost',                           'http://'),
+400 |             ('localhost/index.html',                'http://'),
+401 | 
+402 |             # some corner cases (default to http://)
+403 |             ('/',                                   'http://'),
+404 |             ('.../test',                            'http://'),
+405 | 
+406 |         ], start=1):
+407 |     t_method = create_guess_scheme_t(args)
+408 |     t_method.__name__ = 'test_uri_%03d' % k
+409 |     setattr (GuessSchemeTest, t_method.__name__, t_method)
+410 | 
+411 | # TODO: the following tests do not pass with current implementation
+412 | for k, args in enumerate ([
+413 |             ('C:\absolute\path\to\a\file.html',     'file://',
+414 |              'Windows filepath are not supported for scrapy shell'),
+415 |         ], start=1):
+416 |     t_method = create_skipped_scheme_t(args)
+417 |     t_method.__name__ = 'test_uri_skipped_%03d' % k
+418 |     setattr (GuessSchemeTest, t_method.__name__, t_method)
+419 | 
+420 | 
+421 | if __name__ == "__main__":
+422 |     unittest.main()
+```
+
+TEST EXECUTION OUTPUT:
+
+python -m unittest -q tests.test_utils_url.CanonicalizeUrlTest.test_canonicalize_url_unicode_query_string
+python -m unittest -q tests.test_utils_url.CanonicalizeUrlTest.test_normalize_percent_encoding_in_paths
+python -m unittest -q tests.test_utils_url.CanonicalizeUrlTest.test_normalize_percent_encoding_in_query_arguments
+python -m unittest -q tests.test_utils_url.CanonicalizeUrlTest.test_canonicalize_idns
+python -m unittest -q tests.test_utils_url.CanonicalizeUrlTest.test_canonicalize_urlparsed
+python -m unittest -q tests.test_utils_url.CanonicalizeUrlTest.test_canonicalize_parse_url
+RUN EVERY COMMAND
+0
+
+
+======================================================================
+FAIL: test_canonicalize_url_unicode_query_string (tests.test_utils_url.CanonicalizeUrlTest)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/user/BugsInPy/temp/projects/scrapy/tests/test_utils_url.py", line 138, in test_canonicalize_url_unicode_query_string
+    self.assertEqual(canonicalize_url(u"http://www.example.com/résumé?q=résumé", encoding='latin1'),
+AssertionError: 'http://www.example.com/r%C3%A9sum%C3%A9?q=r%C3%A9sum%C3%A9' != 'http://www.example.com/r%C3%A9sum%C3%A9?q=r%E9sum%E9'
+- http://www.example.com/r%C3%A9sum%C3%A9?q=r%C3%A9sum%C3%A9
+?                                             ^^^^     ^^^^
++ http://www.example.com/r%C3%A9sum%C3%A9?q=r%E9sum%E9
+?                                             ^     ^
+
+
+----------------------------------------------------------------------
+Ran 1 test in 0.002s
+
+FAILED (failures=1)
+RUN EVERY COMMAND
+1
+python -m unittest -q tests.test_utils_url.CanonicalizeUrlTest.test_canonicalize_url_unicode_query_string
+
+======================================================================
+FAIL: test_normalize_percent_encoding_in_paths (tests.test_utils_url.CanonicalizeUrlTest)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/user/BugsInPy/temp/projects/scrapy/tests/test_utils_url.py", line 159, in test_normalize_percent_encoding_in_paths
+    self.assertEqual(canonicalize_url("http://www.example.com/a%a3do"),
+AssertionError: 'http://www.example.com/a%EF%BF%BDdo' != 'http://www.example.com/a%A3do'
+- http://www.example.com/a%EF%BF%BDdo
+?                          ^^^^^^^^
++ http://www.example.com/a%A3do
+?                          ^^
+
+
+----------------------------------------------------------------------
+Ran 1 test in 0.002s
+
+FAILED (failures=1)
+RUN EVERY COMMAND
+2
+python -m unittest -q tests.test_utils_url.CanonicalizeUrlTest.test_normalize_percent_encoding_in_paths
+
+======================================================================
+FAIL: test_normalize_percent_encoding_in_query_arguments (tests.test_utils_url.CanonicalizeUrlTest)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/user/BugsInPy/temp/projects/scrapy/tests/test_utils_url.py", line 171, in test_normalize_percent_encoding_in_query_arguments
+    self.assertEqual(canonicalize_url("http://www.example.com/do?k=b%a3"),
+AssertionError: 'http://www.example.com/do?k=b%EF%BF%BD' != 'http://www.example.com/do?k=b%A3'
+- http://www.example.com/do?k=b%EF%BF%BD
+?                               ^^^^^^^^
++ http://www.example.com/do?k=b%A3
+?                               ^^
+
+
+----------------------------------------------------------------------
+Ran 1 test in 0.002s
+
+FAILED (failures=1)
+RUN EVERY COMMAND
+3
+python -m unittest -q tests.test_utils_url.CanonicalizeUrlTest.test_normalize_percent_encoding_in_query_arguments
+
+======================================================================
+FAIL: test_canonicalize_idns (tests.test_utils_url.CanonicalizeUrlTest)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/user/BugsInPy/temp/projects/scrapy/tests/test_utils_url.py", line 225, in test_canonicalize_idns
+    self.assertEqual(canonicalize_url(u'http://www.bücher.de?q=bücher'),
+AssertionError: 'http://www.bücher.de/?q=b%C3%BCcher' != 'http://www.xn--bcher-kva.de/?q=b%C3%BCcher'
+- http://www.bücher.de/?q=b%C3%BCcher
+?             -
++ http://www.xn--bcher-kva.de/?q=b%C3%BCcher
+?            ++++     ++++
+
+
+----------------------------------------------------------------------
+Ran 1 test in 0.054s
+
+FAILED (failures=1)
+RUN EVERY COMMAND
+4
+python -m unittest -q tests.test_utils_url.CanonicalizeUrlTest.test_canonicalize_idns
+
+======================================================================
+FAIL: test_canonicalize_urlparsed (tests.test_utils_url.CanonicalizeUrlTest)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/user/BugsInPy/temp/projects/scrapy/tests/test_utils_url.py", line 241, in test_canonicalize_urlparsed
+    self.assertEqual(canonicalize_url(urlparse('http://www.example.com/caf%e9-con-leche.htm')),
+AssertionError: 'http://www.example.com/caf%EF%BF%BD-con-leche.htm' != 'http://www.example.com/caf%E9-con-leche.htm'
+- http://www.example.com/caf%EF%BF%BD-con-leche.htm
+?                             ^^^^^^^
++ http://www.example.com/caf%E9-con-leche.htm
+?                             ^
+
+
+----------------------------------------------------------------------
+Ran 1 test in 0.002s
+
+FAILED (failures=1)
+RUN EVERY COMMAND
+5
+python -m unittest -q tests.test_utils_url.CanonicalizeUrlTest.test_canonicalize_urlparsed
+
+======================================================================
+FAIL: test_canonicalize_parse_url (tests.test_utils_url.CanonicalizeUrlTest)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/user/BugsInPy/temp/projects/scrapy/tests/test_utils_url.py", line 250, in test_canonicalize_parse_url
+    self.assertEqual(canonicalize_url(parse_url('http://www.example.com/caf%e9-con-leche.htm')),
+AssertionError: 'http://www.example.com/caf%EF%BF%BD-con-leche.htm' != 'http://www.example.com/caf%E9-con-leche.htm'
+- http://www.example.com/caf%EF%BF%BD-con-leche.htm
+?                             ^^^^^^^
++ http://www.example.com/caf%E9-con-leche.htm
+?                             ^
+
+
+----------------------------------------------------------------------
+Ran 1 test in 0.002s
+
+FAILED (failures=1)

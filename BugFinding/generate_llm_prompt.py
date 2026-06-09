@@ -19,10 +19,10 @@ def build_prompt(source_files, test_files, failure_output=None):
     prompt = []
 
     prompt.append("""
-You are given buggy source files and failing test files.
+You are given buggy source files, failing test files, and test execution output.
 
 Your task is BUG LOCALIZATION ONLY.
-                  
+
 Identify the source-code location(s) most likely responsible for the failing test.
 
 Return only valid JSON using this exact format:
@@ -45,10 +45,20 @@ Rules:
 - Do not rewrite code.
 - Do not explain anything outside the JSON.
 - Line numbers must refer to the numbered buggy source files, not the test files.
-- Each entry should identify the likely origin of a bug, not every line affected by it.
-- Prefer the smallest line range that is sufficient to identify the bug.
-- Report only locations directly supported by the source code, failing test, and failing test output.
-- Do not include speculative locations.
+
+- A scenario may contain one or more bug locations.
+- Do not stop after identifying the first likely bug location.
+- After finding the most likely location, continue inspecting the buggy source files for additional independent locations that may also be responsible for the failing behaviour.
+
+- Each entry should identify one source-code location that likely needs to be changed to fix the failure.
+- Include separate entries for separate suspicious source-code regions, even if they contribute to the same failing test.
+- Do not include duplicate locations, call sites, stack-trace propagation lines, or lines that are only affected by the bug.
+
+- Prefer the smallest line range that is sufficient to identify each suspected bug location.
+- Report locations supported by the source code and at least one of the following: failing test logic, failing output, traceback, assertion difference, or data flow from the failing behaviour.
+- Medium-confidence locations are acceptable when the evidence suggests they may be part of the bug.
+- Low-confidence locations should only be included when they are directly relevant to the failing behaviour.
+
 - If no source-code location can be identified with reasonable confidence, return:
 {
   "bug_locations": []
@@ -81,7 +91,7 @@ Rules:
 
     if failure_output:
         failure_path = Path(failure_output)
-        prompt.append("\n\nFAILING TEST OUTPUT:")
+        prompt.append("\n\nTEST EXECUTION OUTPUT:")
         prompt.append("```text")
         prompt.append(failure_path.read_text(encoding="utf-8", errors="replace"))
         prompt.append("```")
