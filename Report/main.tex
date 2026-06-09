@@ -16,6 +16,7 @@
 
 \usepackage{longtable,booktabs,array}
 \usepackage{listings}
+\usepackage{float}
 
     \linespread{1.25} % approximate one-and-a-half spacing without extra packages
     \renewcommand{\arraystretch}{1.2}
@@ -160,9 +161,22 @@
     \end{table}
     
     \subsection{Statistical Analysis}
-    
 
+    To assess the normality of the F1-Score distribution for each model, Q-Q plots were generated and Shapiro-Wilk tests were conducted.
 
+    \begin{figure}[H]
+        \centering
+        \begin{minipage}{0.48\textwidth}
+            \centering
+            \includegraphics[width=\linewidth]{charts/bugfinding_qq_plot_chatgpt.png}
+            \caption{Q-Q plot of F1-Scores for ChatGPT Mini.}\label{fig:bugfinding-qq-chatgpt}
+        \end{minipage}\hfill
+        \begin{minipage}{0.48\textwidth}
+            \centering
+            \includegraphics[width=\linewidth]{charts/bugfinding_qq_plot_gemini.png}
+            \caption{Q-Q plot of F1-Scores for Gemini Flash.}\label{fig:bugfinding-qq-gemini}
+        \end{minipage}
+    \end{figure}
 
    \section{Code Generation}
     \subsection{Context and Motivation}
