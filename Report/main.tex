@@ -151,12 +151,12 @@
         \hline
         \textbf{Model} & \textbf{Num of Cases} & \textbf{Num of real bugs} & \textbf{Num reported bugs} & \textbf{TP}  & \textbf{FP}  & \textbf{FN}\\
         \hline
-        ChatGPT & 50 & 79 & 57 & 47 & 10 & 32 \\
-        Gemini & 50 & 79 & 53 & 35 & 18 & 44 \\
+        ChatGPT & 106 & 85 & 94 & 57/60 \\
+        Gemini  & 103 & 83 & 79 & 56/60 \\
         \hline
         \end{tabular}
         \caption{Descriptive statistics of execution time for accepted submissions.}
-        \label{tab:runtime-stats}
+        \label{tab:bugfinding-summary}
     \end{table}
     
     \subsection{Statistical Analysis}
@@ -262,7 +262,7 @@ This variable records the execution time reported by the evaluation platform for
 
 \subsection{Results and Metrics Collected}
 
-    The generated SQL solutions were evaluated on 58 problems per model. Because each problem was submitted once and the platform returned a binary outcome (Accepted or Not Accepted), correctness and accuracy are equivalent in this setting and are computed as:
+    The generated SQL solutions were evaluated on 60 problems per model. Because each problem was submitted once and the platform returned a binary outcome (Accepted or Not Accepted), correctness and accuracy are equivalent in this setting and are computed as:
 
     \[
     \text{Accuracy} = \frac{\text{Accepted Solutions}}{\text{Total Problems}}
@@ -303,7 +303,7 @@ This variable records the execution time reported by the evaluation platform for
     \label{tab:codegen-difficulty}
     \end{table}
 
-    The hardest problems produced the lowest acceptance rate for both models, indicating that problem complexity had a clear effect on performance. The Hard category accounts for both of the ChatGPT failures and for two of the three Gemini failures. One additional Gemini failure occurred in the Medium category.
+    The hardest problems produced the lowest acceptance rate for both models, indicating that problem complexity had a clear effect on performance. The Hard category accounts for all three ChatGPT failures and for three of the four Gemini failures. One additional Gemini failure occurred in the Medium category.
 
 
 Beyond correctness, the execution time reported by the LeetCode platform was recorded for each accepted submission and used as a secondary performance indicator. The following analysis is based exclusively on accepted solutions, as rejected queries do not produce meaningful runtime measurements.
@@ -326,7 +326,7 @@ Gemini  & 107 & 82 &  95 & 56/60 \\
 \label{tab:runtime-stats}
 \end{table}
 
-The two models present nearly identical median runtimes (82\,ms for both), and their means differ by only 2\,ms. However, both distributions exhibit considerable right skew, driven by a small number of outliers. Notably, ChatGPT produced a 764\,ms result on Problem~1158 (Medium) and Gemini produced results of 644\,ms and 445\,ms on Problems~577 and~1084 (Easy), respectively. These outliers inflate the mean substantially relative to the median, which is why the median is a more representative measure of central tendency for this dataset.
+The two models present very similar median runtimes (85\,ms for ChatGPT and 83\,ms for Gemini), and their means differ by only about 3\,ms. However, both distributions exhibit considerable right skew, driven by a small number of outliers. Notably, ChatGPT produced a 764\,ms result on Problem~1158 (Medium) and Gemini produced results of 644\,ms and 445\,ms on Problems~577 and~1084 (Easy), respectively. These outliers inflate the mean substantially relative to the median, which is why the median is a more representative measure of central tendency for this dataset.
 
 \subsubsection{Distribution by Difficulty}
 
@@ -393,15 +393,15 @@ Overall, the execution time analysis indicates that ChatGPT and Gemini produce S
     \hline
      & \textbf{Gemini Correct} & \textbf{Gemini Incorrect} \\
     \hline
-    \textbf{ChatGPT Correct}   & 53 & 3 \\
-    \textbf{ChatGPT Incorrect} & 2  & 0 \\
+    \textbf{ChatGPT Correct}   & 53 & 4 \\
+    \textbf{ChatGPT Incorrect} & 3  & 0 \\
     \hline
     \end{tabular}
     \caption{Contingency table for correctness outcomes.}
     \label{tab:contingency-correctness}
     \end{table}
 
-    The off-diagonal cells represent the discordant pairs: 3 problems were solved by ChatGPT but failed by Gemini, and 2 problems were solved by Gemini but failed by ChatGPT. 
+    The off-diagonal cells represent the discordant pairs: 4 problems were solved by ChatGPT but failed by Gemini, and 3 problems were solved by Gemini but failed by ChatGPT. 
 
     \paragraph{(iv) Test Computation}
     \quad
@@ -410,14 +410,14 @@ Overall, the execution time analysis indicates that ChatGPT and Gemini produce S
 
     The test statistic $S$ represents the smaller number of discordant outcomes:
     \[
-    S = \min(\text{ChatGPT Only}, \text{Gemini Only}) = \min(3, 2) = 2
+    S = \min(\text{ChatGPT Only}, \text{Gemini Only}) = \min(4, 3) = 3
     \]
-    The exact two-sided p-value is calculated from the binomial distribution $\mathcal{B}(n = 3 + 2, p = 0.5)$. This calculates the exact mathematical probability of observing a 3-to-2 split (or a more extreme split) across the $n=5$ total discordant cases, assuming the true probability is $0.5$.
+    The exact two-sided p-value is calculated from the binomial distribution $\mathcal{B}(n = 4 + 3, p = 0.5)$. This calculates the exact mathematical probability of observing a 4-to-3 split (or a more extreme split) across the $n=7$ total discordant cases, assuming the true probability is $0.5$.
 
     \paragraph{(v) Results}
     \quad
 
-    \textbf{Test Statistic:} $S = 2.0$ \\
+    \textbf{Test Statistic:} $S = 3.0$ \\
     \textbf{p-value (Exact):} $p = 1.0000$ \\
     \textbf{Significance Level ($\alpha$):} 0.05 
 
@@ -441,7 +441,7 @@ Overall, the execution time analysis indicates that ChatGPT and Gemini produce S
     \textbf{Alternative Hypothesis ($H_1$):} \\
     \textit{There is a statistically significant difference in the execution times of SQL queries generated by ChatGPT Mini and Gemini Flash.}
 
-    The comparison is based exclusively on problems accepted by both models, resulting in a paired sample of $n = 56$ observations.
+    The comparison is based exclusively on problems accepted by both models with available runtimes, resulting in a paired sample of $n = 53$ observations.
 
     \paragraph{(ii) Statistical Test Selection}
     \quad
@@ -459,7 +459,7 @@ Overall, the execution time analysis indicates that ChatGPT and Gemini produce S
 
     \textbf{Normality Analysis:}
 
-    The Shapiro-Wilk test yielded $W = 0.5337$ with $p < 0.0001$, providing strong evidence against the assumption of normality. The null hypothesis of the Shapiro-Wilk test (that the differences follow a normal distribution) is therefore rejected at $\alpha = 0.05$.
+    The Shapiro-Wilk test yielded $W = 0.5037$ with $p < 0.0001$, providing strong evidence against the assumption of normality. The null hypothesis of the Shapiro-Wilk test (that the differences follow a normal distribution) is therefore rejected at $\alpha = 0.05$.
 
     \begin{table}[h]
     \centering
@@ -467,7 +467,7 @@ Overall, the execution time analysis indicates that ChatGPT and Gemini produce S
     \hline
     \textbf{Test} & \textbf{Statistic} & \textbf{p-value} \\
     \hline
-    Shapiro-Wilk & $W = 0.5337$ & $p < 0.0001$ \\
+    Shapiro-Wilk & $W = 0.5037$ & $p < 0.0001$ \\
     \hline
     \end{tabular}
     \caption{Shapiro-Wilk normality test on paired runtime differences.}
@@ -507,27 +507,27 @@ Overall, the execution time analysis indicates that ChatGPT and Gemini produce S
 
     For the observed data:
     \begin{itemize}
-        \item Number of paired observations: $n = 56$
-        \item Mean difference: $\bar{d} = -1.04$ ms
+        \item Number of paired observations: $n = 53$
+        \item Mean difference: $\bar{d} = 4.96$ ms
         \item Median difference: $\tilde{d} = 1.00$ ms
     \end{itemize}
 
     \paragraph{(v) Results}
     \quad
 
-    \textbf{Test Statistic:} $W = 796.0$ \\
-    \textbf{p-value:} $p = 0.9870$ \\
+    \textbf{Test Statistic:} $W = 700.5$ \\
+    \textbf{p-value:} $p = 0.8943$ \\
     \textbf{Significance Level ($\alpha$):} 0.05 \\
-    \textbf{Effect Size:} Cohen's $d = -0.0082$ (negligible)
+    \textbf{Effect Size:} Cohen's $d = 0.0415$ (negligible)
 
     \paragraph{(vi) Decision and Conclusion}
     \quad
 
     \begin{itemize}
-        \item Since $p = 0.9870 > \alpha = 0.05$: \textbf{Fail to reject $H_0$}
+        \item Since $p = 0.8943 > \alpha = 0.05$: \textbf{Fail to reject $H_0$}
     \end{itemize}
 
-    \textbf{Conclusion:} There is no statistically significant difference in the execution times of SQL queries generated by ChatGPT Mini and Gemini Flash ($W = 796.0$, $p = 0.9870$). The effect size (Cohen's $d = -0.0082$) is negligible, confirming that the two models produce queries of comparable runtime efficiency. This result is consistent with the descriptive analysis presented in the previous section, where both models exhibited nearly identical median runtimes and largely overlapping distributions.
+    \textbf{Conclusion:} There is no statistically significant difference in the execution times of SQL queries generated by ChatGPT Mini and Gemini Flash ($W = 700.5$, $p = 0.8943$). The effect size (Cohen's $d = 0.0415$) is negligible, confirming that the two models produce queries of comparable runtime efficiency. This result is consistent with the descriptive analysis presented in the previous section, where both models exhibited very similar median runtimes and largely overlapping distributions.
 
 
 

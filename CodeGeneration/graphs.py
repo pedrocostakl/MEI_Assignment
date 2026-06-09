@@ -4,13 +4,14 @@ Generates 5 publication-ready charts saved as PNG files.
 Requirements: pip install matplotlib numpy
 """
 
+from pathlib import Path
+
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import numpy as np
-import os
 
-OUTPUT_DIR = "charts"
-os.makedirs(OUTPUT_DIR, exist_ok=True)
+OUTPUT_DIR = Path(__file__).resolve().parents[1] / "Report" / "charts"
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # ── Data ────────────────────────────────────────────────────────────────────
 
@@ -20,15 +21,15 @@ chatgpt = {
         (3374,88,True),(3482,76,True),(3617,None,False),(3764,70,True),
         (3832,69,True),(3673,84,True),(1581,136,True),(2356,83,True),
         (1978,73,True),(1965,113,True),(1890,229,True),(1873,66,True),
-        (1789,164,True),(1757,73,True),(1741,81,True),
+        (1789,164,True),(1757,73,True),("Interviews",None,True),
+        ("15_days_interview",None,False),
     ],
     "medium": [
         (176,82,True),(177,86,True),(178,79,True),(180,75,True),
         (184,116,True),(550,69,True),(570,67,True),(585,82,True),
         (602,70,True),(608,102,True),(626,77,True),(1045,93,True),
         (1070,102,True),(1158,764,True),(1164,85,True),(1174,82,True),
-        (1193,70,True),(1204,213,True),(1321,78,True),(1341,159,True),
-        (1393,72,True),
+        (1193,70,True),(1204,213,True),(1321,78,True),(1341,100,True),
     ],
     "easy": [
         (175,100,True),(181,67,True),(182,67,True),(183,103,True),
@@ -36,7 +37,6 @@ chatgpt = {
         (584,88,True),(586,88,True),(595,91,True),(596,70,True),
         (607,151,True),(610,96,True),(619,105,True),(620,79,True),
         (627,92,True),(1050,68,True),(1068,98,True),(1075,135,True),
-        (1084,84,True),
     ],
 }
 
@@ -46,7 +46,8 @@ gemini = {
         (3374,84,False),(3482,94,True),(3673,88,True),(3617,120,True),
         (3832,None,False),(3764,106,True),(1581,80,True),(2356,78,True),
         (1978,68,True),(1965,71,True),(1890,88,True),(1873,82,True),
-        (1789,102,True),(1757,81,True),(1741,96,True),
+        (1789,102,True),(1757,81,True),("Interviews",None,False),
+        ("15_days_interview",None,True),
     ],
     "medium": [
         (176,90,True),(177,103,True),(178,None,False),(180,74,True),
@@ -54,7 +55,6 @@ gemini = {
         (602,75,True),(608,83,True),(626,79,True),(1045,118,True),
         (1070,83,True),(1158,147,True),(1164,62,True),(1174,73,True),
         (1193,222,True),(1204,65,True),(1321,70,True),(1341,147,True),
-        (1393,76,True),
     ],
     "easy": [
         (175,114,True),(181,80,True),(182,70,True),(183,94,True),
@@ -62,7 +62,6 @@ gemini = {
         (584,79,True),(586,79,True),(595,78,True),(596,67,True),
         (607,121,True),(610,80,True),(619,118,True),(620,75,True),
         (627,90,True),(1050,93,True),(1068,112,True),(1075,136,True),
-        (1084,445,True),
     ],
 }
 
@@ -121,7 +120,7 @@ def chart_avg_runtime():
     ax.set_ylim(0, max(max(gpt_means), max(gem_means)) * 1.25)
 
     fig.tight_layout()
-    path = os.path.join(OUTPUT_DIR, "1_avg_runtime_by_difficulty.png")
+    path = OUTPUT_DIR / "1_avg_runtime_by_difficulty.png"
     fig.savefig(path, bbox_inches="tight")
     plt.close(fig)
     print(f"  Saved: {path}")
@@ -171,7 +170,7 @@ def chart_boxplot():
     fig.legend(handles=handles, loc="upper right", fontsize=10)
 
     fig.tight_layout()
-    path = os.path.join(OUTPUT_DIR, "2_boxplot_by_difficulty.png")
+    path = OUTPUT_DIR / "2_boxplot_by_difficulty.png"
     fig.savefig(path, bbox_inches="tight")
     plt.close(fig)
     print(f"  Saved: {path}")
@@ -200,7 +199,7 @@ def chart_acceptance():
     ax.legend(fontsize=10)
 
     fig.tight_layout()
-    path = os.path.join(OUTPUT_DIR, "3_acceptance_rate.png")
+    path = OUTPUT_DIR / "3_acceptance_rate.png"
     fig.savefig(path, bbox_inches="tight")
     plt.close(fig)
     print(f"  Saved: {path}")
@@ -230,7 +229,7 @@ def chart_histogram():
     ax.yaxis.set_major_locator(plt.MaxNLocator(integer=True))
 
     fig.tight_layout()
-    path = os.path.join(OUTPUT_DIR, "4_runtime_histogram.png")
+    path = OUTPUT_DIR / "4_runtime_histogram.png"
     fig.savefig(path, bbox_inches="tight")
     plt.close(fig)
     print(f"  Saved: {path}")
@@ -296,7 +295,7 @@ def chart_head_to_head():
     ax.set_xlim(-0.5, n - 0.5)
 
     fig.tight_layout()
-    path = os.path.join(OUTPUT_DIR, "5_head_to_head.png")
+    path = OUTPUT_DIR / "5_head_to_head.png"
     fig.savefig(path, bbox_inches="tight")
     plt.close(fig)
     print(f"  Saved: {path}")
@@ -305,10 +304,10 @@ def chart_head_to_head():
 # ── Run all ──────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    print(f"Generating charts into ./{OUTPUT_DIR}/\n")
+    print(f"Generating charts into {OUTPUT_DIR}\n")
     chart_avg_runtime()
     chart_boxplot()
     chart_acceptance()
     chart_histogram()
     chart_head_to_head()
-    print(f"\nDone. All 5 charts saved in ./{OUTPUT_DIR}/")
+    print(f"\nDone. All 5 charts saved in {OUTPUT_DIR}")
