@@ -68,4 +68,3 @@ Problem 627 - Easy - Accepted, Runtime: 92 ms
 Problem 1050 - Easy - Accepted, Runtime: 68 ms
 Problem 1068 - Easy - Accepted, Runtime: 98 ms
 Problem 1075 - Easy - Accepted, Runtime: 135 ms
-Problem 1084 - Easy - Accepted, Runtime: 84 ms
