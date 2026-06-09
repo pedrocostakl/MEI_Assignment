@@ -67,7 +67,7 @@
     \newpage
 
     \section{Introduction}
-    Large Language Models (LLMs) are increasingly being integrated into software development workflow. As their use becomes more widespread, it is important to evaluate the extent to which developers can rely on these tools in practical software engineering contexts.
+    Large Language Models (LLMs) are increasingly being integrated into software development workflows. As their use becomes more widespread, it is important to evaluate the extent to which developers can rely on these tools in practical software engineering contexts.
 
     This report was developed as part of the Experimental Methods in Computer Science curricular unit and addresses the following central problem statement:\\
 
@@ -75,10 +75,10 @@
 
     Given the wide scope of this question, the experiment focuses on two specific areas of software development: Code Generation and Code Review (more specifically Bug Finding). These two areas were studied separately, using distinct datasets and statistical analysis methods suited to each task.
 
-    Despite these differences, both parts of the experiment share a common setting: they are based on the Python programming language and evaluate the same LLM models. This allows for a structured comparison of model performance across two relevant software development activities, contributing to a broader understanding of the capabilities and limitations of LLM-based tools.
+    Despite these differences, both parts of the experiment evaluate the same LLM models, but they focus on different software engineering tasks: Python bug finding and SQL code generation.
 
     \subsection{Repository}
-    The project was developed by the members on the Github repository available at:\\
+    The project's source code is available in the GitHub repository:\\
     \url{https://github.com/pedrocostakl/MEI_Assignment}
     \newpage{}
 
@@ -103,13 +103,6 @@
                 \item ChatGPT Mini
                 \item Gemini Flash
             \end{itemize}
-        \item \textbf{IV2 LOC (3 levels)}: LOC (\textit{Lines of Code}) of the source files.
-            \begin{itemize}
-                \item Low LOC level --- $\leq 330$ LOC
-                \item Medium LOC level — 331–980 LOC
-                \item High LOC level — >980 LOC
-            \end{itemize}
-       
     \end{itemize}
 
     \subsubsection{Dependent Variables}
@@ -138,7 +131,7 @@
             \begin{itemize}
                 \item Python
             \end{itemize}
-            Even though there is only one language bing used in the bug, it is still considered an independent variable.
+            All bug-finding scenarios use Python, ensuring that differences in model performance are not affected by programming language.
     \end{itemize}
 
     \subsection{Experimental Procedure}
@@ -178,7 +171,7 @@
         Gemini & 50 & 79 & 53 & 35 & 18 & 44 \\
         \hline
         \end{tabular}
-        \caption{Descriptive statistics of execution time for accepted submissions.}
+        \caption{Overall bug-localisation counts for each model.}
         \label{tab:runtime-stats}
     \end{table}
 
@@ -186,13 +179,13 @@
         \centering
         \begin{tabular}{lccccc}
         \hline
-        \textbf{Model} & \textbf{Num of Cases} & \textbf{Precision} & \textbf{Recall} & \textbf{F1} \\
+        \textbf{Model} & \textbf{Number of Cases} & \textbf{Precision} & \textbf{Recall} & \textbf{F1} \\
         \hline
         ChatGPT & 50 & 0.8300 ± 0.3407  & 0.6883 ± 0.3578 & 0.7187 ± 0.3222\\
         Gemini & 50 & 0.6700 ± 0.4649 & 0.5200 ± 0.4222 & 0.5620 ± 0.4184 \\
         \hline
         \end{tabular}
-        \caption{ Overall results and respective std dev.}
+        \caption{ Scenario-level mean performance and standard deviation..}
         \label{tab:runtime-stats}
     \end{table}
     
@@ -217,7 +210,7 @@
         F1-Score & 0.771426 & 0.000000 & Reject \textit{H0} (\textit{p} <= 0.05)\\
         \hline
         \end{tabular}
-        \caption{ Shapiro-Wilk Resutlts for ChatGPT Mini}
+        \caption{ Shapiro-Wilk Results for ChatGPT Mini}
         \label{tab:runtime-stats}
     \end{table}
 
@@ -287,7 +280,7 @@
     The \textbf{Wilcoxon Signed-Rank test} was used because the two models were evaluated on the same set of bug scenarios, making the observations paired rather than independent. For each scenario, the difference between ChatGPT and Gemini was calculated for each metric, such as Precision, Recall and F1-score. Since the normality assumption was not satisfied for these metric distributions, a non-parametric paired test was more appropriate than a paired t-test. The Wilcoxon Signed-Rank test therefore allows the comparison of both models while preserving the case-by-case experimental structure.
 
     \textbf{(I) Hypotheses}\\
-    To compare the two models across the three metrics (Precision, Recall and F1-Score), the three hypotheses pairs were drafted:
+    To compare the two models across the three metrics (Precision, Recall and F1-Score), the three hypotheses pairs were defined:
 
     
     
@@ -331,7 +324,7 @@
         \hline
         \textbf{Metric} & \textbf{Test Statistic} & \textbf{\textit{p-value}} & \textbf{Decision}\\
         \hline
-        Precision &  130.0 &  0.021888  & Retain \textit{H0} (\textit{p} >= 0.016667)\\
+        Precision &  130.0 &  0.021888  & Fail to reject\textit{H0} (\textit{p} >= 0.016667)\\
         Recall &  138.0 & 0.009680 & Reject \textit{H0} (\textit{p} <= 0.016667)\\
         F1-Score & 163.0 & 0.014353 & Reject \textit{H0} (\textit{p} <= 0.016667)\\
         \hline
@@ -806,9 +799,16 @@ Figure~\ref{fig:head-to-head} provides a direct head-to-head comparison of execu
     \end{itemize}
 
     \textbf{Conclusion:} Problem difficulty has a statistically significant influence on the correctness of SQL queries generated by the models ($p = 0.03173$, Fisher's Exact Test). Specifically, the models are significantly more likely to produce incorrect solutions when faced with Hard problems compared to Easy and Medium problems. This confirms that while LLMs are highly reliable for basic and intermediate SQL generation, their performance meaningfully degrades as problem complexity increases.
-
+    \newpage
     \section{Conclusions}
-
+    This report evaluated two LLM-based tools, ChatGPT Mini and Gemini Flash, across two distinct software development tasks (Bug Finding and Code Generation) to answer whether developers can reliably depend on such tools in a practical software engineering context.
+    In \textbf{bug finding}, ChatGPT performed significantly better than Gemini for Bug Finding recall and F1-score, but not precision after Bonferroni correction.This positions ChatGPT Mini as a more effective assistant for identifying defects during code review activities.
+    
+    In \textbf{code generation}, both models exhibited highly comparable and reliable performance. ChatGPT and Gemini achieved excellent acceptance rates (95.00\% and 93.33\% respectively) for generating SQL queries, with statistical tests confirming no significant difference in either correctness or execution efficiency. However, both models experienced a statistically significant degradation in performance when faced with the most complex tasks, indicating that problem difficulty is a crucial limiting factor.
+    Taken together, ChatGPT Mini is the recommended model for general adoption, as it is the only tool that maintains a strong performance across both evaluated tasks. While Gemini Flash is a viable alternative for generating standard code, its comparatively weaker bug detection capabilities make it less suited as a primary tool for comprehensive software development support.
+    
+    
+    
     \bibliographystyle{plain}
     \bibliography{refs}{}
     \end{document}
