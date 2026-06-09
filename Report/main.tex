@@ -5,7 +5,7 @@
     \usepackage{amsmath,amssymb,amsfonts}
     \usepackage{graphicx}
     \usepackage{xcolor}
-    % allow using a charts/ search path and safely include images that may be missing
+     % allow using a charts/ search path and safely include images that may be missing
     \graphicspath{{charts/}}
     \newcommand{\maybeincludegraphics}[2][]{%
         \IfFileExists{#2}{\includegraphics[#1]{#2}}{\fbox{Missing image: #2}}%
@@ -15,7 +15,23 @@
     \usepackage{microtype}
 
 \usepackage{longtable,booktabs,array}
+\usepackage{float}
+\usepackage{caption}
 \usepackage{listings}
+\usepackage{amsmath}
+
+\lstset{
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  breakatwhitespace=false,
+  columns=fullflexible,
+  keepspaces=true,
+  frame=single
+}
+\usepackage[
+       hidelinks
+]{hyperref}
+\usepackage{bookmark}
 
     \linespread{1.25} % approximate one-and-a-half spacing without extra packages
     \renewcommand{\arraystretch}{1.2}
@@ -61,6 +77,10 @@
 
     Despite these differences, both parts of the experiment share a common setting: they are based on the Python programming language and evaluate the same LLM models. This allows for a structured comparison of model performance across two relevant software development activities, contributing to a broader understanding of the capabilities and limitations of LLM-based tools.
 
+    \subsection{Repository}
+    The project was developed by the members on the Github repository available at:\\
+    \url{https://github.com/pedrocostakl/MEI_Assignment}
+    \newpage{}
 
 
     \section{Bug Finding}
@@ -78,12 +98,12 @@
     \subsubsection{Independent Variables}
     The independent variables are:
     \begin{itemize}
-        \item \textbf{LLM Model (2 levels)}:
+        \item \textbf{IV1 LLM Model (2 levels)}:
             \begin{itemize}
                 \item ChatGPT Mini
                 \item Gemini Flash
             \end{itemize}
-        \item \textbf{LOC (3 levels)}: LOC (\textit{Lines of Code}) of the source files.
+        \item \textbf{IV2 LOC (3 levels)}: LOC (\textit{Lines of Code}) of the source files.
             \begin{itemize}
                 \item Low LOC level --- $\leq 330$ LOC
                 \item Medium LOC level — 331–980 LOC
@@ -95,23 +115,26 @@
     \subsubsection{Dependent Variables}
     The dependent variables used in the statistical comparison are:
     \begin{itemize}
-        \item \textbf{Recall}: Fraction of the real bugs identified. \[
+        \item \textbf{DV1 Precision}: Fraction of real bugs among the detected bugs \[
+                Precision = \frac{TP}{TP + FP}
+                \]
+        \item \textbf{DV2 Recall}: Fraction of the real bugs identified. \[
                 Recall = \frac{TP}{TP + FN}
                 \]
-        \item \textbf{F1-Score}: F1-score combines recall and precision into a single metric that penalises both missed 
+        \item \textbf{DV3 F1-Score}: F1-score combines recall and precision into a single metric that penalises both missed 
     bugs and incorrectly reported bugs: \[
                 F1 = \frac{2TP}{2TP + FP + FN}
                 \]
     \end{itemize}
-    Precision was excluded, since, due to its formula, when an LLM reports zero bugs, it will generate a division by 0. Since F1-score is the harmonic mean between Recall and Precision we decided to opt for that dependent variable.
+    
 
     \subsubsection{Controlled Variables}
     In order to reduce unnecessary variables and isolate each LLM's performance, we kept the following variable constant:
     \begin{itemize}
-        \item \textbf{Scenarios}: Both LLMs are fed the same bug scenarios
-        \item \textbf{Prompt}: All prompts follow the same format. They just vary from scenario to scenario in the Source Files section, since they include that specific scenario's buggy code.
-        \item \textbf{New chat for each submission}: In order to avoid outputs based on previous context, each submission is made in a new chat.
-         \item \textbf{Language (1 level)} :
+        \item \textbf{CV1 Scenarios}: Both LLMs are fed the same bug scenarios
+        \item \textbf{CV2 Prompt}: All prompts follow the same format. They just vary from scenario to scenario in the Source Files section, since they include that specific scenario's buggy code.
+        \item \textbf{CV3 New chat for each submission}: In order to avoid outputs based on previous context, each submission is made in a new chat.
+         \item \textbf{CV4 Language (1 level)} :
             \begin{itemize}
                 \item Python
             \end{itemize}
@@ -120,10 +143,10 @@
 
     \subsection{Experimental Procedure}
     \subsubsection{Dataset \& Data Collection}
-    To obtain a realistic dataset of Python bugs, the BugsInPy repository was used. A total of 50 bug scenarios were collected, each corresponding to a real defect extracted from an open-source Python project.\\
+    To obtain a realistic dataset of Python bugs, the BugsInPy\cite{bugsinpy2026} repository was used. A total of 50 bug scenarios were collected, each corresponding to a real defect extracted from an open-source Python project.\\
     For each scenario, the dataset includes the buggy source code, the associated Git diff identifying the modified buggy chunk or chunks, the failing test file, and the failing test output. This information provides both the defective implementation and the contextual evidence needed to analyse the bug, while preserving the realism of real-world software. defects
     \subsubsection{Prompt Building}
-    To ensure consistency across all bug scenarios, a standard prompt template was created and stored in(\texttt{/BugFinding/LLM\_prompt.txt}). This template was used as the basis for each scenario-specific prompt, ensuring that both LLMs received instructions in the same format and under comparable conditions.
+    To ensure consistency across all bug scenarios, a standard prompt template was created and stored in \texttt{/BugFinding/LLM\_prompt.txt}. This template was used as the basis for each scenario-specific prompt, ensuring that both LLMs received instructions in the same format and under comparable conditions.
 
     Each prompt begins by defining the task as bug localization only, explicitly instructing the model to identify the source-code location or locations most likely responsible for the failing test. The prompt also includes rules designed to constrain the model’s behaviour: the model is instructed not to propose fixes, not to rewrite code, and not to provide explanations outside the required output format.
 
@@ -145,39 +168,190 @@
 
     \subsection{Results}
     In the table below, the total overall results can be viewed for both LLM models.
-    \begin{table}[htbp]
+    \begin{table}[h]
         \centering
         \begin{tabular}{lcccccc}
         \hline
         \textbf{Model} & \textbf{Num of Cases} & \textbf{Num of real bugs} & \textbf{Num reported bugs} & \textbf{TP}  & \textbf{FP}  & \textbf{FN}\\
         \hline
-        ChatGPT & 106 & 85 & 94 & 57/60 \\
-        Gemini  & 103 & 83 & 79 & 56/60 \\
+        ChatGPT & 50 & 79 & 57 & 47 & 10 & 32 \\
+        Gemini & 50 & 79 & 53 & 35 & 18 & 44 \\
         \hline
         \end{tabular}
         \caption{Descriptive statistics of execution time for accepted submissions.}
-        \label{tab:bugfinding-summary}
+        \label{tab:runtime-stats}
+    \end{table}
+
+    \begin{table}[h]
+        \centering
+        \begin{tabular}{lccccc}
+        \hline
+        \textbf{Model} & \textbf{Num of Cases} & \textbf{Precision} & \textbf{Recall} & \textbf{F1} \\
+        \hline
+        ChatGPT & 50 & 0.8300 ± 0.3407  & 0.6883 ± 0.3578 & 0.7187 ± 0.3222\\
+        Gemini & 50 & 0.6700 ± 0.4649 & 0.5200 ± 0.4222 & 0.5620 ± 0.4184 \\
+        \hline
+        \end{tabular}
+        \caption{ Overall results and respective std dev.}
+        \label{tab:runtime-stats}
     \end{table}
     
     \subsection{Statistical Analysis}
+    Before selecting the appropriate statistical tests, the normality of the scenario-level performance metrics was assessed. The metrics considered were Precision, Recall, and F1-score, computed separately for each LLM model across the evaluated bug scenarios.
+    
+    \subsubsection{Normality Assessment}
+    For each metric and each model, a Shapiro-Wilk normality test was performed using a significance level of $\alpha = 0.05$. The hypotheses were defined as follows:
+     All of the dependent variables were tested under the following hypotheses:
+     
+     - \textit{H0}: The metric follows a normal distribution\\
+     - \textit{H1}: The metric does not follow a normal distribution
 
-    To assess the normality of the F1-Score distribution for each model, Q-Q plots were generated and Shapiro-Wilk tests were conducted.
+      \begin{table}[h]
+        \centering
+        \begin{tabular}{lcccc}
+        \hline
+        \textbf{Metric} & \textbf{Test Statistic} & \textbf{\textit{p-value}} & \textbf{Decision}\\
+        \hline
+        Precision &  0.530994 &  0.000000 & Reject \textit{H0} (\textit{p} <= 0.05)\\
+        Recall &  0.771968 & 0.000000 & Reject \textit{H0} (\textit{p} <= 0.05)\\
+        F1-Score & 0.771426 & 0.000000 & Reject \textit{H0} (\textit{p} <= 0.05)\\
+        \hline
+        \end{tabular}
+        \caption{ Shapiro-Wilk Resutlts for ChatGPT Mini}
+        \label{tab:runtime-stats}
+    \end{table}
 
+    \begin{table}[h]
+        \centering
+        \begin{tabular}{lcccc}
+        \hline
+        \textbf{Metric} & \textbf{Test Statistic} & \textbf{\textit{p-value}} & \textbf{Decision}\\
+        \hline
+        Precision &  0.606677 &  0.000000 & Reject \textit{H0} (\textit{p} <= 0.05)\\
+        Recall &  0.790838 & 0.000000 & Reject \textit{H0} (\textit{p} <= 0.05)\\
+        F1-Score & 0.780389 & 0.000000 & Reject \textit{H0} (\textit{p} <= 0.05)\\
+        \hline
+        \end{tabular}
+        \caption{ Shapiro-Wilk Resutlts for Gemini Flash}
+        \label{tab:runtime-stats}
+    \end{table}
+    As seen in the tables above, the Shapiro-Wilk tests on each metric for each model returned p-values inferior to $\alpha = 0.05$, indicating that none of the distributions are normal. The Q-Q plots in the Figures below further confirm this finding.
+    
     \begin{figure}[htbp]
         \centering
         \begin{minipage}{0.48\textwidth}
             \centering
-            \includegraphics[width=\linewidth]{charts/bugfinding_qq_plot_chatgpt.png}
+            \includegraphics[width=\linewidth]{charts/bugfinding_qq_plot_chatgpt_precision.png}
+            \caption{Q-Q plot of Precisions for ChatGPT Mini.}\label{fig:bugfinding-qq-chatgpt}
+        \end{minipage}\hfill
+        \begin{minipage}{0.48\textwidth}
+            \centering
+            \includegraphics[width=\linewidth]{charts/bugfinding_qq_plot_gemini_precision.png}
+            \caption{Q-Q plot of Precisions for Gemini Flash.}\label{fig:bugfinding-qq-gemini}
+        \end{minipage}
+    \end{figure}
+    
+    \begin{figure}[htbp]
+        \centering
+        \begin{minipage}{0.48\textwidth}
+            \centering
+            \includegraphics[width=\linewidth]{charts/bugfinding_qq_plot_chatgpt_recall.png}
+            \caption{Q-Q plot of Recalls for ChatGPT Mini.}\label{fig:bugfinding-qq-chatgpt}
+        \end{minipage}\hfill
+        \begin{minipage}{0.48\textwidth}
+            \centering
+            \includegraphics[width=\linewidth]{charts/bugfinding_qq_plot_gemini_recall.png}
+            \caption{Q-Q plot of Recalls for Gemini Flash.}\label{fig:bugfinding-qq-gemini}
+        \end{minipage}
+    \end{figure}
+    
+    \begin{figure}[htbp]
+        \centering
+        \begin{minipage}{0.48\textwidth}
+            \centering
+            \includegraphics[width=\linewidth]{charts/bugfinding_qq_plot_chatgpt_f1_score.png}
             \caption{Q-Q plot of F1-Scores for ChatGPT Mini.}\label{fig:bugfinding-qq-chatgpt}
         \end{minipage}\hfill
         \begin{minipage}{0.48\textwidth}
             \centering
-            \includegraphics[width=\linewidth]{charts/bugfinding_qq_plot_gemini.png}
+            \includegraphics[width=\linewidth]{charts/bugfinding_qq_plot_gemini_f1_score.png}
             \caption{Q-Q plot of F1-Scores for Gemini Flash.}\label{fig:bugfinding-qq-gemini}
         \end{minipage}
+    
     \end{figure}
-
     \newpage{}
+    As a result, non-parametric statistical methods were considered more appropriate for comparing the models’ performance.
+    
+    
+    \subsubsection{Model Comparison}
+    The \textbf{Wilcoxon Signed-Rank test} was used because the two models were evaluated on the same set of bug scenarios, making the observations paired rather than independent. For each scenario, the difference between ChatGPT and Gemini was calculated for each metric, such as Precision, Recall and F1-score. Since the normality assumption was not satisfied for these metric distributions, a non-parametric paired test was more appropriate than a paired t-test. The Wilcoxon Signed-Rank test therefore allows the comparison of both models while preserving the case-by-case experimental structure.
+
+    \textbf{(I) Hypotheses}\\
+    To compare the two models across the three metrics (Precision, Recall and F1-Score), the three hypotheses pairs were drafted:
+
+    
+    
+    H_{0,\text{Precision}} &: \text{Precision}_{\text{ChatGPT}} $\leq$ \text{Precision}_{\text{Gemini}} \\
+    H_{1,\text{Precision}} &: \text{Precision}_{\text{ChatGPT}} > \text{Precision}_{\text{Gemini}} \\[0.8em]
+    H_{0,\text{Recall}} &: \text{Recall}_{\text{ChatGPT}} $\leq$ \text{Recall}_{\text{Gemini}} \\
+    H_{1,\text{Recall}} &: \text{Recall}_{\text{ChatGPT}} $>$ \text{Recall}_{\text{Gemini}} \\[0.8em]
+    H_{0,\text{F1}} &: \text{F1}_{\text{ChatGPT}} $\leq$ \text{F1}_{\text{Gemini}} \\
+    H_{1,\text{F1}} &: \text{F1}_{\text{ChatGPT}} $>$ \text{F1}_{\text{Gemini}}
+    
+
+    \textbf{(II) Test Computation}\\
+    Since three metrics were tested simultaneously, Precision, Recall, and F1-score, the Bonferroni correction was applied to control the family-wise error rate. Therefore, the original significance level ($\alpha = 0.05$) was divided by the number of tests (m = 3), resulting in a corrected threshold of $\alpha_{\text{corrected}} = \frac{0.05}{3} = 0.01667$.
+    
+    For each scenario, the paired difference between the two models was calculated as
+    $d_i = {\text{ChatGPT}\_i} - {\text{Gemini}\_ i}$,
+    where $d_i > 0$ indicates better performance by ChatGPT, $d_i < 0$ indicates better performance by Gemini, and $d_i = 0$ indicates a tie. Since the same 50 scenarios were evaluated by both models, the observations are paired. The Wilcoxon Signed-Rank test was then applied to the non-zero paired differences for each metric.
+     
+    For the observed data, with Number of paired observations: $n = 50$:
+   
+    \begin{table}[h]
+        \centering
+        \begin{tabular}{lcccccc}
+        \hline
+        \textbf{Metric} & \textbf{$\bar{d}$} & \textbf{$\tilde{d}$} & \textbf{ChatGPT Better} & \textbf{Gemini Better} & \textbf{Tie}\\
+        \hline
+        Precision &  0.160000 &  0.000000 & 14 & 4 & 32\\
+        Recall &  0.168333 &  0.000000 & 15 & 3 & 32\\
+        F1-Score & 0.156667  &  0.000000 & 16 & 4 & 30\\
+        \hline
+        \end{tabular}
+        \caption{ Mean difference, median difference, and case-level comparison between ChatGPT and Gemini.}
+        \label{tab:runtime-stats}
+    \end{table}
+    
+    \textbf{(III) Results}\\
+
+     \begin{table}[h]
+        \centering
+        \begin{tabular}{lcccc}
+        \hline
+        \textbf{Metric} & \textbf{Test Statistic} & \textbf{\textit{p-value}} & \textbf{Decision}\\
+        \hline
+        Precision &  130.0 &  0.021888  & Retain \textit{H0} (\textit{p} >= 0.016667)\\
+        Recall &  138.0 & 0.009680 & Reject \textit{H0} (\textit{p} <= 0.016667)\\
+        F1-Score & 163.0 & 0.014353 & Reject \textit{H0} (\textit{p} <= 0.016667)\\
+        \hline
+        \end{tabular}
+        \caption{ Wilcoxon Signed-Rank test results using Bonferroni-corrected ($\alpha = 0.01667$)}
+        \label{tab:runtime-stats}
+    \end{table}
+    
+    \textbf{(IV) Decision and Conclusion}\\
+    After applying the Bonferroni correction, ChatGPT achieved significantly higher Recall and F1-score than Gemini. 
+    
+    \textbf{For Recall}, the Wilcoxon Signed-Rank test produced $p = 0.009680$, which is below the corrected threshold of $\alpha = 0.01667$. Therefore, $H_0$ is rejected for Recall.
+
+    \textbf{For F1-score}, the test produced $p = 0.014353$, which is also below the corrected threshold, so $H_0$ is rejected for F1-score as well.
+    
+    \textbf{For Precision}, the test produced $p = 0.021888$. Although this would be significant under the uncorrected threshold of $\alpha = 0.05$, it is not significant after Bonferroni correction. Therefore, $H_0$ is not rejected for Precision.
+    
+    Overall, the statistical results indicate that ChatGPT significantly outperformed Gemini in terms of bug-finding coverage and overall localization performance, as measured by Recall and F1-score. However, the Precision difference should be interpreted only as a positive trend, not as a statistically significant difference after correction.
+    
+       \newpage{}
    \section{Code Generation}
 
    Code Generation refers to the task of generating source code from a natural language specification. In the context of this experiment, the selected Large Language Models (LLMs) were required to generate SQL queries that solve programming problems obtained from the LeetCode platform.
@@ -393,8 +567,9 @@ Figure~\ref{fig:head-to-head} provides a direct head-to-head comparison of execu
 
 \subsection{Statistical Analysis}
     \subsubsection{Model's Correctness Comparison}
-
-    \paragraph{(i) Hypothesis}\quad \textbf{Null Hypothesis ($H_0$):}
+    \textbf{(i) Hypothesis}
+    
+    \textbf{Null Hypothesis ($H_0$):}
     \textit{There is no statistically significant difference in the correctness of SQL queries generated by ChatGPT Mini and Gemini Flash.}
 
     \textbf{Alternative Hypothesis ($H_1$):} \\
@@ -462,9 +637,10 @@ Figure~\ref{fig:head-to-head} provides a direct head-to-head comparison of execu
 
  \subsubsection{Model's Execution Time Comparison}
 
-    The third hypothesis concerns the execution time of accepted SQL queries and is formulated as follows:
+    The second hypothesis concerns the execution time of accepted SQL queries and is formulated as follows:
 
-    \paragraph{(i) Hypothesis}\quad \textbf{Null Hypothesis ($H_0$):}
+    \textbf{(i) Hypothesis}\\
+    \textbf{Null Hypothesis ($H_0$):}
     \textit{There is no statistically significant difference in the execution times of SQL queries generated by ChatGPT Mini and Gemini Flash.}
 
     \textbf{Alternative Hypothesis ($H_1$):} \\
@@ -631,4 +807,9 @@ Figure~\ref{fig:head-to-head} provides a direct head-to-head comparison of execu
 
     \textbf{Conclusion:} Problem difficulty has a statistically significant influence on the correctness of SQL queries generated by the models ($p = 0.03173$, Fisher's Exact Test). Specifically, the models are significantly more likely to produce incorrect solutions when faced with Hard problems compared to Easy and Medium problems. This confirms that while LLMs are highly reliable for basic and intermediate SQL generation, their performance meaningfully degrades as problem complexity increases.
 
+    \section{Conclusions}
+
+    \bibliographystyle{plain}
+    \bibliography{refs}{}
     \end{document}
+
