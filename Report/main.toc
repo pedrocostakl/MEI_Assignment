@@ -29,7 +29,7 @@
 \contentsline {subsubsection}{\numberline {3.3.4}Summary}{12}{}%
 \contentsline {subsection}{\numberline {3.4}Model's Correctness Comparison}{12}{}%
 \contentsline {paragraph}{(i) Hypothesis}{12}{}%
-\contentsline {paragraph}{(ii) Statistical Test Selection}{13}{}%
+\contentsline {paragraph}{(ii) Statistical Test Selection}{12}{}%
 \contentsline {paragraph}{(iii) Data Characteristics}{14}{}%
 \contentsline {paragraph}{(iv) Test Computation}{14}{}%
 \contentsline {paragraph}{(v) Results}{14}{}%
